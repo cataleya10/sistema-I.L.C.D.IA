@@ -1,0 +1,11 @@
+C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\src\Shared\bin\Release\net8.0\Shared.deps.json
+C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\src\Shared\bin\Release\net8.0\Shared.dll
+C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\src\Shared\bin\Release\net8.0\Shared.pdb
+C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\src\Shared\obj\Release\net8.0\Shared.GeneratedMSBuildEditorConfig.editorconfig
+C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\src\Shared\obj\Release\net8.0\Shared.AssemblyInfoInputs.cache
+C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\src\Shared\obj\Release\net8.0\Shared.AssemblyInfo.cs
+C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\src\Shared\obj\Release\net8.0\Shared.csproj.CoreCompileInputs.cache
+C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\src\Shared\obj\Release\net8.0\Shared.dll
+C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\src\Shared\obj\Release\net8.0\refint\Shared.dll
+C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\src\Shared\obj\Release\net8.0\Shared.pdb
+C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\src\Shared\obj\Release\net8.0\ref\Shared.dll

@@ -1,0 +1,342 @@
+using Application.DTOs;
+using Application.Interfaces;
+using Application.Storage;
+using Domain.Entities;
+using Domain.Enums;
+using Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+
+namespace Infrastructure.Services;
+
+public class DocumentService : IDocumentService
+{
+    private const decimal ReviewThreshold = 0.80m;
+    private readonly DocumentDbContext _dbContext;
+    private readonly IPythonAiClient _pythonClient;
+    private readonly IFileStorage _fileStorage;
+    private readonly ILogger<DocumentService> _logger;
+
+    public DocumentService(
+        DocumentDbContext dbContext,
+        IPythonAiClient pythonClient,
+        IFileStorage fileStorage,
+        ILogger<DocumentService> logger)
+    {
+        _dbContext = dbContext;
+        _pythonClient = pythonClient;
+        _fileStorage = fileStorage;
+        _logger = logger;
+    }
+
+    public async Task<DocumentSummaryDto> UploadAsync(DocumentUpload upload, CancellationToken cancellationToken)
+    {
+        var documentId = Guid.NewGuid();
+        var (storedFilename, storedPath) = await _fileStorage.SaveAsync(upload.Content, upload.FileName, documentId, cancellationToken);
+
+        var document = new Document
+        {
+            Id = documentId,
+            OriginalFilename = upload.FileName,
+            StoredFilename = storedFilename,
+            FilePath = storedPath,
+            MimeType = upload.ContentType,
+            FileSize = upload.Length,
+            Status = DocumentStatus.Uploaded,
+            UploadedBy = upload.UploadedBy
+        };
+
+        _dbContext.Documents.Add(document);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return new DocumentSummaryDto(
+            document.Id,
+            document.OriginalFilename,
+            document.Status,
+            document.DocumentType,
+            document.Confidence,
+            document.UploadedAt,
+            document.ProcessedAt
+        );
+    }
+
+    public async Task<IReadOnlyList<DocumentSummaryDto>> ListAsync(DocumentListQuery query, CancellationToken cancellationToken)
+    {
+        IQueryable<Document> baseQuery = _dbContext.Documents.AsNoTracking();
+
+        if (TryParseEnum(query.Status, out DocumentStatus status))
+        {
+            baseQuery = baseQuery.Where(x => x.Status == status);
+        }
+
+        if (TryParseEnum(query.Type, out DocumentType type))
+        {
+            baseQuery = baseQuery.Where(x => x.DocumentType == type);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Q))
+        {
+            baseQuery = baseQuery.Where(x => x.OriginalFilename.Contains(query.Q));
+        }
+
+        if (query.From.HasValue)
+        {
+            baseQuery = baseQuery.Where(x => x.UploadedAt >= query.From);
+        }
+
+        if (query.To.HasValue)
+        {
+            baseQuery = baseQuery.Where(x => x.UploadedAt <= query.To);
+        }
+
+        var skip = Math.Max(0, (query.Page - 1) * query.PageSize);
+
+        var documents = await baseQuery
+            .OrderByDescending(x => x.UploadedAt)
+            .Skip(skip)
+            .Take(query.PageSize)
+            .ToListAsync(cancellationToken);
+
+        return documents
+            .Select(document => new DocumentSummaryDto(
+                document.Id,
+                document.OriginalFilename,
+                document.Status,
+                document.DocumentType,
+                document.Confidence,
+                document.UploadedAt,
+                document.ProcessedAt
+            ))
+            .ToList();
+    }
+
+    public async Task<DocumentDetailDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var document = await _dbContext.Documents
+            .AsNoTracking()
+            .Include(x => x.Fields)
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+        if (document is null)
+        {
+            return null;
+        }
+
+        return new DocumentDetailDto(
+            document.Id,
+            document.OriginalFilename,
+            document.Status,
+            document.DocumentType,
+            document.Confidence,
+            document.UploadedAt,
+            document.ProcessedAt,
+            string.Empty,
+            document.MimeType,
+            document.NeedsReview,
+            document.Fields.Select(MapField).ToList()
+        );
+    }
+
+    public async Task<Stream?> GetFileStreamAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var document = await _dbContext.Documents.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+        if (document is null || !_fileStorage.Exists(document.FilePath))
+        {
+            return null;
+        }
+
+        return await _fileStorage.OpenReadAsync(document.FilePath, cancellationToken);
+    }
+
+    public async Task<DocumentProcessResponse> ProcessAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var document = await _dbContext.Documents
+            .Include(x => x.Fields)
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+        if (document is null)
+        {
+            throw new InvalidOperationException("Documento no encontrado.");
+        }
+
+        document.Status = DocumentStatus.Processing;
+        _dbContext.ProcessingLogs.Add(new ProcessingLog
+        {
+            Id = Guid.NewGuid(),
+            DocumentId = document.Id,
+            Stage = "PROCESS",
+            Level = "INFO",
+            Message = "Procesamiento iniciado."
+        });
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        DocumentProcessResponse response;
+        try
+        {
+            _dbContext.ProcessingLogs.Add(new ProcessingLog
+            {
+                Id = Guid.NewGuid(),
+                DocumentId = document.Id,
+                Stage = "PYTHON",
+                Level = "INFO",
+                Message = "Enviando a motor IA."
+            });
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            response = await _pythonClient.ProcessDocumentAsync(document.Id, document.FilePath, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error al procesar documento {DocumentId}", document.Id);
+            _dbContext.ProcessingLogs.Add(new ProcessingLog
+            {
+                Id = Guid.NewGuid(),
+                DocumentId = document.Id,
+                Stage = "PYTHON",
+                Level = "ERROR",
+                Message = ex.Message
+            });
+            document.Status = DocumentStatus.Failed;
+            document.ErrorMessage = ex.Message;
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            throw;
+        }
+
+        document.DocumentType = response.DocumentType;
+        document.Confidence = response.Confidence;
+        document.ProcessedAt = DateTime.UtcNow;
+        document.ModelVersion = response.Meta.ModelVersion;
+        document.PipelineVersion = response.Meta.PipelineVersion;
+
+        _dbContext.DocumentFields.RemoveRange(document.Fields);
+        document.Fields = response.Fields.Select(field => new DocumentField
+        {
+            Id = Guid.NewGuid(),
+            DocumentId = document.Id,
+            FieldKey = field.Key,
+            FieldLabel = field.Label,
+            FieldValue = field.Value,
+            Confidence = field.Confidence,
+            IsValid = field.Valid,
+            ValidationErrors = field.ValidationErrors.ToArray(),
+            SourcePage = field.Source?.Page,
+            SourceBbox = field.Source?.Bbox?.ToArray()
+        }).ToList();
+
+        var needsReview = (document.Confidence ?? 0m) < ReviewThreshold || document.Fields.Any(x => !x.IsValid);
+        if (response.Status == DocumentStatus.NeedsReview)
+        {
+            needsReview = true;
+        }
+
+        document.NeedsReview = needsReview;
+        document.Status = needsReview ? DocumentStatus.NeedsReview : DocumentStatus.Ready;
+
+        _dbContext.ProcessingLogs.Add(new ProcessingLog
+        {
+            Id = Guid.NewGuid(),
+            DocumentId = document.Id,
+            Stage = "PROCESS",
+            Level = "INFO",
+            Message = document.NeedsReview ? "Documento requiere revisión." : "Documento procesado correctamente."
+        });
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return response;
+    }
+
+    public async Task UpdateFieldsAsync(Guid id, DocumentFieldsUpdateRequest request, CancellationToken cancellationToken)
+    {
+        var document = await _dbContext.Documents
+            .Include(x => x.Fields)
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+        if (document is null)
+        {
+            throw new InvalidOperationException("Documento no encontrado.");
+        }
+
+        foreach (var update in request.Fields)
+        {
+            var field = document.Fields.FirstOrDefault(x => x.FieldKey == update.Key);
+            if (field is null)
+            {
+                continue;
+            }
+
+            field.Corrected = true;
+            field.CorrectedValue = update.Value;
+            field.CorrectedBy = request.ReviewedBy;
+            field.CorrectedAt = DateTime.UtcNow;
+        }
+
+        document.NeedsReview = false;
+        document.Status = DocumentStatus.Ready;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<ProcessingLogDto>> GetLogsAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var logs = await _dbContext.ProcessingLogs
+            .AsNoTracking()
+            .Where(x => x.DocumentId == id)
+            .OrderByDescending(x => x.CreatedAt)
+            .ToListAsync(cancellationToken);
+
+        return logs.Select(log => new ProcessingLogDto(
+            log.Id,
+            log.DocumentId,
+            log.Stage,
+            log.Level,
+            log.Message,
+            log.CreatedAt
+        )).ToList();
+    }
+
+    private static DocumentFieldDto MapField(DocumentField field)
+    {
+        FieldSourceDto? source = null;
+        if (field.SourcePage.HasValue && field.SourceBbox is not null)
+        {
+            source = new FieldSourceDto(field.SourcePage.Value, field.SourceBbox);
+        }
+
+        return new DocumentFieldDto(
+            field.FieldKey,
+            field.FieldLabel,
+            field.FieldValue,
+            field.Confidence,
+            field.IsValid,
+            field.ValidationErrors,
+            source,
+            field.Corrected,
+            field.CorrectedValue
+        );
+    }
+
+    private static bool TryParseEnum<TEnum>(string? value, out TEnum result) where TEnum : struct, Enum
+    {
+        result = default;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        if (Enum.TryParse(value, true, out result))
+        {
+            return true;
+        }
+
+        var normalized = value.Replace("_", string.Empty, StringComparison.OrdinalIgnoreCase);
+        foreach (var enumValue in Enum.GetValues<TEnum>())
+        {
+            if (string.Equals(normalized, enumValue.ToString(), StringComparison.OrdinalIgnoreCase))
+            {
+                result = enumValue;
+                return true;
+            }
+        }
+
+        return false;
+    }
+}

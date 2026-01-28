@@ -1,0 +1,21 @@
+import { HttpClient } from '@angular/common/http';
+import { Injectable } from '@angular/core';
+import { environment } from '../../../environments/environment';
+
+export interface SystemInfo {
+  service_name: string;
+  pipeline_version: string;
+  model_version: string;
+  timestamp: string;
+}
+
+@Injectable({ providedIn: 'root' })
+export class SystemService {
+  private readonly baseUrl = `${environment.apiUrl}/api/system`;
+
+  constructor(private readonly http: HttpClient) {}
+
+  getInfo() {
+    return this.http.get<SystemInfo>(`${this.baseUrl}/info`);
+  }
+}
