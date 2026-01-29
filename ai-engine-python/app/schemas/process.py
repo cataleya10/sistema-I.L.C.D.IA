@@ -30,3 +30,5 @@ class ProcessResponse(BaseModel):
     warnings: List[str] = Field(default_factory=list)
     errors: List[str] = Field(default_factory=list)
     meta: ProcessMeta
+    ocr_text: Optional[str] = None
+    ocr_boxes: Optional[List[dict]] = None

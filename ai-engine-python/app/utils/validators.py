@@ -6,6 +6,20 @@ RFC_REGEX = re.compile(r"^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$")
 NSS_REGEX = re.compile(r"^\d{11}$")
 CLABE_REGEX = re.compile(r"^\d{18}$")
 DATE_REGEX = re.compile(r"^(\d{2})[/-](\d{2})[/-](\d{4})$")
+SEX_REGEX = re.compile(r"^(H|M|HOMBRE|MUJER|MASCULINO|FEMENINO)$", re.IGNORECASE)
+BANK_REGEX = re.compile(r"^[A-ZÁÉÍÓÚÑ0-9 .&-]{3,}$", re.IGNORECASE)
+FOLIO_REGEX = re.compile(r"^[A-Z0-9-]{4,}$", re.IGNORECASE)
+CP_REGEX = re.compile(r"^\d{5}$")
+CLAVE_ELECTOR_REGEX = re.compile(r"^[A-Z0-9]{6,18}$", re.IGNORECASE)
+SECCION_REGEX = re.compile(r"^\d{3,6}$")
+NAME_TEXT_REGEX = re.compile(r"^[A-ZÁÉÍÓÚÑ .'-]{3,}$", re.IGNORECASE)
+GENERIC_TEXT_REGEX = re.compile(r"^[A-ZÁÉÍÓÚÑ0-9 .'-]{3,}$", re.IGNORECASE)
+VIGENCIA_REGEX = re.compile(r"^(\d{4}/\d{4}|\d{2}/\d{2}/\d{4})$")
+STATE_CODES = {
+    "AS", "BC", "BS", "CC", "CL", "CM", "CS", "CH", "DF", "DG", "GT", "GR",
+    "HG", "JC", "MC", "MN", "MS", "NT", "NL", "OC", "PL", "QT", "QR", "SP",
+    "SL", "SR", "TC", "TS", "TL", "VZ", "YN", "ZS", "NE"
+}
 
 CLABE_WEIGHTS = [3, 7, 1] * 6
 
@@ -13,10 +27,22 @@ CLABE_WEIGHTS = [3, 7, 1] * 6
 def validate_curp(value: str) -> tuple[bool, list[str]]:
     if not CURP_REGEX.match(value):
         return False, ["Formato de CURP inválido."]
+    # Validación básica: entidad válida y sexo válido
+    state_code = value[11:13]
+    if state_code not in STATE_CODES:
+        return False, ["Entidad CURP inválida."]
+    if value[10] not in {"H", "M"}:
+        return False, ["Sexo CURP inválido."]
     return True, []
 
 
 def validate_rfc(value: str) -> tuple[bool, list[str]]:
+    if not RFC_REGEX.match(value):
+        return False, ["Formato de RFC inválido."]
+    return True, []
+
+
+def validate_rfc_homoclave(value: str) -> tuple[bool, list[str]]:
     if not RFC_REGEX.match(value):
         return False, ["Formato de RFC inválido."]
     return True, []
@@ -51,4 +77,65 @@ def validate_date(value: str) -> tuple[bool, list[str]]:
         datetime(year, month, day)
     except ValueError:
         return False, ["Fecha inválida."]
+    return True, []
+
+
+def validate_sex(value: str) -> tuple[bool, list[str]]:
+    if not SEX_REGEX.match(value.strip().upper()):
+        return False, ["Sexo inválido."]
+    return True, []
+
+
+def validate_bank(value: str) -> tuple[bool, list[str]]:
+    if not BANK_REGEX.match(value.strip().upper()):
+        return False, ["Banco inválido."]
+    return True, []
+
+
+def validate_folio(value: str) -> tuple[bool, list[str]]:
+    if not FOLIO_REGEX.match(value.strip().upper()):
+        return False, ["Folio inválido."]
+    return True, []
+
+
+def validate_cp(value: str) -> tuple[bool, list[str]]:
+    if not CP_REGEX.match(value.strip()):
+        return False, ["CP inválido."]
+    return True, []
+
+
+def validate_state_code(value: str) -> tuple[bool, list[str]]:
+    code = value.strip().upper()
+    if code not in STATE_CODES:
+        return False, ["Entidad inválida."]
+    return True, []
+
+
+def validate_clave_elector(value: str) -> tuple[bool, list[str]]:
+    if not CLAVE_ELECTOR_REGEX.match(value.strip().upper()):
+        return False, ["Clave de elector inválida."]
+    return True, []
+
+
+def validate_seccion(value: str) -> tuple[bool, list[str]]:
+    if not SECCION_REGEX.match(value.strip()):
+        return False, ["Sección inválida."]
+    return True, []
+
+
+def validate_person_name(value: str) -> tuple[bool, list[str]]:
+    if not NAME_TEXT_REGEX.match(value.strip().upper()):
+        return False, ["Nombre inválido."]
+    return True, []
+
+
+def validate_generic_text(value: str) -> tuple[bool, list[str]]:
+    if not GENERIC_TEXT_REGEX.match(value.strip().upper()):
+        return False, ["Texto inválido."]
+    return True, []
+
+
+def validate_vigencia(value: str) -> tuple[bool, list[str]]:
+    if not VIGENCIA_REGEX.match(value.strip()):
+        return False, ["Vigencia inválida."]
     return True, []

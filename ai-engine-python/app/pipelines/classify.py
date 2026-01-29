@@ -1,11 +1,13 @@
 async def classify_document(image, ocr_text: str, filename: str | None = None):
     text = ocr_text.upper()
     name = (filename or "").upper()
+    text = text.replace("\u00a0", " ")
+    text = " ".join(text.split())
     if "INSTITUTO NACIONAL ELECTORAL" in text or "CREDENCIAL PARA VOTAR" in text:
         return "INE", 0.88
-    if "CURP" in text:
+    if "CLAVE UNICA DE REGISTRO DE POBLACION" in text or "CURP" in text:
         return "CURP", 0.9
-    if "ACTA DE NACIMIENTO" in text:
+    if "ACTA DE NACIMIENTO" in text or "REGISTRO CIVIL" in text:
         return "ACTA_NACIMIENTO", 0.85
     if "INE" in name or "ELECTOR" in name:
         return "INE", 0.9
@@ -26,9 +28,9 @@ async def classify_document(image, ocr_text: str, filename: str | None = None):
         return "COMPROBANTE_DOMICILIO", 0.75
     if "DOMICILIO" in name or "COMPROBANTE" in name or "RECIBO" in name:
         return "COMPROBANTE_DOMICILIO", 0.9
-    if "NSS" in text or "IMSS" in text:
+    if "NSS" in text or "IMSS" in text or "SEGURIDAD SOCIAL" in text:
         return "NSS", 0.82
-    if "CLABE" in text or "BANCO" in text:
+    if "CLABE" in text or "BANCO" in text or "CUENTA" in text:
         return "DATOS_BANCARIOS", 0.78
     if "SITUACION FISCAL" in text or "RFC" in text:
         return "CONSTANCIA_SITUACION_FISCAL", 0.86

@@ -16,25 +16,34 @@ async def process_document(file, document_id: str, source: str, options: str | N
             options_data = json.loads(options)
         except json.JSONDecodeError:
             options_data = {}
-    image, extracted_text = await preprocess(file)
-    ocr_text, ocr_boxes = await run_ocr(image)
+
+    images, extracted_text = await preprocess(file)
+    ocr_text, ocr_boxes = await run_ocr(images)
     ocr_engine = "paddleocr" if ocr_text else "none"
-    if not ocr_text and extracted_text:
-        ocr_text = extracted_text
-        ocr_engine = "text-layer"
-    doc_type, doc_confidence = await classify_document(image, ocr_text, file.filename)
+    if extracted_text:
+        if not ocr_text:
+            ocr_text = extracted_text
+            ocr_engine = "text-layer"
+        else:
+            ocr_text = f"{ocr_text}\n{extracted_text}"
+            ocr_engine = "paddleocr+text-layer"
+
+    if ocr_text:
+        ocr_text = ocr_text.replace("\u00a0", " ").replace("\t", " ")
+    first_image = images[0] if images else None
+    doc_type, doc_confidence = await classify_document(first_image, ocr_text, file.filename)
     if (ocr_text or extracted_text) and doc_type != "UNKNOWN":
-        doc_confidence = 1.0
+        doc_confidence = max(doc_confidence, 0.85)
     fields = await extract_fields(doc_type, ocr_text, ocr_boxes, extracted_text, file.filename)
     fields = await validate_fields(fields)
 
     critical_fields = {
-        "INE": ["curp"],
-        "CURP": ["curp"],
-        "ACTA_NACIMIENTO": ["fecha"],
+        "INE": ["curp", "nombre", "fecha_nacimiento"],
+        "CURP": ["curp", "nombre"],
+        "ACTA_NACIMIENTO": ["fecha", "folio"],
         "COMPROBANTE_DOMICILIO": ["domicilio"],
         "NSS": ["nss"],
-        "DATOS_BANCARIOS": ["clabe"],
+        "DATOS_BANCARIOS": ["clabe", "banco"],
         "CONSTANCIA_SITUACION_FISCAL": ["rfc"]
     }
 
@@ -48,34 +57,65 @@ async def process_document(file, document_id: str, source: str, options: str | N
     processing_ms = int((time.time() - start) * 1000)
 
     warnings: list[str] = []
-    if options_data.get("return_ocr_text"):
-        warnings.append("return_ocr_text no está habilitado en esta versión.")
-    if options_data.get("return_boxes"):
-        warnings.append("return_boxes no está habilitado en esta versión.")
+    include_ocr_text = bool(options_data.get("return_ocr_text"))
+    include_boxes = bool(options_data.get("return_boxes"))
     if not ocr_text:
         warnings.append("No se detectó texto. Verifica OCR o la calidad del documento.")
 
     status = "READY"
+    required = critical_fields.get(doc_type, [])
+    found_required = 0
+    for key in required:
+        if any(field.get("key") == key and field.get("value") for field in fields):
+            found_required += 1
+
+    if required:
+        coverage = found_required / max(1, len(required))
+        if coverage < 1:
+            doc_confidence = min(doc_confidence, 0.75)
+            missing = [key for key in required if not any(field.get("key") == key and field.get("value") for field in fields)]
+            if missing:
+                warnings.append(f"Campos críticos faltantes: {', '.join(missing)}")
+            else:
+                warnings.append("Campos críticos incompletos.")
+
     if doc_confidence < 0.8 or invalid_critical:
         status = "NEEDS_REVIEW"
         if invalid_critical:
             warnings.append(f"Campos críticos inválidos: {', '.join(invalid_critical)}")
+
+    if len(fields) == 0:
+        status = "NEEDS_REVIEW"
+        warnings.append("No se detectaron campos extraídos.")
 
     response = ProcessResponse(
         document_id=document_id,
         status=status,
         document_type=doc_type,
         confidence=doc_confidence,
-        fields=[DocumentField(**field) for field in fields],
+        fields=[
+            DocumentField(**{
+                **field,
+                "source": {
+                    **field.get("source", {}),
+                    "bbox": [
+                        [int(round(coord)) for coord in point]
+                        for point in field.get("source", {}).get("bbox", [])
+                    ] if field.get("source", {}).get("bbox") else None
+                } if field.get("source") else None
+            }) for field in fields
+        ],
         warnings=warnings,
         errors=[],
         meta=ProcessMeta(
-            pages_processed=1,
+            pages_processed=len(images),
             ocr_engine=ocr_engine,
             pipeline_version=settings.pipeline_version,
             model_version=settings.model_version,
             processing_ms=processing_ms,
         ),
+        ocr_text=ocr_text if include_ocr_text else None,
+        ocr_boxes=ocr_boxes if include_boxes else None,
     )
 
     return response

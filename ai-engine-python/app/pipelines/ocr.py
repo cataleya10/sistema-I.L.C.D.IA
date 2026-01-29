@@ -22,7 +22,10 @@ def _get_ocr():
     if PaddleOCR is None:
         return None
     if _ocr_instance is None:
-        _ocr_instance = PaddleOCR(use_angle_cls=True, lang="es")
+        try:
+            _ocr_instance = PaddleOCR(use_angle_cls=True, lang="es")
+        except Exception:  # pragma: no cover
+            _ocr_instance = None
     return _ocr_instance
 
 
@@ -31,36 +34,51 @@ def _get_rapid():
     if RapidOCR is None:
         return None
     if _rapid_instance is None:
-        _rapid_instance = RapidOCR()
+        try:
+            _rapid_instance = RapidOCR()
+        except Exception:  # pragma: no cover
+            _rapid_instance = None
     return _rapid_instance
 
 
-async def run_ocr(image):
+async def run_ocr(images):
     ocr = _get_ocr()
     if np is None:
         return "", []
 
-    image_array = np.array(image)
-    texts = []
-    boxes = []
-    result = []
-    if ocr is not None:
-        result = ocr.ocr(image_array, cls=True)
-    if not result:
-        rapid = _get_rapid()
-        if rapid is None:
-            return "", []
-        rapid_result, _ = rapid(image_array)
-        for item in rapid_result or []:
-            box, text, confidence = item
-            texts.append(str(text).upper())
-            boxes.append({"text": text, "confidence": confidence, "bbox": box})
-        return "\n".join(texts), boxes
+    if not isinstance(images, list):
+        images = [images]
 
-    for line in result:
-        for item in line:
-            box, (text, confidence) = item
-            texts.append(text.upper())
-            boxes.append({"text": text, "confidence": confidence, "bbox": box})
+    texts: list[str] = []
+    boxes: list[dict] = []
+
+    for page_index, image in enumerate(images, start=1):
+        image_array = np.array(image)
+        result = []
+        if ocr is not None:
+            try:
+                result = ocr.ocr(image_array, cls=True)
+            except Exception:  # pragma: no cover
+                result = []
+        if not result:
+            rapid = _get_rapid()
+            if rapid is None:
+                continue
+            try:
+                rapid_result, _ = rapid(image_array)
+            except Exception:  # pragma: no cover
+                continue
+            for item in rapid_result or []:
+                box, text, confidence = item
+                text_str = str(text)
+                texts.append(text_str.upper())
+                boxes.append({"text": text_str, "confidence": confidence, "bbox": box, "page": page_index})
+            continue
+
+        for line in result:
+            for item in line:
+                box, (text, confidence) = item
+                texts.append(text.upper())
+                boxes.append({"text": text, "confidence": confidence, "bbox": box, "page": page_index})
 
     return "\n".join(texts), boxes
