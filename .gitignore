@@ -1,0 +1,17 @@
+.venv/
+ai-engine-python/.venv312/
+ai-engine-python/logs/
+ai-engine-python/app/**/__pycache__/
+frontend-angular/web/node_modules/
+backend-dotnet/logs/
+backend-dotnet/src/Api/storage/
+backend-dotnet/src/Api/bin/
+backend-dotnet/src/Api/obj/
+backend-dotnet/src/Application/bin/
+backend-dotnet/src/Application/obj/
+backend-dotnet/src/Domain/bin/
+backend-dotnet/src/Domain/obj/
+backend-dotnet/src/Infrastructure/bin/
+backend-dotnet/src/Infrastructure/obj/
+backend-dotnet/src/Shared/bin/
+backend-dotnet/src/Shared/obj/
