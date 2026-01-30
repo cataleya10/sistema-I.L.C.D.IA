@@ -15,7 +15,7 @@ async def preprocess(file: UploadFile):
                 if index >= settings.max_pages:
                     break
                 extracted_parts.append(page.get_text("text") or "")
-                pix = page.get_pixmap(dpi=300)
+                pix = page.get_pixmap(dpi=400)
                 image = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                 image = ImageOps.autocontrast(image)
                 image = ImageEnhance.Contrast(image.convert("L")).enhance(2.0)

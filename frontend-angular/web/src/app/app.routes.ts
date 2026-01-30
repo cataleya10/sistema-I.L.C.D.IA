@@ -2,8 +2,10 @@ import { Routes } from '@angular/router';
 import { DocumentsListPage } from './features/documents/pages/documents-list.page';
 import { DocumentsUploadPage } from './features/documents/pages/documents-upload.page';
 import { DocumentsDetailPage } from './features/documents/pages/documents-detail.page';
+import { DocumentsResultsPage } from './features/documents/pages/documents-results.page';
 import { LoginPage } from './features/documents/pages/login.page';
 import { authGuard } from './core/guards/auth.guard';
+import { SystemMetricsPage } from './features/system/pages/system-metrics.page';
 
 export const routes: Routes = [
 	{
@@ -29,6 +31,16 @@ export const routes: Routes = [
 	{
 		path: 'documents/:id',
 		component: DocumentsDetailPage,
+		canActivate: [authGuard]
+	},
+	{
+		path: 'documents/:id/results',
+		component: DocumentsResultsPage,
+		canActivate: [authGuard]
+	},
+	{
+		path: 'system',
+		component: SystemMetricsPage,
 		canActivate: [authGuard]
 	},
 	{

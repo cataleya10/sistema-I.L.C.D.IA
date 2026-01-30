@@ -13,12 +13,14 @@ public class PythonAiClient : IPythonAiClient
 {
     private readonly HttpClient _httpClient;
     private readonly JsonSerializerOptions _jsonOptions;
+    private readonly string? _apiKey;
 
     public PythonAiClient(HttpClient httpClient, IConfiguration configuration)
     {
         _httpClient = httpClient;
         var baseUrl = configuration["PythonAi:BaseUrl"] ?? "http://localhost:8000";
         _httpClient.BaseAddress = new Uri(baseUrl);
+        _apiKey = configuration["PythonAi:ApiKey"];
         _jsonOptions = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
@@ -37,7 +39,17 @@ public class PythonAiClient : IPythonAiClient
         content.Add(new StringContent(documentId.ToString()), "document_id");
         content.Add(new StringContent("web"), "source");
 
-        using var response = await _httpClient.PostAsync("/process-document", content, cancellationToken);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/process-document")
+        {
+            Content = content
+        };
+
+        if (!string.IsNullOrWhiteSpace(_apiKey))
+        {
+            request.Headers.Add("X-Api-Key", _apiKey);
+        }
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
 
         var result = await response.Content.ReadFromJsonAsync<DocumentProcessResponse>(_jsonOptions, cancellationToken);

@@ -9,7 +9,9 @@ public interface IDocumentService
     Task<DocumentDetailDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken);
     Task<Stream?> GetFileStreamAsync(Guid id, CancellationToken cancellationToken);
     Task<DocumentProcessResponse> ProcessAsync(Guid id, CancellationToken cancellationToken);
+    Task<DocumentProcessResponse> ProcessNowAsync(Guid id, CancellationToken cancellationToken);
     Task UpdateFieldsAsync(Guid id, DocumentFieldsUpdateRequest request, CancellationToken cancellationToken);
+    Task MarkFailedAsync(Guid id, string reason, CancellationToken cancellationToken);
     Task<IReadOnlyList<ProcessingLogDto>> GetLogsAsync(Guid id, CancellationToken cancellationToken);
 }
 

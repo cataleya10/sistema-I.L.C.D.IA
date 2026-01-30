@@ -3,7 +3,13 @@ async def classify_document(image, ocr_text: str, filename: str | None = None):
     name = (filename or "").upper()
     text = text.replace("\u00a0", " ")
     text = " ".join(text.split())
-    if "INSTITUTO NACIONAL ELECTORAL" in text or "CREDENCIAL PARA VOTAR" in text:
+    compact_text = text.replace(" ", "")
+    if (
+        "INSTITUTO NACIONAL ELECTORAL" in text
+        or "CREDENCIAL PARA VOTAR" in text
+        or "INSTITUTONACIONALELECTORAL" in compact_text
+        or "CREDENCIALPARAVOTAR" in compact_text
+    ):
         return "INE", 0.88
     if "CLAVE UNICA DE REGISTRO DE POBLACION" in text or "CURP" in text:
         return "CURP", 0.9
@@ -15,12 +21,35 @@ async def classify_document(image, ocr_text: str, filename: str | None = None):
         return "CURP", 0.9
     if "ACTA" in name or "NACIMIENTO" in name:
         return "ACTA_NACIMIENTO", 0.85
+    if "NSS" in text or "IMSS" in text or "SEGURIDAD SOCIAL" in text:
+        return "NSS", 0.82
+    if "CLABE" in text or "BANCO" in text or "CUENTA" in text:
+        return "DATOS_BANCARIOS", 0.78
+    if (
+        "ESTADO DE CUENTA" in text
+        or "ESTADODECUENTA" in text
+        or "ACCOUNT STATEMENT" in text
+        or "BBVA" in text
+        or "BANCOMER" in text
+        or "BANAMEX" in text
+        or "SANTANDER" in text
+        or "SCOTIABANK" in text
+        or "HSBC" in text
+        or "BANORTE" in text
+        or "AZTECA" in text
+    ):
+        return "DATOS_BANCARIOS", 0.8
     if (
         "DOMICILIO" in text
         or "RECIBO" in text
         or "COMISION FEDERAL DE ELECTRICIDAD" in text
         or "CFE" in text
         or "TELMEX" in text
+        or "TELCEL" in text
+        or "AT&T" in text
+        or "TOTALPLAY" in text
+        or "IZZI" in text
+        or "MEGACABLE" in text
         or "AGUA" in text
         or "PREDIAL" in text
         or "GAS" in text
@@ -28,16 +57,14 @@ async def classify_document(image, ocr_text: str, filename: str | None = None):
         return "COMPROBANTE_DOMICILIO", 0.75
     if "DOMICILIO" in name or "COMPROBANTE" in name or "RECIBO" in name:
         return "COMPROBANTE_DOMICILIO", 0.9
-    if "NSS" in text or "IMSS" in text or "SEGURIDAD SOCIAL" in text:
-        return "NSS", 0.82
-    if "CLABE" in text or "BANCO" in text or "CUENTA" in text:
-        return "DATOS_BANCARIOS", 0.78
     if "SITUACION FISCAL" in text or "RFC" in text:
         return "CONSTANCIA_SITUACION_FISCAL", 0.86
     if "NSS" in name or "IMSS" in name:
         return "NSS", 0.85
     if "CLABE" in name or "BANCO" in name:
         return "DATOS_BANCARIOS", 0.85
+    if "ESTADO DE CUENTA" in name or "ESTADO_CUENTA" in name or "CUENTA" in name:
+        return "DATOS_BANCARIOS", 0.8
     if "RFC" in name or "SITUACION" in name:
         return "CONSTANCIA_SITUACION_FISCAL", 0.85
     return "UNKNOWN", 0.5

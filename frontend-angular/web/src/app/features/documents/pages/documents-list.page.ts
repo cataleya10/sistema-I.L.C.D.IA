@@ -26,7 +26,7 @@ import { DocumentSummary, DocumentStatus, DocumentType } from '../../../shared/m
           <option value="">Tipo</option>
           <option *ngFor="let type of typeOptions" [value]="type">{{ type }}</option>
         </select>
-        <button type="button" (click)="load()">Filtrar</button>
+        <button type="button" (click)="applyFilters()">Filtrar</button>
       </div>
       <div class="list" *ngIf="documents.length; else empty">
         <a class="card" *ngFor="let doc of documents" [routerLink]="['/documents', doc.id]">
@@ -36,6 +36,11 @@ import { DocumentSummary, DocumentStatus, DocumentType } from '../../../shared/m
           </div>
           <app-status-badge [status]="doc.status" />
         </a>
+      </div>
+      <div class="pagination">
+        <button type="button" class="ghost" (click)="prevPage()" [disabled]="page <= 1">Anterior</button>
+        <span>Página {{ page }}</span>
+        <button type="button" class="ghost" (click)="nextPage()">Siguiente</button>
       </div>
       <ng-template #empty>
         <p>No hay documentos aún.</p>
@@ -65,6 +70,18 @@ import { DocumentSummary, DocumentStatus, DocumentType } from '../../../shared/m
         border: none;
         background: #4f46e5;
         color: #fff;
+      }
+      .pagination {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+      .ghost {
+        background: #e5e7eb;
+        color: #111827;
+      }
+      .ghost[disabled] {
+        opacity: 0.6;
       }
       .list {
         display: grid;
@@ -99,6 +116,8 @@ export class DocumentsListPage implements OnInit {
     type: '',
     q: ''
   };
+  page = 1;
+  pageSize = 20;
   statusOptions: DocumentStatus[] = ['UPLOADED', 'PROCESSING', 'READY', 'NEEDS_REVIEW', 'FAILED'];
   typeOptions: DocumentType[] = [
     'INE',
@@ -118,9 +137,31 @@ export class DocumentsListPage implements OnInit {
   }
 
   load(): void {
-    this.documentsService.list(this.query).subscribe({
+    this.documentsService.list({
+      ...this.query,
+      page: this.page,
+      pageSize: this.pageSize
+    }).subscribe({
       next: (data) => (this.documents = data),
       error: () => (this.documents = [])
     });
+  }
+
+  applyFilters(): void {
+    this.page = 1;
+    this.load();
+  }
+
+  nextPage(): void {
+    this.page += 1;
+    this.load();
+  }
+
+  prevPage(): void {
+    if (this.page <= 1) {
+      return;
+    }
+    this.page -= 1;
+    this.load();
   }
 }

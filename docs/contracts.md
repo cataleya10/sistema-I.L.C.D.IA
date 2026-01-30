@@ -3,11 +3,15 @@
 ## API C# → Python
 **POST** `/process-document`
 
+Headers (opcional):
+- `X-Api-Key`: llave compartida si `API_KEY` está configurado en el motor IA.
+
 **multipart/form-data**
 - file
 - document_id
 - source = "web"
 - options (opcional JSON string)
+  - `{"return_ocr_text": true, "return_boxes": true}` para incluir `ocr_text` y `ocr_boxes`.
 
 Respuesta (JSON):
 ```json
@@ -35,12 +39,18 @@ Respuesta (JSON):
     "pipeline_version": "1.0.0",
     "model_version": "clf-v1.0.0",
     "processing_ms": 1840
-  }
+  },
+  "ocr_text": "...",
+  "ocr_boxes": [
+    {"text": "...", "confidence": 0.98, "bbox": [120, 520, 430, 565], "page": 1}
+  ]
 }
 ```
 
 ## Angular → C#
 - **POST** `/api/auth/login`
+- **POST** `/api/auth/refresh`
+- **POST** `/api/auth/logout`
 - **POST** `/api/documents/upload`
 - **GET** `/api/documents`
 - **GET** `/api/documents/{id}`

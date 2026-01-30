@@ -19,16 +19,23 @@ public class RequestLoggingMiddleware
     {
         var stopwatch = Stopwatch.StartNew();
         _metrics.IncrementRequest();
+        context.Response.OnStarting(() =>
+        {
+            context.Response.Headers["X-Request-Duration-ms"] = stopwatch.ElapsedMilliseconds.ToString();
+            return Task.CompletedTask;
+        });
         await _next(context);
         stopwatch.Stop();
 
         var correlationId = context.Response.Headers["X-Correlation-Id"].ToString();
+        var user = context.User?.Identity?.Name ?? "anonymous";
         _logger.LogInformation(
-            "{Method} {Path} responded {StatusCode} in {Elapsed}ms CorrelationId={CorrelationId}",
+            "{Method} {Path} responded {StatusCode} in {Elapsed}ms User={User} CorrelationId={CorrelationId}",
             context.Request.Method,
             context.Request.Path,
             context.Response.StatusCode,
             stopwatch.ElapsedMilliseconds,
+            user,
             correlationId
         );
 

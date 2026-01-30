@@ -9,10 +9,14 @@ dotnet run --project src/Api
 
 ## Configuración
 - `appsettings.json` contiene JWT, Storage y SystemInfo.
+- `PythonAi:ApiKey` permite compartir la llave con el motor IA.
+- `Cors` y `RateLimiting` permiten ajustar políticas desde configuración.
 - Base de datos pendiente.
 
 ## Endpoints
 - `POST /api/auth/login`
+- `POST /api/auth/refresh`
+- `POST /api/auth/logout`
 - `POST /api/documents/upload`
 - `GET /api/documents`
 - `GET /api/documents/{id}`

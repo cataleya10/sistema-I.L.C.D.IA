@@ -47,6 +47,10 @@ export class DocumentsService {
     return this.http.post<DocumentProcessResponse>(`${this.baseUrl}/${id}/process`, {});
   }
 
+  reprocess(id: string) {
+    return this.http.post<DocumentProcessResponse>(`${this.baseUrl}/${id}/reprocess`, {});
+  }
+
   updateFields(id: string, fields: { key: string; value: string }[]) {
     return this.http.put(`${this.baseUrl}/${id}/fields`, { fields });
   }

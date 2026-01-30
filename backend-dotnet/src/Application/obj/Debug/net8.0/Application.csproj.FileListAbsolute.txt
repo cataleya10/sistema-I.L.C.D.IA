@@ -15,3 +15,4 @@ C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\src\Application\obj\Debug\net8
 C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\src\Application\obj\Debug\net8.0\refint\Application.dll
 C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\src\Application\obj\Debug\net8.0\Application.pdb
 C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\src\Application\obj\Debug\net8.0\ref\Application.dll
+C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\src\Application\obj\Debug\net8.0\Application.sourcelink.json

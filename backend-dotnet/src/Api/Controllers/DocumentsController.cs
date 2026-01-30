@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Shared.Options;
+using Api.Authorization;
 
 namespace Api.Controllers;
 
@@ -22,6 +23,7 @@ public class DocumentsController : ControllerBase
     }
 
     [HttpPost("upload")]
+    [RequireRole("Admin")]
     public async Task<ActionResult<DocumentSummaryDto>> Upload([FromForm] IFormFile file, CancellationToken cancellationToken)
     {
         if (file is null || file.Length == 0)
@@ -53,6 +55,7 @@ public class DocumentsController : ControllerBase
     }
 
     [HttpGet]
+    [RequireRole("Admin,User")]
     public async Task<ActionResult<IReadOnlyList<DocumentSummaryDto>>> List(
         [FromQuery] string? status,
         [FromQuery] string? type,
@@ -69,6 +72,7 @@ public class DocumentsController : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
+    [RequireRole("Admin,User")]
     public async Task<ActionResult<DocumentDetailDto>> GetById(Guid id, CancellationToken cancellationToken)
     {
         var result = await _documentService.GetByIdAsync(id, cancellationToken);
@@ -83,6 +87,7 @@ public class DocumentsController : ControllerBase
     }
 
     [HttpGet("{id:guid}/file")]
+    [RequireRole("Admin,User")]
     public async Task<IActionResult> GetFile(Guid id, CancellationToken cancellationToken)
     {
         var stream = await _documentService.GetFileStreamAsync(id, cancellationToken);
@@ -97,13 +102,23 @@ public class DocumentsController : ControllerBase
     }
 
     [HttpPost("{id:guid}/process")]
+    [RequireRole("Admin")]
     public async Task<ActionResult<DocumentProcessResponse>> Process(Guid id, CancellationToken cancellationToken)
     {
         var result = await _documentService.ProcessAsync(id, cancellationToken);
         return Ok(result);
     }
 
+    [HttpPost("{id:guid}/reprocess")]
+    [RequireRole("Admin")]
+    public async Task<ActionResult<DocumentProcessResponse>> Reprocess(Guid id, CancellationToken cancellationToken)
+    {
+        var result = await _documentService.ProcessNowAsync(id, cancellationToken);
+        return Ok(result);
+    }
+
     [HttpPut("{id:guid}/fields")]
+    [RequireRole("Admin")]
     public async Task<IActionResult> UpdateFields(Guid id, [FromBody] DocumentFieldsUpdateRequest request, CancellationToken cancellationToken)
     {
         var reviewedBy = User?.Identity?.Name;
@@ -113,9 +128,26 @@ public class DocumentsController : ControllerBase
     }
 
     [HttpGet("{id:guid}/logs")]
+    [RequireRole("Admin,User")]
     public async Task<ActionResult<IReadOnlyList<ProcessingLogDto>>> GetLogs(Guid id, CancellationToken cancellationToken)
     {
         var logs = await _documentService.GetLogsAsync(id, cancellationToken);
         return Ok(logs);
     }
+
+    [HttpPost("{id:guid}/mark-failed")]
+    [RequireRole("Admin")]
+    public async Task<IActionResult> MarkFailed(
+        Guid id,
+        [FromBody] DocumentFailRequest? request,
+        [FromQuery] string? reason,
+        CancellationToken cancellationToken)
+    {
+        var resolved = !string.IsNullOrWhiteSpace(reason) ? reason : request?.Reason;
+        resolved = string.IsNullOrWhiteSpace(resolved) ? "Marcado manualmente." : resolved;
+        await _documentService.MarkFailedAsync(id, resolved, cancellationToken);
+        return NoContent();
+    }
 }
+
+public sealed record DocumentFailRequest(string? Reason);

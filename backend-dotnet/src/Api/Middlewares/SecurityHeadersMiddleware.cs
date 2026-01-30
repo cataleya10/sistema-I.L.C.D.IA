@@ -15,6 +15,9 @@ public class SecurityHeadersMiddleware
         context.Response.Headers["X-Frame-Options"] = "DENY";
         context.Response.Headers["Referrer-Policy"] = "no-referrer";
         context.Response.Headers["X-XSS-Protection"] = "0";
+        context.Response.Headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()";
+        context.Response.Headers["Cross-Origin-Resource-Policy"] = "same-site";
+        context.Response.Headers["X-Permitted-Cross-Domain-Policies"] = "none";
         await _next(context);
     }
 }

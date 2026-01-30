@@ -23,6 +23,7 @@ import { SystemService, SystemInfo } from '../services/system.service';
           <ng-container *ngIf="isAuthenticated(); else loginLink">
             <a routerLink="/documents/upload" routerLinkActive="active">Carga</a>
             <a routerLink="/documents" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">Bandeja</a>
+            <a routerLink="/system" routerLinkActive="active">Sistema</a>
             <button type="button" (click)="logout()">Salir</button>
           </ng-container>
           <ng-template #loginLink>
@@ -110,7 +111,15 @@ export class AppShellComponent {
   }
 
   logout(): void {
-    this.auth.logout();
+    const refresh = this.auth.getRefreshToken();
+    if (refresh) {
+      this.auth.logoutRemote(refresh).subscribe({
+        next: () => this.auth.logout(),
+        error: () => this.auth.logout()
+      });
+    } else {
+      this.auth.logout();
+    }
     this.router.navigate(['/login']);
   }
 }

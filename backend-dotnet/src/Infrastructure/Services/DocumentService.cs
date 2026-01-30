@@ -15,17 +15,20 @@ public class DocumentService : IDocumentService
     private readonly DocumentDbContext _dbContext;
     private readonly IPythonAiClient _pythonClient;
     private readonly IFileStorage _fileStorage;
+    private readonly IProcessingQueue _queue;
     private readonly ILogger<DocumentService> _logger;
 
     public DocumentService(
         DocumentDbContext dbContext,
         IPythonAiClient pythonClient,
         IFileStorage fileStorage,
+        IProcessingQueue queue,
         ILogger<DocumentService> logger)
     {
         _dbContext = dbContext;
         _pythonClient = pythonClient;
         _fileStorage = fileStorage;
+        _queue = queue;
         _logger = logger;
     }
 
@@ -151,6 +154,25 @@ public class DocumentService : IDocumentService
     public async Task<DocumentProcessResponse> ProcessAsync(Guid id, CancellationToken cancellationToken)
     {
         var document = await _dbContext.Documents
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+        if (document is null)
+        {
+            throw new InvalidOperationException("Documento no encontrado.");
+        }
+
+        if (document.Status == DocumentStatus.Processing)
+        {
+            return BuildQueuedResponse(document.Id);
+        }
+
+        return await ProcessNowAsync(id, cancellationToken);
+    }
+
+    public async Task<DocumentProcessResponse> ProcessNowAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var document = await _dbContext.Documents
             .Include(x => x.Fields)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
 
@@ -207,7 +229,29 @@ public class DocumentService : IDocumentService
         document.ModelVersion = response.Meta.ModelVersion;
         document.PipelineVersion = response.Meta.PipelineVersion;
 
-        _dbContext.DocumentFields.RemoveRange(document.Fields);
+        if (response.Warnings is { Count: > 0 })
+        {
+            foreach (var warning in response.Warnings)
+            {
+                _dbContext.ProcessingLogs.Add(new ProcessingLog
+                {
+                    Id = Guid.NewGuid(),
+                    DocumentId = document.Id,
+                    Stage = "PYTHON",
+                    Level = "WARN",
+                    Message = warning
+                });
+            }
+        }
+
+        var existingFields = await _dbContext.DocumentFields
+            .Where(x => x.DocumentId == document.Id)
+            .ToListAsync(cancellationToken);
+        if (existingFields.Count > 0)
+        {
+            _dbContext.DocumentFields.RemoveRange(existingFields);
+        }
+
         document.Fields = response.Fields.Select(field => new DocumentField
         {
             Id = Guid.NewGuid(),
@@ -221,6 +265,11 @@ public class DocumentService : IDocumentService
             SourcePage = field.Source?.Page,
             SourceBbox = field.Source?.Bbox?.ToArray()
         }).ToList();
+
+        if (document.Fields.Count > 0)
+        {
+            _dbContext.DocumentFields.AddRange(document.Fields);
+        }
 
         var needsReview = (document.Confidence ?? 0m) < ReviewThreshold || document.Fields.Any(x => !x.IsValid);
         if (response.Status == DocumentStatus.NeedsReview)
@@ -272,6 +321,28 @@ public class DocumentService : IDocumentService
 
         document.NeedsReview = false;
         document.Status = DocumentStatus.Ready;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task MarkFailedAsync(Guid id, string reason, CancellationToken cancellationToken)
+    {
+        var document = await _dbContext.Documents.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+        if (document is null)
+        {
+            throw new InvalidOperationException("Documento no encontrado.");
+        }
+
+        document.Status = DocumentStatus.Failed;
+        document.ErrorMessage = reason;
+        _dbContext.ProcessingLogs.Add(new ProcessingLog
+        {
+            Id = Guid.NewGuid(),
+            DocumentId = document.Id,
+            Stage = "PROCESS",
+            Level = "WARN",
+            Message = $"Marcado como fallido manualmente: {reason}"
+        });
+
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
@@ -338,5 +409,19 @@ public class DocumentService : IDocumentService
         }
 
         return false;
+    }
+
+    private static DocumentProcessResponse BuildQueuedResponse(Guid documentId)
+    {
+        return new DocumentProcessResponse(
+            documentId,
+            DocumentStatus.Processing,
+            DocumentType.Unknown,
+            0m,
+            Array.Empty<DocumentFieldResultDto>(),
+            Array.Empty<string>(),
+            Array.Empty<string>(),
+            new DocumentProcessMeta(0, "pending", "", "", 0)
+        );
     }
 }

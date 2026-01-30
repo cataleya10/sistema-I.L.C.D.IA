@@ -33,6 +33,7 @@ public static class DependencyInjection
             }
         });
 
+        services.AddSingleton<IProcessingQueue, DocumentProcessingQueue>();
         services.AddScoped<IDocumentService, DocumentService>();
         services.AddHttpClient<IPythonAiClient, PythonAiClient>();
         services.AddSingleton<IFileStorage, LocalFileStorage>();

@@ -63,8 +63,19 @@ builder.Services.Configure<JwtOptions>(
 builder.Services.Configure<SystemInfoOptions>(
     builder.Configuration.GetSection(SystemInfoOptions.SectionName));
 
+builder.Services.Configure<ProcessingOptions>(
+    builder.Configuration.GetSection(ProcessingOptions.SectionName));
+
+builder.Services.Configure<CorsOptions>(
+    builder.Configuration.GetSection(CorsOptions.SectionName));
+
+builder.Services.Configure<RateLimitOptions>(
+    builder.Configuration.GetSection(RateLimitOptions.SectionName));
+
 builder.Services.AddSingleton<JwtTokenService>();
+builder.Services.AddSingleton<RefreshTokenStore>();
 builder.Services.AddSingleton<Api.Services.MetricsService>();
+builder.Services.AddHostedService<Api.Services.DocumentProcessingWorker>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -86,19 +97,36 @@ builder.Services.AddAuthorization();
 
 builder.Services.AddRateLimiter(options =>
 {
-    options.AddFixedWindowLimiter("fixed", limiterOptions =>
+    var rateOptions = builder.Configuration.GetSection(RateLimitOptions.SectionName).Get<RateLimitOptions>() ?? new RateLimitOptions();
+    options.AddPolicy("user", context =>
     {
-        limiterOptions.PermitLimit = 100;
-        limiterOptions.Window = TimeSpan.FromMinutes(1);
-        limiterOptions.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
-        limiterOptions.QueueLimit = 20;
+        var user = context.User;
+        var username = user?.Identity?.Name ?? "anonymous";
+        var role = user?.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value ?? "Anonymous";
+
+        var permitLimit = role switch
+        {
+            "Admin" => rateOptions.AdminPermitLimit,
+            "User" => rateOptions.UserPermitLimit,
+            _ => rateOptions.AnonymousPermitLimit
+        };
+
+        var partitionKey = $"{role}:{username}";
+        return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = permitLimit,
+            Window = TimeSpan.FromSeconds(rateOptions.WindowSeconds),
+            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            QueueLimit = rateOptions.QueueLimit
+        });
     });
 });
 
 builder.Services.AddCors(options =>
 {
+    var corsOptions = builder.Configuration.GetSection(CorsOptions.SectionName).Get<CorsOptions>() ?? new CorsOptions();
     options.AddPolicy("WebClient", policy =>
-        policy.WithOrigins("http://localhost:4200")
+        policy.WithOrigins(corsOptions.AllowedOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod());
 });
@@ -112,16 +140,21 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+else
+{
+    app.UseHsts();
+}
 
 app.UseHttpsRedirection();
 app.UseMiddleware<CorrelationIdMiddleware>();
+app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<RequestLoggingMiddleware>();
 app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseCors("WebClient");
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
-app.MapControllers().RequireRateLimiting("fixed");
+app.MapControllers().RequireRateLimiting("user");
 app.MapHealthChecks("/health");
 
 using (var scope = app.Services.CreateScope())

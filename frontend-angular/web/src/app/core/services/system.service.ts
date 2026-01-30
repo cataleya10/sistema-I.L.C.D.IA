@@ -9,6 +9,12 @@ export interface SystemInfo {
   timestamp: string;
 }
 
+export interface SystemMetrics {
+  requests: number;
+  errors: number;
+  timestamp: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class SystemService {
   private readonly baseUrl = `${environment.apiUrl}/api/system`;
@@ -17,5 +23,9 @@ export class SystemService {
 
   getInfo() {
     return this.http.get<SystemInfo>(`${this.baseUrl}/info`);
+  }
+
+  getMetrics() {
+    return this.http.get<SystemMetrics>(`${this.baseUrl}/metrics`);
   }
 }

@@ -38,4 +38,6 @@ public class JwtTokenService
 
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
+
+    public DateTime GetAccessTokenExpiry() => DateTime.UtcNow.AddMinutes(_options.ExpirationMinutes);
 }

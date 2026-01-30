@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Shared.Options;
+using Api.Authorization;
 
 namespace Api.Controllers.System;
 
@@ -32,7 +33,7 @@ public class SystemController : ControllerBase
     }
 
     [HttpGet("metrics")]
-    [AllowAnonymous]
+    [RequireRole("Admin")]
     public IActionResult Metrics()
     {
         var snapshot = _metrics.Snapshot();

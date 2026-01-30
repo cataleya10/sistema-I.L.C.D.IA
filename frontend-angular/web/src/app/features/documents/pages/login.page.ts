@@ -65,6 +65,7 @@ export class LoginPage {
     this.auth.login(this.username, this.password).subscribe({
       next: (response) => {
         this.auth.setToken(response.token);
+        this.auth.setRefreshToken(response.refresh_token);
         this.router.navigate(['/documents']);
       },
       error: () => (this.error = true)

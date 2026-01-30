@@ -106,8 +106,20 @@ def validate_cp(value: str) -> tuple[bool, list[str]]:
 
 def validate_state_code(value: str) -> tuple[bool, list[str]]:
     code = value.strip().upper()
+    if " - " in code:
+        code = code.split(" - ", 1)[0].strip()
     if code not in STATE_CODES:
-        return False, ["Entidad inválida."]
+        if code in {
+            "AGUASCALIENTES", "BAJA CALIFORNIA", "BAJA CALIFORNIA SUR", "CAMPECHE",
+            "COAHUILA", "COLIMA", "CHIAPAS", "CHIHUAHUA", "CIUDAD DE MEXICO", "DURANGO",
+            "GUANAJUATO", "GUERRERO", "HIDALGO", "JALISCO", "MEXICO", "MICHOACAN",
+            "MORELOS", "NAYARIT", "NUEVO LEON", "OAXACA", "PUEBLA", "QUERETARO",
+            "QUINTANA ROO", "SAN LUIS POTOSI", "SINALOA", "SONORA", "TABASCO",
+            "TAMAULIPAS", "TLAXCALA", "VERACRUZ", "YUCATAN", "ZACATECAS",
+            "NACIDO EN EL EXTRANJERO"
+        }:
+            return True, []
+        return False, ["Entidad inv??lida."]
     return True, []
 
 

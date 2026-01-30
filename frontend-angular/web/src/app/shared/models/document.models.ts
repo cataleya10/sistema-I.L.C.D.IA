@@ -70,6 +70,8 @@ export interface ProcessingLog {
 
 export interface LoginResponse {
   token: string;
+  refresh_token: string;
   username: string;
   role: string;
+  expires_at: string;
 }

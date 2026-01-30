@@ -99,8 +99,10 @@ async def process_document(file, document_id: str, source: str, options: str | N
                 "source": {
                     **field.get("source", {}),
                     "bbox": [
-                        [int(round(coord)) for coord in point]
-                        for point in field.get("source", {}).get("bbox", [])
+                        min(int(round(point[0])) for point in field.get("source", {}).get("bbox", [])),
+                        min(int(round(point[1])) for point in field.get("source", {}).get("bbox", [])),
+                        max(int(round(point[0])) for point in field.get("source", {}).get("bbox", [])),
+                        max(int(round(point[1])) for point in field.get("source", {}).get("bbox", [])),
                     ] if field.get("source", {}).get("bbox") else None
                 } if field.get("source") else None
             }) for field in fields
