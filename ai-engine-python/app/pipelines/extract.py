@@ -228,6 +228,8 @@ def _extract_acta_from_boxes(ocr_boxes):
     boxes = _boxes_with_rect(ocr_boxes)
     lines = _line_groups(boxes)
     result = {}
+    full_text = " ".join(line["text"] for line in lines if line.get("text"))
+    full_text = _normalize_text(full_text).upper()
 
     def pick(label, regex=None):
         return _extract_label_value(
@@ -262,6 +264,95 @@ def _extract_acta_from_boxes(ocr_boxes):
     nombre = _extract_label_value(lines, "NOMBRE", stop_labels=["FECHA", "FOLIO", "LIBRO", "TOMO"])
     if nombre:
         result["nombre"] = {"value": nombre}
+    else:
+        match = re.search(r"DATOS DE LA PERSONA REGISTRADA\s+(.+?)\s+NOMBRE", full_text)
+        if match:
+            result["nombre"] = {"value": match.group(1).strip()}
+        else:
+            match = re.search(r"PERSONA REGISTRADA\s+(.+?)\s+SEXO", full_text)
+            if match:
+                result["nombre"] = {"value": match.group(1).strip()}
+
+    sexo = _extract_label_value(lines, "SEXO", stop_labels=["FECHA", "LUGAR", "MUNICIPIO"])
+    if sexo:
+        result["sexo"] = {"value": sexo}
+
+    fecha_nacimiento = _extract_label_value(
+        lines, "FECHA DE NACIMIENTO", stop_labels=["SEXO", "LUGAR", "MUNICIPIO"], value_regex=DATE_PATTERN
+    )
+    if fecha_nacimiento:
+        result["fecha_nacimiento"] = {"value": fecha_nacimiento}
+
+    lugar_nacimiento = _extract_label_value(lines, "LUGAR DE NACIMIENTO", stop_labels=["MUNICIPIO", "ENTIDAD", "FECHA"])
+    if lugar_nacimiento:
+        result["lugar_nacimiento"] = {"value": lugar_nacimiento}
+
+    entidad_registro = _extract_label_value(lines, "ENTIDAD DE REGISTRO", stop_labels=["MUNICIPIO", "ESTADOS", "ACTA"])
+    if entidad_registro:
+        result["entidad_registro"] = {"value": entidad_registro}
+
+    municipio_registro = _extract_label_value(lines, "MUNICIPIO DE REGISTRO", stop_labels=["FECHA", "LIBRO", "ACTA"])
+    if municipio_registro:
+        result["municipio_registro"] = {"value": municipio_registro}
+
+    fecha_registro = _extract_label_value(
+        lines, "FECHA DE REGISTRO", stop_labels=["LIBRO", "ACTA", "OFICIALIA"], value_regex=DATE_PATTERN
+    )
+    if fecha_registro:
+        result["fecha_registro"] = {"value": fecha_registro}
+
+    numero_acta = _extract_label_value(lines, "NUMERO DE ACTA", stop_labels=["FECHA", "OFICIALIA", "LIBRO"])
+    if numero_acta:
+        result["numero_acta"] = {"value": numero_acta}
+
+    numero_certificado = _extract_label_value(
+        lines, "NUMERO DE CERTIFICADO DE NACIMIENTO", stop_labels=["IDENTIFICADOR", "ENTIDAD"]
+    )
+    if numero_certificado:
+        result["numero_certificado"] = {"value": numero_certificado}
+
+    identificador = _extract_label_value(lines, "IDENTIFICADOR ELECTRONICO", stop_labels=["DATOS", "ENTIDAD"])
+    if identificador:
+        result["identificador_electronico"] = {"value": identificador}
+
+    if "sexo" not in result or "fecha_nacimiento" not in result or "lugar_nacimiento" not in result:
+        match = re.search(
+            r"(HOMBRE|MUJER|H|M)\s+(\d{2}[/-]\d{2}[/-]\d{4})\s+([A-Z ]{3,}?)\s+SEXO\s+FECHA DE NACIMIENTO\s+LUGAR DE NACIMIENTO",
+            full_text,
+        )
+        if match:
+            if "sexo" not in result:
+                result["sexo"] = {"value": match.group(1)}
+            if "fecha_nacimiento" not in result:
+                result["fecha_nacimiento"] = {"value": match.group(2)}
+            if "lugar_nacimiento" not in result:
+                result["lugar_nacimiento"] = {"value": match.group(3).strip()}
+
+    if "entidad_registro" not in result:
+        match = re.search(
+            r"ENTIDAD DE REGISTRO\s+([A-Z ]{3,}?)\s+(ESTADOS UNIDOS|ACTA|CERTIFICADO|IDENTIFICADOR|MUNICIPIO)",
+            full_text,
+        )
+        if match:
+            result["entidad_registro"] = {"value": match.group(1).strip()}
+
+    if "municipio_registro" not in result:
+        match = re.search(
+            r"MUNICIPIO DE REGISTRO\s+([A-Z ]{3,}?)\s+(FECHA DE REGISTRO|LIBRO|ACTA|OFICIALIA)",
+            full_text,
+        )
+        if match:
+            result["municipio_registro"] = {"value": match.group(1).strip()}
+
+    if "fecha_registro" not in result:
+        match = re.search(r"FECHA DE REGISTRO\s+(\d{2}[/-]\d{2}[/-]\d{4})", full_text)
+        if match:
+            result["fecha_registro"] = {"value": match.group(1).strip()}
+
+    if "numero_acta" not in result:
+        match = re.search(r"NUMERO DE ACTA\s+([A-Z0-9-]{3,})", full_text)
+        if match:
+            result["numero_acta"] = {"value": match.group(1).strip()}
 
     return result
 
@@ -1136,15 +1227,30 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                 ("fecha", "Fecha"),
                 ("libro", "Libro"),
                 ("tomo", "Tomo"),
-                ("oficialia", "Oficialía"),
+                ("oficialia", "Oficial??a"),
                 ("registro_civil", "Registro civil"),
                 ("juez", "Juez"),
                 ("nombre", "Nombre"),
+                ("sexo", "Sexo"),
+                ("fecha_nacimiento", "Fecha de nacimiento"),
+                ("lugar_nacimiento", "Lugar de nacimiento"),
+                ("entidad_registro", "Entidad de registro"),
+                ("municipio_registro", "Municipio de registro"),
+                ("fecha_registro", "Fecha de registro"),
+                ("numero_acta", "Numero de acta"),
+                ("numero_certificado", "Numero de certificado"),
+                ("identificador_electronico", "Identificador electronico"),
             ]:
                 if key in acta_box_values:
                     value = acta_box_values[key]["value"]
                     if key == "fecha":
                         value = _normalize_date_value(value)
+                    if key in {"fecha_nacimiento", "fecha_registro"}:
+                        value = _normalize_date_value(value)
+                    if key in {"nombre"}:
+                        value = _normalize_name(value)
+                    if key in {"lugar_nacimiento", "entidad_registro", "municipio_registro"}:
+                        value = _normalize_address(value)
                     fields.append(_make_field(key, label, value, ocr_boxes, confidence=0.7))
         for value in dates:
             fields.append(_make_field("fecha", "Fecha", _normalize_date_value(value), ocr_boxes, confidence=0.6))

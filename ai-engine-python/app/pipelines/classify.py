@@ -11,16 +11,27 @@ async def classify_document(image, ocr_text: str, filename: str | None = None):
         or "CREDENCIALPARAVOTAR" in compact_text
     ):
         return "INE", 0.88
-    if "CLAVE UNICA DE REGISTRO DE POBLACION" in text or "CURP" in text:
-        return "CURP", 0.9
     if "ACTA DE NACIMIENTO" in text or "REGISTRO CIVIL" in text:
         return "ACTA_NACIMIENTO", 0.85
+    if (
+        "CERTIFICADO DE NACIMIENTO" in text
+        or "NUMERO DE CERTIFICADO DE NACIMIENTO" in text
+        or "DATOS DE LA PERSONA REGISTRADA" in text
+        or "ENTIDAD DE REGISTRO" in text
+        or "NUMERO DE ACTA" in text
+        or "OFICIALIA" in text
+        or "LIBRO" in text
+        or "TOMO" in text
+    ):
+        return "ACTA_NACIMIENTO", 0.85
+    if "CLAVE UNICA DE REGISTRO DE POBLACION" in text or "CURP" in text:
+        return "CURP", 0.9
     if "INE" in name or "ELECTOR" in name:
         return "INE", 0.9
-    if "CURP" in name:
-        return "CURP", 0.9
     if "ACTA" in name or "NACIMIENTO" in name:
         return "ACTA_NACIMIENTO", 0.85
+    if "CURP" in name:
+        return "CURP", 0.9
     if "NSS" in text or "IMSS" in text or "SEGURIDAD SOCIAL" in text:
         return "NSS", 0.82
     if "CLABE" in text or "BANCO" in text or "CUENTA" in text:
