@@ -58,4 +58,8 @@ export class DocumentsService {
   getLogs(id: string) {
     return this.http.get<ProcessingLog[]>(`${this.baseUrl}/${id}/logs`);
   }
+
+  downloadWord(id: string) {
+    return this.http.get(`${this.baseUrl}/${id}/export/word`, { responseType: 'blob' });
+  }
 }

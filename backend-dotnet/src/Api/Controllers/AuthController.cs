@@ -87,26 +87,17 @@ public class AuthController : ControllerBase
 
     private static bool VerifyPassword(JwtUser user, string password)
     {
-        // Forzar autenticación por texto plano para 'alejandro calderon'
-        if (string.Equals(user.Username, "alejandro calderon", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(user.PasswordHash))
         {
-            return user.Password == password;
+            return false;
         }
 
-        if (!string.IsNullOrWhiteSpace(user.PasswordHash))
-        {
-            return BCrypt.Net.BCrypt.Verify(password, user.PasswordHash);
-        }
-
-        if (!string.IsNullOrWhiteSpace(user.Password))
-        {
-            return user.Password == password;
-        }
-
-        return false;
+        return BCrypt.Net.BCrypt.Verify(password, user.PasswordHash);
     }
 }
 
 public sealed record LoginRequest(string Username, string Password);
 public sealed record RefreshRequest(string RefreshToken);
 public sealed record LoginResponse(string Token, string RefreshToken, string Username, string Role, DateTime ExpiresAt);
+
+

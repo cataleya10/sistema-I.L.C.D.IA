@@ -1,0 +1,61 @@
+{
+  "INE": [
+    "nombre",
+    "curp",
+    "clave_elector",
+    "fecha_nacimiento",
+    "sexo",
+    "domicilio",
+    "seccion",
+    "vigencia"
+  ],
+  "CURP": [
+    "nombre",
+    "curp",
+    "fecha_nacimiento",
+    "sexo",
+    "entidad_nacimiento"
+  ],
+  "ACTA_NACIMIENTO": [
+    "nombre",
+    "sexo",
+    "fecha_nacimiento",
+    "lugar_nacimiento",
+    "folio",
+    "numero_acta",
+    "fecha_registro",
+    "municipio_registro",
+    "entidad_registro"
+  ],
+  "NSS": [
+    "nss",
+    "nombre"
+  ],
+  "COMPROBANTE_DOMICILIO": [
+    "proveedor",
+    "numero_servicio",
+    "cuenta",
+    "referencia",
+    "titular",
+    "domicilio",
+    "cp",
+    "fecha_limite",
+    "total"
+  ],
+  "DATOS_BANCARIOS": [
+    "banco",
+    "clabe",
+    "cuenta",
+    "titular",
+    "rfc",
+    "fecha_corte",
+    "periodo"
+  ],
+  "CONSTANCIA_SITUACION_FISCAL": [
+    "rfc",
+    "nombre",
+    "regimen",
+    "domicilio"
+  ]
+}
+

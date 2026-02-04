@@ -4,21 +4,22 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { DocumentsService } from '../services/documents.service';
 import { DocumentDetail, DocumentField } from '../../../shared/models/document.models';
+import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
 
 @Component({
   selector: 'app-documents-results-page',
   standalone: true,
   imports: [CommonModule, FormsModule, RouterLink],
   template: `
-    <section class="page" *ngIf="document">
+    <section class="page" *ngIf="document; else loading">
       <header class="page__header">
         <div>
-          <a class="back" routerLink="/documents">← Volver</a>
-          <h2>Resultados extraídos</h2>
+          <a class="back" routerLink="/documents">Volver</a>
+          <h2>Resultados extraidos</h2>
           <p>{{ document.original_filename }}</p>
         </div>
         <div class="actions">
-          <button type="button" (click)="refresh()">Actualizar</button>
+          <button type="button" (click)="refresh()" [disabled]="isLoading">Actualizar</button>
           <a class="ghost" [routerLink]="['/documents', document.id]">Ver detalle</a>
         </div>
       </header>
@@ -41,7 +42,7 @@ import { DocumentDetail, DocumentField } from '../../../shared/models/document.m
           <strong>{{ document.fields.length }}</strong>
         </div>
         <div class="card">
-          <span>Válidos</span>
+          <span>Validos</span>
           <strong>{{ validCount }}</strong>
         </div>
         <div class="card">
@@ -53,8 +54,8 @@ import { DocumentDetail, DocumentField } from '../../../shared/models/document.m
       <section class="panel">
         <div class="panel__header">
           <div>
-            <h3>Campos extraídos</h3>
-            <p class="hint" *ngIf="document.needs_review">Revisión requerida por baja confianza o validación.</p>
+            <h3>Campos extraidos</h3>
+            <p class="hint" *ngIf="document.needs_review">Revision requerida por baja confianza o validacion.</p>
           </div>
           <div class="filters">
             <input type="text" placeholder="Buscar campo o valor" [(ngModel)]="search" />
@@ -90,6 +91,12 @@ import { DocumentDetail, DocumentField } from '../../../shared/models/document.m
         <p class="empty" *ngIf="!filteredFields.length">No hay campos con esos filtros.</p>
       </section>
     </section>
+
+    <ng-template #loading>
+      <section class="page">
+        <p class="loading">Cargando resultados...</p>
+      </section>
+    </ng-template>
   `,
   styles: [
     `
@@ -227,13 +234,19 @@ import { DocumentDetail, DocumentField } from '../../../shared/models/document.m
         font-size: 12px;
         color: #6b7280;
       }
+      .loading {
+        font-size: 13px;
+        color: #6b7280;
+      }
     `
   ]
 })
 export class DocumentsResultsPage implements OnInit {
   document: DocumentDetail | null = null;
+  displayFields: DocumentField[] = [];
   search = '';
   onlyInvalid = false;
+  isLoading = false;
 
   constructor(private readonly route: ActivatedRoute, private readonly documents: DocumentsService) {}
 
@@ -242,7 +255,7 @@ export class DocumentsResultsPage implements OnInit {
       return [];
     }
     const query = this.search.trim().toLowerCase();
-    return this.document.fields.filter((field) => {
+    return this.displayFields.filter((field) => {
       if (this.onlyInvalid && field.valid) {
         return false;
       }
@@ -256,11 +269,11 @@ export class DocumentsResultsPage implements OnInit {
   }
 
   get validCount(): number {
-    return this.document?.fields.filter((field) => field.valid).length ?? 0;
+    return this.displayFields.filter((field) => field.valid).length;
   }
 
   get invalidCount(): number {
-    return this.document?.fields.filter((field) => !field.valid).length ?? 0;
+    return this.displayFields.filter((field) => !field.valid).length;
   }
 
   ngOnInit(): void {
@@ -278,13 +291,43 @@ export class DocumentsResultsPage implements OnInit {
   }
 
   private load(id: string): void {
+    this.isLoading = true;
     this.documents.getById(id).subscribe({
       next: (data) => {
         this.document = {
           ...data,
           file_url: this.documents.getFileUrl(data.id)
         };
+        this.displayFields = this.mapDisplayFields(this.document);
+        this.isLoading = false;
+      },
+      error: () => {
+        this.document = null;
+        this.displayFields = [];
+        this.isLoading = false;
       }
+    });
+  }
+
+  private mapDisplayFields(document: DocumentDetail): DocumentField[] {
+    const template = DOCUMENT_FIELD_TEMPLATES[document.document_type];
+    if (!template) {
+      return document.fields;
+    }
+    const fieldMap = new Map(document.fields.map((field) => [field.key.toLowerCase(), field]));
+    return template.map((field) => {
+      const resolved = fieldMap.get(field.key.toLowerCase());
+      return {
+        key: field.key,
+        label: field.label,
+        value: resolved?.value ?? null,
+        confidence: resolved?.confidence ?? 0,
+        valid: resolved?.valid ?? true,
+        validation_errors: resolved?.validation_errors ?? [],
+        source: resolved?.source,
+        corrected: resolved?.corrected ?? false,
+        corrected_value: resolved?.corrected_value ?? null
+      };
     });
   }
 }

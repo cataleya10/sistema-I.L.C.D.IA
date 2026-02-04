@@ -9,17 +9,20 @@ public sealed class DocumentProcessingWorker : BackgroundService
     private readonly ILogger<DocumentProcessingWorker> _logger;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IProcessingQueue _queue;
+    private readonly IProcessingTracker _tracker;
     private readonly ProcessingOptions _options;
 
     public DocumentProcessingWorker(
         ILogger<DocumentProcessingWorker> logger,
         IServiceScopeFactory scopeFactory,
         IProcessingQueue queue,
+        IProcessingTracker tracker,
         IOptions<ProcessingOptions> options)
     {
         _logger = logger;
         _scopeFactory = scopeFactory;
         _queue = queue;
+        _tracker = tracker;
         _options = options.Value;
     }
 
@@ -51,7 +54,8 @@ public sealed class DocumentProcessingWorker : BackgroundService
             {
                 using var scope = _scopeFactory.CreateScope();
                 var service = scope.ServiceProvider.GetRequiredService<IDocumentService>();
-                await service.ProcessNowAsync(job.DocumentId, stoppingToken);
+                var response = await service.ProcessNowAsync(job.DocumentId, stoppingToken);
+                _tracker.Complete(job.DocumentId, response);
                 return;
             }
             catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
@@ -60,6 +64,7 @@ public sealed class DocumentProcessingWorker : BackgroundService
                 if (attempt >= _options.MaxAttempts)
                 {
                     _logger.LogError(ex, "Document {DocumentId} failed after {Attempts} attempts", job.DocumentId, attempt);
+                    _tracker.Fail(job.DocumentId, ex);
                     return;
                 }
 

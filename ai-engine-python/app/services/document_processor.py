@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 import time
 from app.schemas.process import ProcessResponse, DocumentField, ProcessMeta
 from app.core.config import settings
@@ -7,6 +8,26 @@ from app.pipelines.ocr import run_ocr
 from app.pipelines.classify import classify_document
 from app.pipelines.extract import extract_fields
 from app.pipelines.validate import validate_fields
+
+DEFAULT_CRITICAL_FIELDS: dict[str, list[str]] = {
+    "INE": ["curp", "nombre", "fecha_nacimiento"],
+    "CURP": ["curp", "nombre"],
+    "ACTA_NACIMIENTO": ["fecha", "folio"],
+    "COMPROBANTE_DOMICILIO": ["domicilio"],
+    "NSS": ["nss"],
+    "DATOS_BANCARIOS": ["clabe", "banco"],
+    "CONSTANCIA_SITUACION_FISCAL": ["rfc"]
+}
+CRITICAL_FIELDS: dict[str, list[str]] = DEFAULT_CRITICAL_FIELDS.copy()
+_critical_path = Path(__file__).resolve().parent.parent / "models" / "critical_fields.json"
+if _critical_path.exists():
+    try:
+        loaded = json.loads(_critical_path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict) and loaded:
+            CRITICAL_FIELDS = loaded
+    except Exception:
+        CRITICAL_FIELDS = DEFAULT_CRITICAL_FIELDS.copy()
+
 
 async def process_document(file, document_id: str, source: str, options: str | None):
     start = time.time()
@@ -37,17 +58,7 @@ async def process_document(file, document_id: str, source: str, options: str | N
     fields = await extract_fields(doc_type, ocr_text, ocr_boxes, extracted_text, file.filename)
     fields = await validate_fields(fields)
 
-    critical_fields = {
-        "INE": ["curp", "nombre", "fecha_nacimiento"],
-        "CURP": ["curp", "nombre"],
-        "ACTA_NACIMIENTO": ["fecha", "folio"],
-        "COMPROBANTE_DOMICILIO": ["domicilio"],
-        "NSS": ["nss"],
-        "DATOS_BANCARIOS": ["clabe", "banco"],
-        "CONSTANCIA_SITUACION_FISCAL": ["rfc"]
-    }
-
-    required = critical_fields.get(doc_type, [])
+    required = CRITICAL_FIELDS.get(doc_type, [])
     invalid_critical = []
     for key in required:
         field = next((f for f in fields if f["key"] == key), None)
@@ -63,12 +74,13 @@ async def process_document(file, document_id: str, source: str, options: str | N
         warnings.append("No se detectó texto. Verifica OCR o la calidad del documento.")
 
     status = "READY"
-    required = critical_fields.get(doc_type, [])
+    required = CRITICAL_FIELDS.get(doc_type, [])
     found_required = 0
     for key in required:
         if any(field.get("key") == key and field.get("value") for field in fields):
             found_required += 1
 
+    missing: list[str] = []
     if required:
         coverage = found_required / max(1, len(required))
         if coverage < 1:
@@ -78,6 +90,9 @@ async def process_document(file, document_id: str, source: str, options: str | N
                 warnings.append(f"Campos críticos faltantes: {', '.join(missing)}")
             else:
                 warnings.append("Campos críticos incompletos.")
+
+    if missing:
+        status = "NEEDS_REVIEW"
 
     if doc_confidence < 0.8 or invalid_critical:
         status = "NEEDS_REVIEW"

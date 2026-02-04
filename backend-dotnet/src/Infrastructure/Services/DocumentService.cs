@@ -16,6 +16,7 @@ public class DocumentService : IDocumentService
     private readonly IPythonAiClient _pythonClient;
     private readonly IFileStorage _fileStorage;
     private readonly IProcessingQueue _queue;
+    private readonly IProcessingTracker _tracker;
     private readonly ILogger<DocumentService> _logger;
 
     public DocumentService(
@@ -23,12 +24,14 @@ public class DocumentService : IDocumentService
         IPythonAiClient pythonClient,
         IFileStorage fileStorage,
         IProcessingQueue queue,
+        IProcessingTracker tracker,
         ILogger<DocumentService> logger)
     {
         _dbContext = dbContext;
         _pythonClient = pythonClient;
         _fileStorage = fileStorage;
         _queue = queue;
+        _tracker = tracker;
         _logger = logger;
     }
 
@@ -162,12 +165,21 @@ public class DocumentService : IDocumentService
             throw new InvalidOperationException("Documento no encontrado.");
         }
 
-        if (document.Status == DocumentStatus.Processing)
+        var registration = _tracker.Register(document.Id);
+        if (registration.Created)
         {
-            return BuildQueuedResponse(document.Id);
+            await _queue.EnqueueAsync(new DocumentProcessJob(document.Id), cancellationToken);
         }
 
-        return await ProcessNowAsync(id, cancellationToken);
+        try
+        {
+            return await registration.Task.WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            _tracker.Cancel(document.Id);
+            throw;
+        }
     }
 
     public async Task<DocumentProcessResponse> ProcessNowAsync(Guid id, CancellationToken cancellationToken)

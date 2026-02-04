@@ -26,9 +26,11 @@ import { DocumentSummary, DocumentStatus, DocumentType } from '../../../shared/m
           <option value="">Tipo</option>
           <option *ngFor="let type of typeOptions" [value]="type">{{ type }}</option>
         </select>
-        <button type="button" (click)="applyFilters()">Filtrar</button>
+        <button type="button" (click)="applyFilters()" [disabled]="isLoading">Filtrar</button>
       </div>
-      <div class="list" *ngIf="documents.length; else empty">
+      <div class="loading" *ngIf="isLoading">Cargando documentos...</div>
+      <div class="error" *ngIf="errorMessage && !isLoading">{{ errorMessage }}</div>
+      <div class="list" *ngIf="documents.length && !isLoading; else empty">
         <a class="card" *ngFor="let doc of documents" [routerLink]="['/documents', doc.id]">
           <div>
             <h3>{{ doc.original_filename }}</h3>
@@ -38,12 +40,12 @@ import { DocumentSummary, DocumentStatus, DocumentType } from '../../../shared/m
         </a>
       </div>
       <div class="pagination">
-        <button type="button" class="ghost" (click)="prevPage()" [disabled]="page <= 1">Anterior</button>
-        <span>Página {{ page }}</span>
-        <button type="button" class="ghost" (click)="nextPage()">Siguiente</button>
+        <button type="button" class="ghost" (click)="prevPage()" [disabled]="page <= 1 || isLoading">Anterior</button>
+        <span>Pagina {{ page }}</span>
+        <button type="button" class="ghost" (click)="nextPage()" [disabled]="isLoading || !hasNextPage">Siguiente</button>
       </div>
       <ng-template #empty>
-        <p>No hay documentos aún.</p>
+        <p *ngIf="!isLoading">No hay documentos aun.</p>
       </ng-template>
     </section>
   `,
@@ -57,6 +59,14 @@ import { DocumentSummary, DocumentStatus, DocumentType } from '../../../shared/m
         display: grid;
         grid-template-columns: 2fr 1fr 1fr auto;
         gap: 12px;
+      }
+      .loading {
+        font-size: 13px;
+        color: #6b7280;
+      }
+      .error {
+        font-size: 13px;
+        color: #b91c1c;
       }
       input,
       select {
@@ -111,6 +121,10 @@ import { DocumentSummary, DocumentStatus, DocumentType } from '../../../shared/m
 })
 export class DocumentsListPage implements OnInit {
   documents: DocumentSummary[] = [];
+  isLoading = false;
+  errorMessage = '';
+  hasNextPage = true;
+  private requestToken = 0;
   query = {
     status: '',
     type: '',
@@ -137,14 +151,37 @@ export class DocumentsListPage implements OnInit {
   }
 
   load(): void {
-    this.documentsService.list({
-      ...this.query,
-      page: this.page,
-      pageSize: this.pageSize
-    }).subscribe({
-      next: (data) => (this.documents = data),
-      error: () => (this.documents = [])
-    });
+    this.isLoading = true;
+    this.errorMessage = '';
+    const token = ++this.requestToken;
+    this.documentsService
+      .list({
+        ...this.query,
+        page: this.page,
+        pageSize: this.pageSize
+      })
+      .subscribe({
+        next: (data) => {
+          if (token !== this.requestToken) {
+            return;
+          }
+          this.documents = data;
+          this.hasNextPage = data.length === this.pageSize;
+          this.isLoading = false;
+        },
+        error: (err) => {
+          if (token !== this.requestToken) {
+            return;
+          }
+          this.documents = [];
+          this.hasNextPage = false;
+          this.errorMessage = this.resolveErrorMessage(
+            err,
+            'No se pudo cargar la lista. Intenta de nuevo.'
+          );
+          this.isLoading = false;
+        }
+      });
   }
 
   applyFilters(): void {
@@ -153,6 +190,9 @@ export class DocumentsListPage implements OnInit {
   }
 
   nextPage(): void {
+    if (!this.hasNextPage) {
+      return;
+    }
     this.page += 1;
     this.load();
   }
@@ -164,4 +204,31 @@ export class DocumentsListPage implements OnInit {
     this.page -= 1;
     this.load();
   }
+
+  private resolveErrorMessage(error: unknown, fallback: string): string {
+    if (!error) {
+      return fallback;
+    }
+    if (typeof error === 'string') {
+      return error;
+    }
+    if (error instanceof Error && error.message.trim().length) {
+      return error.message;
+    }
+    const typedError = error as { error?: unknown; message?: string } | undefined;
+    if (typeof typedError?.message === 'string' && typedError.message.trim().length) {
+      return typedError.message;
+    }
+    if (typeof typedError?.error === 'string' && typedError.error.trim().length) {
+      return typedError.error;
+    }
+    if (typeof typedError?.error === 'object' && typedError.error && 'message' in typedError.error) {
+      const nested = (typedError.error as { message?: string }).message;
+      if (typeof nested === 'string' && nested.trim().length) {
+        return nested;
+      }
+    }
+    return fallback;
+  }
 }
+

@@ -1,10 +1,12 @@
 using Application.DTOs;
 using Application.Interfaces;
+using Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Shared.Options;
 using Api.Authorization;
+using System.IO;
 
 namespace Api.Controllers;
 
@@ -23,6 +25,7 @@ public class DocumentsController : ControllerBase
     }
 
     [HttpPost("upload")]
+    [Consumes("multipart/form-data")]
     [RequireRole("Admin")]
     public async Task<ActionResult<DocumentSummaryDto>> Upload([FromForm] IFormFile file, CancellationToken cancellationToken)
     {
@@ -42,6 +45,11 @@ public class DocumentsController : ControllerBase
         }
 
         await using var stream = file.OpenReadStream();
+        if (!HasValidFileSignature(stream, file.ContentType))
+        {
+            return BadRequest("El archivo no coincide con el tipo declarado.");
+        }
+        stream.Position = 0;
         var upload = new DocumentUpload(
             stream,
             file.FileName,
@@ -66,6 +74,16 @@ public class DocumentsController : ControllerBase
         [FromQuery] int pageSize = 20,
         CancellationToken cancellationToken = default)
     {
+        if (page < 1)
+        {
+            page = 1;
+        }
+
+        if (pageSize < 1)
+        {
+            pageSize = 20;
+        }
+
         var query = new DocumentListQuery(status, type, q, from, to, page, pageSize);
         var result = await _documentService.ListAsync(query, cancellationToken);
         return Ok(result);
@@ -78,7 +96,7 @@ public class DocumentsController : ControllerBase
         var result = await _documentService.GetByIdAsync(id, cancellationToken);
         if (result is null)
         {
-            return NotFound();
+            return NotFound("Documento no encontrado.");
         }
 
         var fileUrl = Url.ActionLink(nameof(GetFile), values: new { id }) ?? string.Empty;
@@ -93,12 +111,28 @@ public class DocumentsController : ControllerBase
         var stream = await _documentService.GetFileStreamAsync(id, cancellationToken);
         if (stream is null)
         {
-            return NotFound();
+            return NotFound("Archivo no encontrado.");
         }
 
         var detail = await _documentService.GetByIdAsync(id, cancellationToken);
         var mimeType = detail?.MimeType ?? "application/octet-stream";
         return File(stream, mimeType, enableRangeProcessing: true);
+    }
+
+    [HttpGet("{id:guid}/export/word")]
+    [RequireRole("Admin,User")]
+    public async Task<IActionResult> ExportWord(Guid id, CancellationToken cancellationToken)
+    {
+        var detail = await _documentService.GetByIdAsync(id, cancellationToken);
+        if (detail is null)
+        {
+            return NotFound("Documento no encontrado.");
+        }
+
+        var rtf = BuildRtf(detail);
+        var filename = Path.GetFileNameWithoutExtension(detail.OriginalFilename);
+        var outputName = string.IsNullOrWhiteSpace(filename) ? "documento" : filename;
+        return File(global::System.Text.Encoding.UTF8.GetBytes(rtf), "application/rtf", $"{outputName}.doc");
     }
 
     [HttpPost("{id:guid}/process")]
@@ -118,9 +152,14 @@ public class DocumentsController : ControllerBase
     }
 
     [HttpPut("{id:guid}/fields")]
-    [RequireRole("Admin")]
+    [RequireRole("Admin,User")]
     public async Task<IActionResult> UpdateFields(Guid id, [FromBody] DocumentFieldsUpdateRequest request, CancellationToken cancellationToken)
     {
+        if (request is null)
+        {
+            return BadRequest("Solicitud inválida.");
+        }
+
         var reviewedBy = User?.Identity?.Name;
         var updatedRequest = request with { ReviewedBy = reviewedBy };
         await _documentService.UpdateFieldsAsync(id, updatedRequest, cancellationToken);
@@ -147,6 +186,171 @@ public class DocumentsController : ControllerBase
         resolved = string.IsNullOrWhiteSpace(resolved) ? "Marcado manualmente." : resolved;
         await _documentService.MarkFailedAsync(id, resolved, cancellationToken);
         return NoContent();
+    }
+
+    private static string BuildRtf(DocumentDetailDto detail)
+    {
+        static string Escape(string? value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return "-";
+            }
+            var normalized = value
+                .Replace("\\", "\\\\")
+                .Replace("{", "\\{")
+                .Replace("}", "\\}")
+                .Replace("\r\n", "\n")
+                .Replace("\r", "\n");
+
+            var sb = new global::System.Text.StringBuilder();
+            foreach (var ch in normalized)
+            {
+                if (ch == '\n')
+                {
+                    sb.Append("\\par ");
+                    continue;
+                }
+                if (ch <= 0x7f)
+                {
+                    sb.Append(ch);
+                    continue;
+                }
+                var code = (int)ch;
+                if (code > 32767)
+                {
+                    code -= 65536;
+                }
+                sb.Append("\\u").Append(code).Append("?");
+            }
+            return sb.ToString();
+        }
+
+        static IReadOnlyList<(string Key, string Label)> GetTemplate(DocumentType documentType)
+        {
+            return documentType switch
+            {
+                DocumentType.Ine => new List<(string, string)>
+                {
+                    ("nombre", "Nombre completo"),
+                    ("curp", "CURP"),
+                    ("clave_elector", "Clave de elector"),
+                    ("fecha_nacimiento", "Fecha de nacimiento"),
+                    ("sexo", "Sexo"),
+                    ("domicilio", "Domicilio"),
+                    ("seccion", "Sección"),
+                    ("vigencia", "Vigencia")
+                },
+                DocumentType.Curp => new List<(string, string)>
+                {
+                    ("nombre", "Nombre completo"),
+                    ("curp", "CURP"),
+                    ("fecha_nacimiento", "Fecha de nacimiento"),
+                    ("sexo", "Sexo"),
+                    ("entidad_nacimiento", "Entidad de nacimiento")
+                },
+                DocumentType.ActaNacimiento => new List<(string, string)>
+                {
+                    ("nombre", "Nombre completo"),
+                    ("sexo", "Sexo"),
+                    ("fecha_nacimiento", "Fecha de nacimiento"),
+                    ("lugar_nacimiento", "Lugar de nacimiento"),
+                    ("folio", "Folio"),
+                    ("numero_acta", "Número de acta"),
+                    ("fecha_registro", "Fecha de registro"),
+                    ("municipio_registro", "Municipio de registro"),
+                    ("entidad_registro", "Entidad de registro")
+                },
+                DocumentType.Nss => new List<(string, string)>
+                {
+                    ("nombre", "Nombre completo"),
+                    ("nss", "NSS")
+                },
+                DocumentType.ComprobanteDomicilio => new List<(string, string)>
+                {
+                    ("proveedor", "Proveedor"),
+                    ("numero_servicio", "Número de servicio"),
+                    ("cuenta", "Cuenta"),
+                    ("referencia", "Referencia"),
+                    ("titular", "Titular"),
+                    ("domicilio", "Domicilio"),
+                    ("cp", "Código postal"),
+                    ("fecha_limite", "Fecha límite"),
+                    ("total", "Total")
+                },
+                DocumentType.DatosBancarios => new List<(string, string)>
+                {
+                    ("banco", "Banco"),
+                    ("clabe", "CLABE"),
+                    ("cuenta", "Cuenta"),
+                    ("titular", "Titular"),
+                    ("rfc", "RFC"),
+                    ("fecha_corte", "Fecha de corte"),
+                    ("periodo", "Periodo")
+                },
+                DocumentType.ConstanciaSituacionFiscal => new List<(string, string)>
+                {
+                    ("rfc", "RFC"),
+                    ("nombre", "Nombre completo"),
+                    ("regimen", "Régimen"),
+                    ("domicilio", "Domicilio"),
+                },
+                _ => new List<(string, string)>()
+            };
+        }
+
+        var sb = new global::System.Text.StringBuilder();
+        sb.Append("{\\rtf1\\ansi\\ansicpg1252\\uc1\\deff0\n");
+        sb.Append("\\b SISTEMA DE LECTURA INTELIGENTE \\b0\\par\n");
+        sb.Append($"Documento: {Escape(detail.OriginalFilename)}\\par\n");
+        sb.Append($"Tipo: {Escape(detail.DocumentType.ToString())}\\par\n");
+        sb.Append($"Fecha de carga: {detail.UploadedAt:yyyy-MM-dd HH:mm}\\par\n");
+        sb.Append("\\par\\b Campos extraidos \\b0\\par\n");
+        var template = GetTemplate(detail.DocumentType);
+        if (template.Count == 0 && detail.Fields.Count > 0)
+        {
+            template = detail.Fields
+                .Select(field => (field.Key, field.Label))
+                .ToList();
+        }
+        var fieldMap = detail.Fields
+            .GroupBy(field => field.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (key, label) in template)
+        {
+            if (fieldMap.TryGetValue(key, out var field))
+            {
+                var value = Escape(field.CorrectedValue ?? field.Value);
+                sb.Append($"\\b {Escape(label)}: \\b0 {value}\\par\n");
+            }
+            else
+            {
+                sb.Append($"\\b {Escape(label)}: \\b0 -\\par\n");
+            }
+        }
+
+        sb.Append("}");
+        return sb.ToString();
+    }
+
+    private static bool HasValidFileSignature(Stream stream, string contentType)
+    {
+        Span<byte> header = stackalloc byte[8];
+        var read = stream.Read(header);
+        if (read < 4)
+        {
+            return false;
+        }
+
+        return contentType switch
+        {
+            "application/pdf" => header[0] == (byte)'%' && header[1] == (byte)'P' && header[2] == (byte)'D' && header[3] == (byte)'F',
+            "image/png" => read >= 8 && header[0] == 0x89 && header[1] == 0x50 && header[2] == 0x4E && header[3] == 0x47
+                && header[4] == 0x0D && header[5] == 0x0A && header[6] == 0x1A && header[7] == 0x0A,
+            "image/jpeg" => header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF,
+            _ => true
+        };
     }
 }
 

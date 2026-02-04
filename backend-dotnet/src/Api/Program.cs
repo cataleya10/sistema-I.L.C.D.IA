@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Infrastructure;
+using Api.Logging;
 using Api.Middlewares;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
@@ -14,6 +15,9 @@ using Shared.Json;
 using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
+
+var logPath = builder.Configuration.GetValue<string>("Logging:FilePath") ?? "logs/api.log";
+builder.Logging.AddProvider(new SimpleFileLoggerProvider(logPath));
 
 builder.Services
     .AddControllers()
@@ -51,6 +55,7 @@ builder.Services.AddSwaggerGen(options =>
             Array.Empty<string>()
         }
     });
+    options.OperationFilter<Api.Swagger.FileUploadOperationFilter>();
 });
 builder.Services.AddHealthChecks();
 
@@ -60,11 +65,26 @@ builder.Services.Configure<UploadOptions>(
 builder.Services.Configure<JwtOptions>(
     builder.Configuration.GetSection(JwtOptions.SectionName));
 
+builder.Services.PostConfigure<JwtOptions>(options =>
+{
+    foreach (var user in options.Users)
+    {
+        if (!string.IsNullOrWhiteSpace(user.Password) && string.IsNullOrWhiteSpace(user.PasswordHash))
+        {
+            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(user.Password);
+            user.Password = string.Empty;
+        }
+    }
+});
+
 builder.Services.Configure<SystemInfoOptions>(
     builder.Configuration.GetSection(SystemInfoOptions.SectionName));
 
 builder.Services.Configure<ProcessingOptions>(
     builder.Configuration.GetSection(ProcessingOptions.SectionName));
+
+builder.Services.Configure<RefreshTokenOptions>(
+    builder.Configuration.GetSection(RefreshTokenOptions.SectionName));
 
 builder.Services.Configure<CorsOptions>(
     builder.Configuration.GetSection(CorsOptions.SectionName));
@@ -76,6 +96,8 @@ builder.Services.AddSingleton<JwtTokenService>();
 builder.Services.AddSingleton<RefreshTokenStore>();
 builder.Services.AddSingleton<Api.Services.MetricsService>();
 builder.Services.AddHostedService<Api.Services.DocumentProcessingWorker>();
+builder.Services.AddHostedService<Api.Services.StorageCleanupWorker>();
+builder.Services.AddHostedService<Api.Services.RefreshTokenCleanupWorker>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>

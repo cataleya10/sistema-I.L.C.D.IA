@@ -3,17 +3,19 @@ import { CommonModule } from '@angular/common';
 import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { AuthService } from '../services/auth.service';
 import { SystemService, SystemInfo } from '../services/system.service';
+import { NotificationService } from '../services/notification.service';
+import { ToastNotificationComponent } from '../../shared/components/toast-notification.component';
 
 @Component({
   selector: 'app-shell',
   standalone: true,
-  imports: [CommonModule, RouterOutlet, RouterLink, RouterLinkActive],
+  imports: [CommonModule, RouterOutlet, RouterLink, RouterLinkActive, ToastNotificationComponent],
   template: `
     <div class="shell">
       <header class="shell__header">
         <div>
-          <h1>Sistema I.L.C.D.IA</h1>
-          <p>Inteligencia documental empresarial</p>
+          <h1>SISTEMA DE LECTURA INTELIGENTE</h1>
+          <p>Bufete de Mantenimiento Predictivo e Ingeniería</p>
         </div>
         <div class="version" *ngIf="systemInfo">
           <span>{{ systemInfo.pipeline_version }}</span>
@@ -24,6 +26,10 @@ import { SystemService, SystemInfo } from '../services/system.service';
             <a routerLink="/documents/upload" routerLinkActive="active">Carga</a>
             <a routerLink="/documents" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">Bandeja</a>
             <a routerLink="/system" routerLinkActive="active">Sistema</a>
+            <div class="user" *ngIf="userName">
+              <span class="user__name">{{ userName }}</span>
+              <span class="user__role">{{ userRole }}</span>
+            </div>
             <button type="button" (click)="logout()">Salir</button>
           </ng-container>
           <ng-template #loginLink>
@@ -35,6 +41,7 @@ import { SystemService, SystemInfo } from '../services/system.service';
         <router-outlet />
       </main>
     </div>
+    <app-toast-notification [message]="toastMessage" (dismiss)="clearToast()" />
   `,
   styles: [
     `
@@ -83,6 +90,24 @@ import { SystemService, SystemInfo } from '../services/system.service';
         border-radius: 999px;
         padding: 6px 12px;
       }
+      .user {
+        display: grid;
+        gap: 2px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+      }
+      .user__name {
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .user__role {
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #cbd5f5;
+      }
       .shell__nav a.active {
         text-decoration: underline;
       }
@@ -94,20 +119,38 @@ import { SystemService, SystemInfo } from '../services/system.service';
 })
 export class AppShellComponent {
   systemInfo: SystemInfo | null = null;
+  toastMessage: string | null = null;
 
   constructor(
     private readonly auth: AuthService,
     private readonly router: Router,
-    private readonly system: SystemService
+    private readonly system: SystemService,
+    private readonly notifications: NotificationService
   ) {
     this.system.getInfo().subscribe({
       next: (info) => (this.systemInfo = info),
       error: () => (this.systemInfo = null)
     });
+
+    this.notifications.message$.subscribe((message) => {
+      this.toastMessage = message;
+    });
   }
 
   isAuthenticated(): boolean {
     return !!this.auth.getToken();
+  }
+
+  get userName(): string | null {
+    return this.auth.getUsername();
+  }
+
+  get userRole(): string | null {
+    return this.auth.getRole();
+  }
+
+  clearToast(): void {
+    this.notifications.clear();
   }
 
   logout(): void {

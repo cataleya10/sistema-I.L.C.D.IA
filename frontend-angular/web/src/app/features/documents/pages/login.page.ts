@@ -66,6 +66,7 @@ export class LoginPage {
       next: (response) => {
         this.auth.setToken(response.token);
         this.auth.setRefreshToken(response.refresh_token);
+        this.auth.setUser(response.username, response.role);
         this.router.navigate(['/documents']);
       },
       error: () => (this.error = true)

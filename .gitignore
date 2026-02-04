@@ -15,3 +15,9 @@ backend-dotnet/src/Infrastructure/bin/
 backend-dotnet/src/Infrastructure/obj/
 backend-dotnet/src/Shared/bin/
 backend-dotnet/src/Shared/obj/
+.env
+start-all.pids.json
+logs/
+**/__pycache__/
+*.pyc
+frontend-angular/web/logs/
