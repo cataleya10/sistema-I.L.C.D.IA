@@ -158,11 +158,35 @@ public class DocumentService : IDocumentService
     {
         var document = await _dbContext.Documents
             .AsNoTracking()
+            .Include(x => x.Fields)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
 
         if (document is null)
         {
             throw new InvalidOperationException("Documento no encontrado.");
+        }
+
+        if (document.Status is DocumentStatus.Ready or DocumentStatus.NeedsReview)
+        {
+            return BuildResponseFromDocument(document);
+        }
+
+        if (document.Status == DocumentStatus.Processing)
+        {
+            if (_tracker.TryGet(document.Id, out var existingTask))
+            {
+                try
+                {
+                    return await existingTask.WaitAsync(cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    _tracker.Cancel(document.Id);
+                    throw;
+                }
+            }
+
+            return BuildQueuedResponse(document.Id);
         }
 
         var registration = _tracker.Register(document.Id);
@@ -194,6 +218,7 @@ public class DocumentService : IDocumentService
         }
 
         document.Status = DocumentStatus.Processing;
+        document.ErrorMessage = null;
         _dbContext.ProcessingLogs.Add(new ProcessingLog
         {
             Id = Guid.NewGuid(),
@@ -240,6 +265,7 @@ public class DocumentService : IDocumentService
         document.ProcessedAt = DateTime.UtcNow;
         document.ModelVersion = response.Meta.ModelVersion;
         document.PipelineVersion = response.Meta.PipelineVersion;
+        document.ErrorMessage = null;
 
         if (response.Warnings is { Count: > 0 })
         {
@@ -283,7 +309,7 @@ public class DocumentService : IDocumentService
             _dbContext.DocumentFields.AddRange(document.Fields);
         }
 
-        var needsReview = (document.Confidence ?? 0m) < ReviewThreshold || document.Fields.Any(x => !x.IsValid);
+        var needsReview = (document.Confidence ?? 0m) < ReviewThreshold;
         if (response.Status == DocumentStatus.NeedsReview)
         {
             needsReview = true;
@@ -358,6 +384,37 @@ public class DocumentService : IDocumentService
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var document = await _dbContext.Documents
+            .Include(x => x.Fields)
+            .Include(x => x.ProcessingLogs)
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+        if (document is null)
+        {
+            throw new InvalidOperationException("Documento no encontrado.");
+        }
+
+        if (_fileStorage.Exists(document.FilePath))
+        {
+            await _fileStorage.DeleteAsync(document.FilePath, cancellationToken);
+        }
+
+        if (document.Fields.Count > 0)
+        {
+            _dbContext.DocumentFields.RemoveRange(document.Fields);
+        }
+
+        if (document.ProcessingLogs.Count > 0)
+        {
+            _dbContext.ProcessingLogs.RemoveRange(document.ProcessingLogs);
+        }
+
+        _dbContext.Documents.Remove(document);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyList<ProcessingLogDto>> GetLogsAsync(Guid id, CancellationToken cancellationToken)
     {
         var logs = await _dbContext.ProcessingLogs
@@ -394,6 +451,47 @@ public class DocumentService : IDocumentService
             source,
             field.Corrected,
             field.CorrectedValue
+        );
+    }
+
+    private static DocumentProcessResponse BuildResponseFromDocument(Document document)
+    {
+        var fields = document.Fields
+            .Select(field =>
+            {
+                FieldSourceDto? source = null;
+                if (field.SourcePage.HasValue && field.SourceBbox is not null)
+                {
+                    source = new FieldSourceDto(field.SourcePage.Value, field.SourceBbox);
+                }
+
+                return new DocumentFieldResultDto(
+                    field.FieldKey,
+                    field.FieldLabel,
+                    field.CorrectedValue ?? field.FieldValue,
+                    field.Confidence,
+                    field.IsValid,
+                    field.ValidationErrors,
+                    source
+                );
+            })
+            .ToList();
+
+        return new DocumentProcessResponse(
+            document.Id,
+            document.Status,
+            document.DocumentType,
+            document.Confidence ?? 0m,
+            fields,
+            Array.Empty<string>(),
+            Array.Empty<string>(),
+            new DocumentProcessMeta(
+                0,
+                "stored",
+                document.PipelineVersion ?? string.Empty,
+                document.ModelVersion ?? string.Empty,
+                0
+            )
         );
     }
 

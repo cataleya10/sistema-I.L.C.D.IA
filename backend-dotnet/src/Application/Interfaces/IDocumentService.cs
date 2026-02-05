@@ -12,6 +12,7 @@ public interface IDocumentService
     Task<DocumentProcessResponse> ProcessNowAsync(Guid id, CancellationToken cancellationToken);
     Task UpdateFieldsAsync(Guid id, DocumentFieldsUpdateRequest request, CancellationToken cancellationToken);
     Task MarkFailedAsync(Guid id, string reason, CancellationToken cancellationToken);
+    Task DeleteAsync(Guid id, CancellationToken cancellationToken);
     Task<IReadOnlyList<ProcessingLogDto>> GetLogsAsync(Guid id, CancellationToken cancellationToken);
 }
 

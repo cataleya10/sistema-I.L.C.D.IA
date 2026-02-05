@@ -29,6 +29,8 @@ builder.Services
             new JsonStringEnumConverter(new UpperSnakeCaseNamingPolicy()));
     });
 
+builder.Services.AddDataProtection();
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {

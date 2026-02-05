@@ -7,7 +7,7 @@ import { DocumentStatus } from '../models/document.models';
   standalone: true,
   imports: [CommonModule],
   template: `
-    <span class="badge" [ngClass]="statusClass">{{ status }}</span>
+    <span class="badge" [ngClass]="statusClass">{{ statusLabel }}</span>
   `,
   styles: [
     `
@@ -46,5 +46,22 @@ export class StatusBadgeComponent {
 
   get statusClass(): string {
     return this.status.toLowerCase();
+  }
+
+  get statusLabel(): string {
+    switch (this.status) {
+      case 'UPLOADED':
+        return 'CARGADO';
+      case 'PROCESSING':
+        return 'PROCESANDO';
+      case 'READY':
+        return 'LISTO';
+      case 'NEEDS_REVIEW':
+        return 'REVISAR';
+      case 'FAILED':
+        return 'FALLÓ';
+      default:
+        return this.status;
+    }
   }
 }

@@ -58,6 +58,7 @@ Respuesta (JSON):
 - **POST** `/api/documents/{id}/process`
 - **PUT** `/api/documents/{id}/fields`
 - **GET** `/api/documents/{id}/logs`
+- **DELETE** `/api/documents/{id}`
 - **GET** `/api/system/info`
 - **GET** `/api/system/metrics`
 

@@ -28,6 +28,63 @@ if _critical_path.exists():
     except Exception:
         CRITICAL_FIELDS = DEFAULT_CRITICAL_FIELDS.copy()
 
+_LOW_CONF_DROP_BY_TYPE = {
+    "INE": {
+        "nombres",
+        "apellido_paterno",
+        "apellido_materno",
+        "fecha",
+        "entidad_nacimiento",
+        "anio_registro",
+    },
+    "ACTA_NACIMIENTO": {
+        "libro",
+        "tomo",
+        "oficialia",
+        "registro_civil",
+        "juez",
+        "primer_apellido",
+        "segundo_apellido",
+        "anio_registro",
+    },
+    "COMPROBANTE_DOMICILIO": {
+        "periodo",
+    },
+    "CONSTANCIA_SITUACION_FISCAL": {
+        "cp",
+        "id_cif",
+        "fecha_emision",
+    },
+    "CURP": {
+        "entidad_registro",
+    },
+    "NSS": {
+        "fecha_documento",
+        "folio_solicitud",
+    },
+}
+
+_INVALID_DROP_BY_TYPE = {
+    "ACTA_NACIMIENTO": {"registro_civil", "juez"},
+}
+
+
+def _postprocess_fields(doc_type: str, fields: list[dict]) -> list[dict]:
+    drop_low = _LOW_CONF_DROP_BY_TYPE.get(doc_type, set())
+    drop_invalid = _INVALID_DROP_BY_TYPE.get(doc_type, set())
+    cleaned: list[dict] = []
+    for field in fields:
+        key = field.get("key")
+        if key == "texto_detectado":
+            cleaned.append(field)
+            continue
+        if key in drop_low and field.get("confidence", 1) < 0.7:
+            continue
+        if key in drop_invalid and field.get("valid") is False:
+            continue
+        cleaned.append(field)
+    return cleaned
+
 
 async def process_document(file, document_id: str, source: str, options: str | None):
     start = time.time()
@@ -57,6 +114,11 @@ async def process_document(file, document_id: str, source: str, options: str | N
         doc_confidence = max(doc_confidence, 0.85)
     fields = await extract_fields(doc_type, ocr_text, ocr_boxes, extracted_text, file.filename)
     fields = await validate_fields(fields)
+    fields = _postprocess_fields(doc_type, fields)
+    critical_keys = set(CRITICAL_FIELDS.get(doc_type, []))
+    for field in fields:
+        if field.get("key") in critical_keys and field.get("valid") and field.get("confidence", 0) < 0.8:
+            field["confidence"] = 0.8
 
     required = CRITICAL_FIELDS.get(doc_type, [])
     invalid_critical = []

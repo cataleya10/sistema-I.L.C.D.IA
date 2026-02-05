@@ -46,10 +46,7 @@
     "banco",
     "clabe",
     "cuenta",
-    "titular",
-    "rfc",
-    "fecha_corte",
-    "periodo"
+    "titular"
   ],
   "CONSTANCIA_SITUACION_FISCAL": [
     "rfc",
@@ -58,4 +55,3 @@
     "domicilio"
   ]
 }
-

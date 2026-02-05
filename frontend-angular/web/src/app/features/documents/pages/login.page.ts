@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component } from '@angular/core';
+import { Component, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { AuthService } from '../../../core/services/auth.service';
 import { Router } from '@angular/router';
@@ -53,12 +53,18 @@ import { Router } from '@angular/router';
     `
   ]
 })
-export class LoginPage {
+export class LoginPage implements OnInit {
   username = '';
   password = '';
   error = false;
 
   constructor(private readonly auth: AuthService, private readonly router: Router) {}
+
+  ngOnInit(): void {
+    if (this.auth.getToken()) {
+      this.router.navigate(['/documents']);
+    }
+  }
 
   submit(): void {
     this.error = false;

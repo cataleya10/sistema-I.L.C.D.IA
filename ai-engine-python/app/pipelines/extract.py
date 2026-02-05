@@ -243,6 +243,71 @@ def _normalize_keyword(text: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", text.upper())
 
 
+def _is_reasonable_acta_optional(value: str) -> bool:
+    if not value:
+        return False
+    cleaned = _normalize_text(value).upper()
+    if len(cleaned) > 30:
+        return False
+    if any(token in cleaned for token in ["FIRMA", "ELECTRON", "EXPEDICION", "CERTIF", "ANOTAC", "REGLAMENTO"]):
+        return False
+    letters = sum(1 for ch in cleaned if ch.isalpha())
+    return letters >= 2
+
+
+_LOW_CONF_DROP_BY_TYPE = {
+    "INE": {
+        "nombres",
+        "apellido_paterno",
+        "apellido_materno",
+        "fecha",
+        "entidad_nacimiento",
+        "anio_registro",
+    },
+    "ACTA_NACIMIENTO": {
+        "libro",
+        "tomo",
+        "oficialia",
+        "registro_civil",
+        "juez",
+        "primer_apellido",
+        "segundo_apellido",
+        "anio_registro",
+    },
+    "COMPROBANTE_DOMICILIO": {
+        "periodo",
+    },
+    "CONSTANCIA_SITUACION_FISCAL": {
+        "cp",
+        "id_cif",
+        "fecha_emision",
+    },
+    "CURP": {
+        "entidad_registro",
+    },
+    "NSS": {
+        "fecha_documento",
+        "folio_solicitud",
+    },
+}
+
+
+def _postprocess_fields(document_type: str, fields: list[dict]) -> list[dict]:
+    cleaned = []
+    drop_low = _LOW_CONF_DROP_BY_TYPE.get(document_type, set())
+    for field in fields:
+        key = field.get("key")
+        if key == "texto_detectado":
+            cleaned.append(field)
+            continue
+        if key in drop_low and field.get("confidence", 1) < 0.7:
+            continue
+        if key in {"registro_civil", "juez"} and field.get("valid") is False:
+            continue
+        cleaned.append(field)
+    return cleaned
+
+
 def _label_key(text: str) -> str:
     text = text.upper()
     text = text.replace("0", "O").replace("1", "I").replace("5", "S").replace("8", "B")
@@ -1884,6 +1949,9 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
             ]:
                 if key in acta_box_values:
                     value = acta_box_values[key]["value"]
+                    if key in {"libro", "tomo", "oficialia", "registro_civil", "juez"}:
+                        if not _is_reasonable_acta_optional(value):
+                            continue
                     if key == "fecha":
                         value = _normalize_date_value(value)
                     if key in {"fecha_nacimiento", "fecha_registro"}:
@@ -2179,4 +2247,4 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
             for value in name_curps:
                 fields.append(_make_field("curp", "CURP", _normalize_alnum(value), ocr_boxes, confidence=0.9))
 
-    return _dedupe_fields(fields)
+    return _dedupe_fields(_postprocess_fields(document_type, fields))

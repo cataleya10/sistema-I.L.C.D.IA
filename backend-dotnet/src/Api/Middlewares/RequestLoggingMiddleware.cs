@@ -18,7 +18,6 @@ public class RequestLoggingMiddleware
     public async Task InvokeAsync(HttpContext context)
     {
         var stopwatch = Stopwatch.StartNew();
-        _metrics.IncrementRequest();
         context.Response.OnStarting(() =>
         {
             context.Response.Headers["X-Request-Duration-ms"] = stopwatch.ElapsedMilliseconds.ToString();
@@ -26,6 +25,7 @@ public class RequestLoggingMiddleware
         });
         await _next(context);
         stopwatch.Stop();
+        _metrics.Observe(stopwatch.ElapsedMilliseconds, context.Response.StatusCode);
 
         var correlationId = context.Response.Headers["X-Correlation-Id"].ToString();
         var user = context.User?.Identity?.Name ?? "anonymous";
@@ -39,9 +39,5 @@ public class RequestLoggingMiddleware
             correlationId
         );
 
-        if (context.Response.StatusCode >= 500)
-        {
-            _metrics.IncrementError();
-        }
     }
 }

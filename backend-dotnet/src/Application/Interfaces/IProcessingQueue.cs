@@ -11,6 +11,7 @@ public interface IProcessingQueue
 public interface IProcessingTracker
 {
     (Task<DocumentProcessResponse> Task, bool Created) Register(Guid documentId);
+    bool TryGet(Guid documentId, out Task<DocumentProcessResponse> task);
     void Complete(Guid documentId, DocumentProcessResponse response);
     void Fail(Guid documentId, Exception exception);
     void Cancel(Guid documentId);

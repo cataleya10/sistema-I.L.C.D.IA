@@ -1,4 +1,5 @@
 import { Component } from '@angular/core';
+import { CommonModule } from '@angular/common';
 import { DropzoneComponent } from '../../../shared/components/dropzone.component';
 import { DocumentsService } from '../services/documents.service';
 import { HttpErrorResponse } from '@angular/common/http';
@@ -7,7 +8,7 @@ import { ToastNotificationComponent } from '../../../shared/components/toast-not
 @Component({
   selector: 'app-documents-upload-page',
   standalone: true,
-  imports: [DropzoneComponent, ToastNotificationComponent],
+  imports: [CommonModule, DropzoneComponent, ToastNotificationComponent],
   template: `
     <section class="page">
       <header>

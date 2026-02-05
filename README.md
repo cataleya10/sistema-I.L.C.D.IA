@@ -13,6 +13,7 @@ Sistema web empresarial para carga, clasificacion y extraccion de documentos ofi
 - Motor IA con OCR, clasificacion y extraccion por tipo.
 - Procesamiento sincrono usando cola + worker (la API espera el resultado).
 - Correccion manual de campos desde el frontend (Admin y User).
+- Métricas básicas en `GET /api/system/metrics` (requests, errores, latencias).
 
 ## Requisitos
 - Node 24.11.0 / npm 11.6.1

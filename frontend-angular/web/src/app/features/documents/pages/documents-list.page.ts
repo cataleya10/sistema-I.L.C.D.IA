@@ -31,13 +31,23 @@ import { DocumentSummary, DocumentStatus, DocumentType } from '../../../shared/m
       <div class="loading" *ngIf="isLoading">Cargando documentos...</div>
       <div class="error" *ngIf="errorMessage && !isLoading">{{ errorMessage }}</div>
       <div class="list" *ngIf="documents.length && !isLoading; else empty">
-        <a class="card" *ngFor="let doc of documents" [routerLink]="['/documents', doc.id]">
-          <div>
-            <h3>{{ doc.original_filename }}</h3>
-            <p>{{ doc.document_type }}</p>
-          </div>
-          <app-status-badge [status]="doc.status" />
-        </a>
+        <div class="card" *ngFor="let doc of documents">
+          <a class="card-link" [routerLink]="['/documents', doc.id]">
+            <div>
+              <h3>{{ doc.original_filename }}</h3>
+              <p>{{ doc.document_type }}</p>
+            </div>
+            <app-status-badge [status]="doc.status" />
+          </a>
+          <button
+            type="button"
+            class="danger"
+            (click)="confirmDelete(doc, $event)"
+            [disabled]="isLoading"
+          >
+            Eliminar
+          </button>
+        </div>
       </div>
       <div class="pagination">
         <button type="button" class="ghost" (click)="prevPage()" [disabled]="page <= 1 || isLoading">Anterior</button>
@@ -105,6 +115,13 @@ import { DocumentSummary, DocumentStatus, DocumentType } from '../../../shared/m
         border-radius: 12px;
         border: 1px solid #e5e7eb;
         padding: 16px;
+        gap: 12px;
+      }
+      .card-link {
+        display: flex;
+        flex: 1;
+        justify-content: space-between;
+        align-items: center;
         text-decoration: none;
         color: inherit;
       }
@@ -115,6 +132,17 @@ import { DocumentSummary, DocumentStatus, DocumentType } from '../../../shared/m
       p {
         margin: 4px 0 0;
         color: #6b7280;
+      }
+      .danger {
+        background: #ef4444;
+        color: #fff;
+        padding: 6px 12px;
+        border-radius: 10px;
+        border: none;
+        font-size: 12px;
+      }
+      .danger[disabled] {
+        opacity: 0.6;
       }
     `
   ]
@@ -203,6 +231,26 @@ export class DocumentsListPage implements OnInit {
     }
     this.page -= 1;
     this.load();
+  }
+
+  confirmDelete(doc: DocumentSummary, event: Event): void {
+    event.preventDefault();
+    event.stopPropagation();
+    const ok = window.confirm(`¿Eliminar "${doc.original_filename}"? Esta acción no se puede deshacer.`);
+    if (!ok) {
+      return;
+    }
+    this.isLoading = true;
+    this.documentsService.delete(doc.id).subscribe({
+      next: () => this.load(),
+      error: (err) => {
+        this.errorMessage = this.resolveErrorMessage(
+          err,
+          'No se pudo eliminar el documento. Intenta de nuevo.'
+        );
+        this.isLoading = false;
+      }
+    });
   }
 
   private resolveErrorMessage(error: unknown, fallback: string): string {

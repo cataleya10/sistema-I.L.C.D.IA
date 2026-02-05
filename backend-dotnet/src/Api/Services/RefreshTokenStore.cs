@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Options;
 using Shared.Options;
 
@@ -13,12 +14,18 @@ public sealed class RefreshTokenStore
     private readonly ILogger<RefreshTokenStore> _logger;
     private readonly object _lock = new();
     private readonly string _storagePath;
+    private readonly IDataProtector _protector;
 
-    public RefreshTokenStore(IOptions<RefreshTokenOptions> options, ILogger<RefreshTokenStore> logger, IHostEnvironment env)
+    public RefreshTokenStore(
+        IOptions<RefreshTokenOptions> options,
+        ILogger<RefreshTokenStore> logger,
+        IHostEnvironment env,
+        IDataProtectionProvider dataProtectionProvider)
     {
         _options = options.Value;
         _logger = logger;
         _storagePath = ResolvePath(_options.StoragePath, env.ContentRootPath);
+        _protector = dataProtectionProvider.CreateProtector("RefreshTokenStore.v1");
         LoadFromDisk();
         RevokeExpired();
     }
@@ -68,7 +75,17 @@ public sealed class RefreshTokenStore
                 return;
             }
 
-            var json = File.ReadAllText(_storagePath);
+            var payload = File.ReadAllText(_storagePath);
+            string json;
+            try
+            {
+                json = _protector.Unprotect(payload);
+            }
+            catch (CryptographicException)
+            {
+                json = payload;
+                _logger.LogWarning("Refresh token store is not encrypted yet. It will be encrypted on next write.");
+            }
             var entries = JsonSerializer.Deserialize<List<RefreshTokenEntry>>(json) ?? new List<RefreshTokenEntry>();
             foreach (var entry in entries)
             {
@@ -97,7 +114,8 @@ public sealed class RefreshTokenStore
                 }
                 var entries = _tokens.Values.ToList();
                 var json = JsonSerializer.Serialize(entries);
-                File.WriteAllText(_storagePath, json);
+                var payload = _protector.Protect(json);
+                File.WriteAllText(_storagePath, payload);
             }
             catch (Exception ex)
             {

@@ -188,6 +188,14 @@ public class DocumentsController : ControllerBase
         return NoContent();
     }
 
+    [HttpDelete("{id:guid}")]
+    [RequireRole("Admin")]
+    public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
+    {
+        await _documentService.DeleteAsync(id, cancellationToken);
+        return NoContent();
+    }
+
     private static string BuildRtf(DocumentDetailDto detail)
     {
         static string Escape(string? value)

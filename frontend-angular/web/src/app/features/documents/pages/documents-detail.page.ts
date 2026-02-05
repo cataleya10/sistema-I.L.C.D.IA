@@ -500,17 +500,21 @@ export class DocumentsDetailPage implements OnInit {
     const fieldMap = new Map(
       document.fields.map((field) => [field.key.toLowerCase(), field])
     );
-    return template.map((field) => {
-      const resolved = fieldMap.get(field.key.toLowerCase());
-      return {
-        key: field.key,
-        label: field.label,
-        value: resolved?.value ?? null,
-        corrected_value: resolved?.corrected_value ?? null,
-        valid: resolved?.valid ?? true
-      };
-    });
-  }
+      return template.map((field) => {
+        const resolved = fieldMap.get(field.key.toLowerCase());
+        return {
+          key: field.key,
+          label: field.label,
+          value: resolved?.value ?? null,
+          confidence: resolved?.confidence ?? 0,
+          corrected_value: resolved?.corrected_value ?? null,
+          valid: resolved?.valid ?? true,
+          validation_errors: resolved?.validation_errors ?? [],
+          source: resolved?.source,
+          corrected: resolved?.corrected ?? false
+        };
+      });
+    }
 
   private loadLogs(id: string): void {
     this.documents.getLogs(id).subscribe({

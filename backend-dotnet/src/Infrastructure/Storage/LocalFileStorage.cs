@@ -38,4 +38,13 @@ public class LocalFileStorage : IFileStorage
     }
 
     public bool Exists(string storedPath) => File.Exists(storedPath);
+
+    public Task DeleteAsync(string storedPath, CancellationToken cancellationToken)
+    {
+        if (File.Exists(storedPath))
+        {
+            File.Delete(storedPath);
+        }
+        return Task.CompletedTask;
+    }
 }

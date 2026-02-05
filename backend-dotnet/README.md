@@ -12,6 +12,7 @@ dotnet run --project src/Api
 - `PythonAi:ApiKey` permite compartir la llave con el motor IA.
 - `Cors` y `RateLimiting` permiten ajustar políticas desde configuración.
 - Base de datos pendiente.
+- Refresh tokens se almacenan cifrados en `RefreshTokens:StoragePath` usando Data Protection.
 
 ## Endpoints
 - `POST /api/auth/login`

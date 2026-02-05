@@ -16,6 +16,18 @@ public sealed class ProcessingTracker : IProcessingTracker
         return (existing.Task, created);
     }
 
+    public bool TryGet(Guid documentId, out Task<DocumentProcessResponse> task)
+    {
+        if (_inFlight.TryGetValue(documentId, out var tcs))
+        {
+            task = tcs.Task;
+            return true;
+        }
+
+        task = Task.FromResult<DocumentProcessResponse>(null!);
+        return false;
+    }
+
     public void Complete(Guid documentId, DocumentProcessResponse response)
     {
         if (_inFlight.TryRemove(documentId, out var tcs))

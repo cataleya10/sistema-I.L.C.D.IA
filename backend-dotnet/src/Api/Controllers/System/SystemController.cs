@@ -41,6 +41,11 @@ public class SystemController : ControllerBase
         {
             requests = snapshot.Requests,
             errors = snapshot.Errors,
+            client_errors = snapshot.ClientErrors,
+            avg_duration_ms = snapshot.AvgDurationMs,
+            max_duration_ms = snapshot.MaxDurationMs,
+            started_at_utc = snapshot.StartedAtUtc,
+            uptime_seconds = (long)(DateTime.UtcNow - snapshot.StartedAtUtc).TotalSeconds,
             timestamp = DateTime.UtcNow
         });
     }

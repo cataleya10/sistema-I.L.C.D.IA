@@ -14,7 +14,7 @@ CLAVE_ELECTOR_REGEX = re.compile(r"^[A-Z0-9]{6,18}$", re.IGNORECASE)
 SECCION_REGEX = re.compile(r"^\d{3,6}$")
 NAME_TEXT_REGEX = re.compile(r"^[A-ZÁÉÍÓÚÑ .'-]{3,}$", re.IGNORECASE)
 GENERIC_TEXT_REGEX = re.compile(r"^[A-ZÁÉÍÓÚÑ0-9 .'-]{3,}$", re.IGNORECASE)
-VIGENCIA_REGEX = re.compile(r"^(\d{4}/\d{4}|\d{2}/\d{2}/\d{4})$")
+VIGENCIA_REGEX = re.compile(r"^(\d{4}([/-]\d{4})?|\d{2}/\d{2}/\d{4})$")
 STATE_CODES = {
     "AS", "BC", "BS", "CC", "CL", "CM", "CS", "CH", "DF", "DG", "GT", "GR",
     "HG", "JC", "MC", "MN", "MS", "NT", "NL", "OC", "PL", "QT", "QR", "SP",
@@ -148,6 +148,11 @@ def validate_generic_text(value: str) -> tuple[bool, list[str]]:
 
 
 def validate_vigencia(value: str) -> tuple[bool, list[str]]:
-    if not VIGENCIA_REGEX.match(value.strip()):
-        return False, ["Vigencia inválida."]
+    text = value.strip()
+    if not VIGENCIA_REGEX.match(text):
+        return False, ["Vigencia inv?lida."]
+    if re.fullmatch(r"\d{4}", text):
+        year = int(text)
+        if year < 1990 or year > 2100:
+            return False, ["Vigencia fuera de rango."]
     return True, []
