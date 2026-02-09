@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, OnInit } from '@angular/core';
+import { Component, OnDestroy, OnInit } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { DocumentViewerComponent } from '../../../shared/components/document-viewer.component';
@@ -300,7 +300,7 @@ import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
     `
   ]
 })
-export class DocumentsDetailPage implements OnInit {
+export class DocumentsDetailPage implements OnInit, OnDestroy {
   document: DocumentDetail | null = null;
   logs: ProcessingLog[] = [];
   message: string | null = null;
@@ -313,6 +313,10 @@ export class DocumentsDetailPage implements OnInit {
   isSaving = false;
   isDownloading = false;
   displayFields: DocumentDetail['fields'] = [];
+  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private pollAttempts = 0;
+  private readonly maxPollAttempts = 60;
+  private pollInFlight = false;
 
   constructor(private readonly route: ActivatedRoute, private readonly documents: DocumentsService) {}
 
@@ -324,6 +328,10 @@ export class DocumentsDetailPage implements OnInit {
     }
   }
 
+  ngOnDestroy(): void {
+    this.stopProcessingPoll();
+  }
+
   process(): void {
     if (!this.document) {
       return;
@@ -331,9 +339,10 @@ export class DocumentsDetailPage implements OnInit {
     this.isProcessing = true;
     this.documents.process(this.document.id).subscribe({
       next: () => {
-        this.message = 'Procesamiento completado.';
+        this.message = 'Procesamiento en cola.';
         this.load(this.document!.id);
         this.loadLogs(this.document!.id);
+        this.startProcessingPoll(this.document!.id);
         this.isProcessing = false;
       },
       error: () => {
@@ -350,9 +359,10 @@ export class DocumentsDetailPage implements OnInit {
     this.isProcessing = true;
     this.documents.reprocess(this.document.id).subscribe({
       next: () => {
-        this.message = 'Reprocesamiento iniciado.';
+        this.message = 'Reprocesamiento solicitado.';
         this.load(this.document!.id);
         this.loadLogs(this.document!.id);
+        this.startProcessingPoll(this.document!.id);
         this.isProcessing = false;
       },
       error: () => {
@@ -483,9 +493,15 @@ export class DocumentsDetailPage implements OnInit {
           file_url: this.documents.getFileUrl(data.id)
         };
         this.displayFields = this.mapDisplayFields(this.document);
+        if (this.document.status === 'PROCESSING') {
+          this.startProcessingPoll(this.document.id);
+        } else {
+          this.stopProcessingPoll();
+        }
         this.isLoading = false;
       },
       error: () => {
+        this.stopProcessingPoll();
         this.message = 'No se pudo cargar el documento.';
         this.isLoading = false;
       }
@@ -529,6 +545,47 @@ export class DocumentsDetailPage implements OnInit {
         this.missingCritical = [];
       }
     });
+  }
+
+  private startProcessingPoll(id: string): void {
+    this.stopProcessingPoll();
+    this.pollAttempts = 0;
+    this.pollTimer = setInterval(() => {
+      if (this.pollInFlight) {
+        return;
+      }
+      this.pollInFlight = true;
+      this.pollAttempts += 1;
+      this.documents.getProcessStatus(id).subscribe({
+        next: (status) => {
+          this.pollInFlight = false;
+          if (status.status === 'READY' || status.status === 'NEEDS_REVIEW' || status.status === 'FAILED') {
+            this.stopProcessingPoll();
+            this.load(id);
+            this.loadLogs(id);
+            this.message = status.status === 'FAILED' ? 'El procesamiento terminó con error.' : 'Procesamiento completado.';
+            return;
+          }
+
+          if (this.pollAttempts >= this.maxPollAttempts) {
+            this.stopProcessingPoll();
+            this.message = 'El procesamiento sigue en curso. Actualiza para consultar estado.';
+          }
+        },
+        error: () => {
+          this.pollInFlight = false;
+          this.stopProcessingPoll();
+        }
+      });
+    }, 2000);
+  }
+
+  private stopProcessingPoll(): void {
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+    this.pollInFlight = false;
   }
 
   private extractMissingCritical(logs: ProcessingLog[]): string[] {

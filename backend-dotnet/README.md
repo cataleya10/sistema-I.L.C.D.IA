@@ -11,7 +11,7 @@ dotnet run --project src/Api
 - `appsettings.json` contiene JWT, Storage y SystemInfo.
 - `PythonAi:ApiKey` permite compartir la llave con el motor IA.
 - `Cors` y `RateLimiting` permiten ajustar políticas desde configuración.
-- Base de datos pendiente.
+- Persistencia con EF Core (`InMemory` por defecto, PostgreSQL disponible por configuracion).
 - Refresh tokens se almacenan cifrados en `RefreshTokens:StoragePath` usando Data Protection.
 
 ## Endpoints
@@ -23,6 +23,7 @@ dotnet run --project src/Api
 - `GET /api/documents/{id}`
 - `GET /api/documents/{id}/file`
 - `POST /api/documents/{id}/process`
+- `GET /api/documents/{id}/process/status`
 - `PUT /api/documents/{id}/fields`
 - `GET /api/documents/{id}/logs`
 - `GET /api/system/info`

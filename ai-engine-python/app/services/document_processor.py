@@ -9,6 +9,62 @@ from app.pipelines.classify import classify_document
 from app.pipelines.extract import extract_fields
 from app.pipelines.validate import validate_fields
 
+SERVICE_TEXT_HINTS = {
+    "TELMEX",
+    "TELEFONOS DE MEXICO",
+    "TELMEX-TEL",
+    "RECIBO",
+    "LINEA DE CAPTURA",
+    "REFERENCIA UNICA",
+    "NUMERO TELEFONICO",
+    "PAGAR ANTES DE",
+    "TOTAL A PAGAR",
+    "NO. DE CUENTA",
+    "NO DE CUENTA",
+}
+
+CSF_STRONG_HINTS = {
+    "CONSTANCIA DE SITUACION FISCAL",
+    "CEDULA DE IDENTIFICACION FISCAL",
+    "ID CIF",
+}
+
+SERVICE_FILENAME_HINTS = {
+    "TELMEX",
+    "RECIBO",
+    "COMPROBANTE",
+    "DOMICILIO",
+    "CFE",
+    "TOTALPLAY",
+    "IZZI",
+    "MEGACABLE",
+}
+
+
+def _looks_like_service_document(text: str, filename: str | None) -> bool:
+    upper_text = (text or "").upper()
+    upper_name = (filename or "").upper()
+    if any(token in upper_text for token in SERVICE_TEXT_HINTS):
+        return True
+    if any(token in upper_name for token in SERVICE_FILENAME_HINTS):
+        return True
+    return False
+
+
+def _looks_like_csf_document(text: str) -> bool:
+    upper_text = (text or "").upper()
+    if any(token in upper_text for token in CSF_STRONG_HINTS):
+        return True
+    return False
+
+
+def _maybe_override_doc_type(doc_type: str, text: str, filename: str | None) -> tuple[str, str | None]:
+    if doc_type == "CONSTANCIA_SITUACION_FISCAL":
+        if _looks_like_service_document(text, filename) and not _looks_like_csf_document(text):
+            return "COMPROBANTE_DOMICILIO", "Clasificacion ajustada por huellas de recibo/servicio."
+    return doc_type, None
+
+
 DEFAULT_CRITICAL_FIELDS: dict[str, list[str]] = {
     "INE": ["curp", "nombre", "fecha_nacimiento"],
     "CURP": ["curp", "nombre"],
@@ -110,6 +166,7 @@ async def process_document(file, document_id: str, source: str, options: str | N
         ocr_text = ocr_text.replace("\u00a0", " ").replace("\t", " ")
     first_image = images[0] if images else None
     doc_type, doc_confidence = await classify_document(first_image, ocr_text, file.filename)
+    doc_type, doc_type_warning = _maybe_override_doc_type(doc_type, ocr_text, file.filename)
     if (ocr_text or extracted_text) and doc_type != "UNKNOWN":
         doc_confidence = max(doc_confidence, 0.85)
     fields = await extract_fields(doc_type, ocr_text, ocr_boxes, extracted_text, file.filename)
@@ -130,6 +187,8 @@ async def process_document(file, document_id: str, source: str, options: str | N
     processing_ms = int((time.time() - start) * 1000)
 
     warnings: list[str] = []
+    if doc_type_warning:
+        warnings.append(doc_type_warning)
     include_ocr_text = bool(options_data.get("return_ocr_text"))
     include_boxes = bool(options_data.get("return_boxes"))
     if not ocr_text:

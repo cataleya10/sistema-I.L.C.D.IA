@@ -62,6 +62,26 @@ def _predict_nb(model, text: str):
 
 
 def _keyword_override(text: str, compact_text: str, filename: str | None):
+    service_markers = (
+        "RECIBO",
+        "COMISION FEDERAL DE ELECTRICIDAD",
+        "CFE",
+        "TELMEX",
+        "TELCEL",
+        "AT&T",
+        "TOTALPLAY",
+        "IZZI",
+        "MEGACABLE",
+        "AGUA",
+        "PREDIAL",
+        "GAS",
+        "LINEA DE CAPTURA",
+        "REFERENCIA UNICA",
+        "PAGAR ANTES DE",
+        "NUMERO TELEFONICO",
+        "TOTAL A PAGAR",
+    )
+
     if (
         "INSTITUTO NACIONAL ELECTORAL" in text
         or "CREDENCIAL PARA VOTAR" in text
@@ -90,26 +110,26 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         or "TOMO" in text
     ):
         return "ACTA_NACIMIENTO", 0.85
-    if "SITUACION FISCAL" in text or "CEDULA DE IDENTIFICACION FISCAL" in text or "SAT" in text:
+    if any(marker in text for marker in service_markers):
+        return "COMPROBANTE_DOMICILIO", 0.86
+    if (
+        "CONSTANCIA DE SITUACION FISCAL" in text
+        or "CEDULA DE IDENTIFICACION FISCAL" in text
+        or (
+            "SITUACION FISCAL" in text
+            and ("RFC" in text or "REGIMEN" in text or "CIF" in text)
+        )
+        or (
+            "SAT" in text
+            and ("CEDULA DE IDENTIFICACION FISCAL" in text or "CONSTANCIA DE SITUACION FISCAL" in text)
+        )
+    ):
         return "CONSTANCIA_SITUACION_FISCAL", 0.86
     if "CLAVE UNICA DE REGISTRO DE POBLACION" in text or "CURP" in text:
         return "CURP", 0.9
     if "NSS" in text or "IMSS" in text or "SEGURIDAD SOCIAL" in text:
         return "NSS", 0.82
-    if (
-        "RECIBO" in text
-        or "COMISION FEDERAL DE ELECTRICIDAD" in text
-        or "CFE" in text
-        or "TELMEX" in text
-        or "TELCEL" in text
-        or "AT&T" in text
-        or "TOTALPLAY" in text
-        or "IZZI" in text
-        or "MEGACABLE" in text
-        or "AGUA" in text
-        or "PREDIAL" in text
-        or "GAS" in text
-    ):
+    if any(marker in text for marker in service_markers):
         return "COMPROBANTE_DOMICILIO", 0.8
     if (
         "CLABE" in text
@@ -142,7 +162,17 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         return "DATOS_BANCARIOS", 0.8
     if "RFC" in name or "SITUACION" in name:
         return "CONSTANCIA_SITUACION_FISCAL", 0.85
-    if "DOMICILIO" in name or "COMPROBANTE" in name or "RECIBO" in name:
+    if (
+        "DOMICILIO" in name
+        or "COMPROBANTE" in name
+        or "RECIBO" in name
+        or "TELMEX" in name
+        or "TELCEL" in name
+        or "CFE" in name
+        or "TOTALPLAY" in name
+        or "IZZI" in name
+        or "MEGACABLE" in name
+    ):
         return "COMPROBANTE_DOMICILIO", 0.9
     return None, 0.0
 

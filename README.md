@@ -8,10 +8,10 @@ Sistema web empresarial para carga, clasificacion y extraccion de documentos ofi
 - ai-engine-python/app (FastAPI + PaddleOCR)
 
 ## Estado actual
-- MVP funcional sin base de datos (se deja pendiente por solicitud).
+- MVP funcional con persistencia EF Core (modo `InMemory` por defecto en desarrollo).
 - Autenticacion JWT con login.
 - Motor IA con OCR, clasificacion y extraccion por tipo.
-- Procesamiento sincrono usando cola + worker (la API espera el resultado).
+- Procesamiento asincrono usando cola + worker con consulta de estado.
 - Correccion manual de campos desde el frontend (Admin y User).
 - Métricas básicas en `GET /api/system/metrics` (requests, errores, latencias).
 
@@ -20,7 +20,7 @@ Sistema web empresarial para carga, clasificacion y extraccion de documentos ofi
 - .NET 8 SDK
 - Python 3.11+
 
-## Configuracion basica (sin DB)
+## Configuracion basica
 - Copiar `.env.example` a `.env` y definir valores.
 - JWT SigningKey: definir en `Jwt__SigningKey` con una clave fuerte.
 - Refresh tokens persistentes: se almacenan en `storage/refresh_tokens.json`.

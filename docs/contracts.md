@@ -56,8 +56,14 @@ Respuesta (JSON):
 - **GET** `/api/documents/{id}`
 - **GET** `/api/documents/{id}/file`
 - **POST** `/api/documents/{id}/process`
+  - Inicia procesamiento en segundo plano. Puede responder `202 Accepted` con estado `PROCESSING`.
+- **GET** `/api/documents/{id}/process/status`
+  - Devuelve estado actual del procesamiento para polling desde frontend.
+- **POST** `/api/documents/{id}/reprocess`
 - **PUT** `/api/documents/{id}/fields`
 - **GET** `/api/documents/{id}/logs`
+- **POST** `/api/documents/{id}/mark-failed`
+- **GET** `/api/documents/{id}/export/word`
 - **DELETE** `/api/documents/{id}`
 - **GET** `/api/system/info`
 - **GET** `/api/system/metrics`

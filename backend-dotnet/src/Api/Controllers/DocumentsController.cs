@@ -140,6 +140,25 @@ public class DocumentsController : ControllerBase
     public async Task<ActionResult<DocumentProcessResponse>> Process(Guid id, CancellationToken cancellationToken)
     {
         var result = await _documentService.ProcessAsync(id, cancellationToken);
+        if (result.Status == DocumentStatus.Processing)
+        {
+            return Accepted(result);
+        }
+
+        return Ok(result);
+    }
+
+    [HttpGet("{id:guid}/process/status")]
+    [RequireRole("Admin,User")]
+    public async Task<ActionResult<DocumentProcessResponse>> ProcessStatus(Guid id, CancellationToken cancellationToken)
+    {
+        var detail = await _documentService.GetByIdAsync(id, cancellationToken);
+        if (detail is null)
+        {
+            return NotFound("Documento no encontrado.");
+        }
+
+        var result = await _documentService.GetProcessStatusAsync(id, cancellationToken);
         return Ok(result);
     }
 
@@ -147,8 +166,8 @@ public class DocumentsController : ControllerBase
     [RequireRole("Admin")]
     public async Task<ActionResult<DocumentProcessResponse>> Reprocess(Guid id, CancellationToken cancellationToken)
     {
-        var result = await _documentService.ProcessNowAsync(id, cancellationToken);
-        return Ok(result);
+        var result = await _documentService.ReprocessAsync(id, cancellationToken);
+        return Accepted(result);
     }
 
     [HttpPut("{id:guid}/fields")]

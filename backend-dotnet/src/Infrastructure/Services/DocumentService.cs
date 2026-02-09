@@ -157,6 +157,84 @@ public class DocumentService : IDocumentService
     public async Task<DocumentProcessResponse> ProcessAsync(Guid id, CancellationToken cancellationToken)
     {
         var document = await _dbContext.Documents
+            .Include(x => x.Fields)
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+        if (document is null)
+        {
+            throw new InvalidOperationException("Documento no encontrado.");
+        }
+
+        if (document.Status == DocumentStatus.Processing)
+        {
+            var existing = _tracker.Register(document.Id);
+            if (existing.Created)
+            {
+                await _queue.EnqueueAsync(new DocumentProcessJob(document.Id), cancellationToken);
+            }
+
+            return BuildQueuedResponse(document.Id);
+        }
+
+        var wasProcessed = document.Status is DocumentStatus.Ready or DocumentStatus.NeedsReview;
+        document.Status = DocumentStatus.Processing;
+        document.ErrorMessage = null;
+        _dbContext.ProcessingLogs.Add(new ProcessingLog
+        {
+            Id = Guid.NewGuid(),
+            DocumentId = document.Id,
+            Stage = "PROCESS",
+            Level = "INFO",
+            Message = wasProcessed
+                ? "Documento encolado para reprocesamiento."
+                : "Documento encolado para procesamiento."
+        });
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        var registration = _tracker.Register(document.Id);
+        if (registration.Created)
+        {
+            await _queue.EnqueueAsync(new DocumentProcessJob(document.Id), cancellationToken);
+        }
+
+        return BuildQueuedResponse(document.Id);
+    }
+
+    public async Task<DocumentProcessResponse> ReprocessAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var document = await _dbContext.Documents
+            .Include(x => x.Fields)
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+        if (document is null)
+        {
+            throw new InvalidOperationException("Documento no encontrado.");
+        }
+
+        document.Status = DocumentStatus.Processing;
+        document.ErrorMessage = null;
+        _dbContext.ProcessingLogs.Add(new ProcessingLog
+        {
+            Id = Guid.NewGuid(),
+            DocumentId = document.Id,
+            Stage = "PROCESS",
+            Level = "INFO",
+            Message = "Documento encolado para reprocesamiento."
+        });
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        var registration = _tracker.Register(document.Id);
+        if (registration.Created)
+        {
+            await _queue.EnqueueAsync(new DocumentProcessJob(document.Id), cancellationToken);
+        }
+
+        return BuildQueuedResponse(document.Id);
+    }
+
+    public async Task<DocumentProcessResponse> GetProcessStatusAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var document = await _dbContext.Documents
             .AsNoTracking()
             .Include(x => x.Fields)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
@@ -171,39 +249,25 @@ public class DocumentService : IDocumentService
             return BuildResponseFromDocument(document);
         }
 
-        if (document.Status == DocumentStatus.Processing)
+        if (document.Status == DocumentStatus.Failed)
         {
-            if (_tracker.TryGet(document.Id, out var existingTask))
-            {
-                try
-                {
-                    return await existingTask.WaitAsync(cancellationToken);
-                }
-                catch (OperationCanceledException)
-                {
-                    _tracker.Cancel(document.Id);
-                    throw;
-                }
-            }
+            var errors = string.IsNullOrWhiteSpace(document.ErrorMessage)
+                ? Array.Empty<string>()
+                : new[] { document.ErrorMessage };
 
-            return BuildQueuedResponse(document.Id);
-        }
-
-        var registration = _tracker.Register(document.Id);
-        if (registration.Created)
-        {
-            await _queue.EnqueueAsync(new DocumentProcessJob(document.Id), cancellationToken);
+            return new DocumentProcessResponse(
+                document.Id,
+                DocumentStatus.Failed,
+                document.DocumentType,
+                document.Confidence ?? 0m,
+                Array.Empty<DocumentFieldResultDto>(),
+                Array.Empty<string>(),
+                errors,
+                new DocumentProcessMeta(0, "pending", "", "", 0)
+            );
         }
 
-        try
-        {
-            return await registration.Task.WaitAsync(cancellationToken);
-        }
-        catch (OperationCanceledException)
-        {
-            _tracker.Cancel(document.Id);
-            throw;
-        }
+        return BuildQueuedResponse(document.Id);
     }
 
     public async Task<DocumentProcessResponse> ProcessNowAsync(Guid id, CancellationToken cancellationToken)

@@ -39,7 +39,17 @@ export class AuthService {
   }
 
   getToken(): string | null {
-    return localStorage.getItem(this.tokenKey);
+    const token = localStorage.getItem(this.tokenKey);
+    if (!token) {
+      return null;
+    }
+
+    if (this.isTokenExpired(token)) {
+      this.logout();
+      return null;
+    }
+
+    return token;
   }
 
   getRefreshToken(): string | null {
@@ -59,5 +69,35 @@ export class AuthService {
     localStorage.removeItem(this.refreshTokenKey);
     localStorage.removeItem(this.usernameKey);
     localStorage.removeItem(this.roleKey);
+  }
+
+  isAuthenticated(): boolean {
+    return this.getToken() !== null;
+  }
+
+  private isTokenExpired(token: string): boolean {
+    try {
+      const parts = token.split('.');
+      if (parts.length !== 3) {
+        return true;
+      }
+
+      const payload = JSON.parse(this.base64UrlDecode(parts[1])) as { exp?: number };
+      if (!payload.exp) {
+        return true;
+      }
+
+      const now = Math.floor(Date.now() / 1000);
+      return payload.exp <= now;
+    } catch {
+      return true;
+    }
+  }
+
+  private base64UrlDecode(value: string): string {
+    const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+    const padding = normalized.length % 4;
+    const padded = padding ? normalized + '='.repeat(4 - padding) : normalized;
+    return atob(padded);
   }
 }
