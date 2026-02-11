@@ -148,6 +148,27 @@ class ExtractPipelineTests(unittest.TestCase):
 
         self.assertEqual(data.get("referencia"), "023451789012345678")
 
+    def test_extract_telcel_comprobante_with_noisy_ocr(self):
+        ocr_text = "\n".join(
+            [
+                "FACTURA TELCEL",
+                "L1NEA TELCEL 55I234O678",
+                "CUENTA 00I1223344",
+                "REFERENCIA DE PAGO O2345I789OI2345678",
+                "TOTAL A PAGAR $I,549.00",
+                "DOMICILIO DE ENVIO AV INSURGENTES SUR I234 COL DEL VALLE C.P. O3I00 CDMX",
+            ]
+        )
+        fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None, raw_text=ocr_text, filename="telcel.jpg"))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("proveedor"), "TELCEL")
+        self.assertEqual(data.get("numero_servicio"), "5512340678")
+        self.assertEqual(data.get("cuenta"), "0011223344")
+        self.assertEqual(data.get("referencia"), "023451789012345678")
+        self.assertEqual(data.get("cp"), "03100")
+        self.assertIn("INSURGENTES SUR", data.get("domicilio", ""))
+
     def test_extract_cfe_domicilio_from_supply_label(self):
         ocr_text = "\n".join(
             [

@@ -46,7 +46,12 @@ import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
       </div>
 
       <div class="grid">
-        <app-document-viewer [fileUrl]="document.file_url" [mimeType]="document.mime_type ?? null"></app-document-viewer>
+        <app-document-viewer
+          [fileUrl]="previewFileUrl"
+          [mimeType]="previewMimeType"
+          [loading]="isPreviewLoading"
+          [errorMessage]="previewError"
+        ></app-document-viewer>
         <div class="fields">
           <h3>Resultados extraidos</h3>
           <p class="review" *ngIf="document.needs_review">Revision requerida por baja confianza o validacion.</p>
@@ -197,8 +202,13 @@ import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
       }
       .grid {
         display: grid;
-        grid-template-columns: 1.2fr 1fr;
+        grid-template-columns: minmax(380px, 1.15fr) minmax(460px, 1fr);
         gap: 20px;
+        align-items: start;
+      }
+      app-document-viewer,
+      .fields {
+        min-width: 0;
       }
       .fields {
         background: #fff;
@@ -298,6 +308,11 @@ import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
         font-size: 13px;
         color: #6b7280;
       }
+      @media (max-width: 1200px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
     `
   ]
 })
@@ -313,11 +328,16 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
   isProcessing = false;
   isSaving = false;
   isDownloading = false;
+  isPreviewLoading = false;
+  previewFileUrl: string | null = null;
+  previewMimeType: string | null = null;
+  previewError: string | null = null;
   displayFields: DocumentDetail['fields'] = [];
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private pollAttempts = 0;
   private readonly maxPollAttempts = 60;
   private pollInFlight = false;
+  private previewRequestId = 0;
 
   constructor(private readonly route: ActivatedRoute, private readonly documents: DocumentsService) {}
 
@@ -331,6 +351,7 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.stopProcessingPoll();
+    this.revokePreviewFileUrl();
   }
 
   process(): void {
@@ -493,6 +514,7 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
           ...data,
           file_url: this.documents.getFileUrl(data.id)
         };
+        this.loadPreview(data.id, data.mime_type ?? null, data.original_filename ?? '');
         this.displayFields = this.mapDisplayFields(this.document);
         if (this.document.status === 'PROCESSING') {
           this.startProcessingPoll(this.document.id);
@@ -503,6 +525,8 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
       },
       error: () => {
         this.stopProcessingPoll();
+        this.revokePreviewFileUrl();
+        this.previewError = 'No se pudo cargar la vista previa.';
         this.message = 'No se pudo cargar el documento.';
         this.isLoading = false;
       }
@@ -617,6 +641,61 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
       this.pollTimer = null;
     }
     this.pollInFlight = false;
+  }
+
+  private loadPreview(id: string, mimeType: string | null, filename: string): void {
+    this.previewRequestId += 1;
+    const requestId = this.previewRequestId;
+    this.isPreviewLoading = true;
+    this.previewError = null;
+    this.previewMimeType = mimeType;
+    this.revokePreviewFileUrl();
+
+    this.documents.downloadFile(id).subscribe({
+      next: (blob) => {
+        if (requestId !== this.previewRequestId) {
+          return;
+        }
+        this.previewMimeType = this.resolveMimeType(mimeType, blob.type, filename);
+        this.previewFileUrl = window.URL.createObjectURL(blob);
+        this.isPreviewLoading = false;
+      },
+      error: () => {
+        if (requestId !== this.previewRequestId) {
+          return;
+        }
+        this.previewError = 'No se pudo mostrar el archivo en pantalla.';
+        this.isPreviewLoading = false;
+      }
+    });
+  }
+
+  private revokePreviewFileUrl(): void {
+    if (!this.previewFileUrl) {
+      return;
+    }
+    window.URL.revokeObjectURL(this.previewFileUrl);
+    this.previewFileUrl = null;
+  }
+
+  private resolveMimeType(primary: string | null, fallback: string | null, filename: string): string | null {
+    if (primary && primary.trim()) {
+      return primary;
+    }
+    if (fallback && fallback.trim()) {
+      return fallback;
+    }
+    const lower = filename.toLowerCase();
+    if (lower.endsWith('.pdf')) {
+      return 'application/pdf';
+    }
+    if (lower.endsWith('.png')) {
+      return 'image/png';
+    }
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+      return 'image/jpeg';
+    }
+    return null;
   }
 
   private extractMissingCritical(logs: ProcessingLog[]): string[] {

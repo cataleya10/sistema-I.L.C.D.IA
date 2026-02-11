@@ -227,6 +227,7 @@ def _pick_address(lines: list[str]):
     )
     noise_tokens = (
         "TELMEX",
+        "TELCEL",
         "TELEFON",
         "NUMERO DE SERVICIO",
         "LINEA DE CAPTURA",
@@ -1148,10 +1149,18 @@ def _extract_service_from_boxes(ocr_boxes):
         },
         "TELCEL": {
             "REFERENCIA": "referencia",
+            "REFERENCIA DE PAGO": "referencia",
             "CUENTA": "cuenta",
             "NUMERO": "numero_servicio",
+            "NUMERO TELCEL": "numero_servicio",
+            "LINEA TELCEL": "numero_servicio",
+            "LINEA": "numero_servicio",
             "TOTAL": "total",
+            "TOTAL A PAGAR": "total",
+            "IMPORTE A PAGAR": "total",
             "FECHA LIMITE": "fecha_limite",
+            "VENCIMIENTO": "fecha_limite",
+            "PAGAR ANTES DE": "fecha_limite",
         },
         "AT&T": {
             "REFERENCIA": "referencia",
@@ -3356,6 +3365,95 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                         fields.append(_make_field("referencia", "Referencia", candidate, ocr_boxes, confidence=0.94))
                 elif long_numbers:
                     fields.append(_make_field("referencia", "Referencia", long_numbers[0], ocr_boxes, confidence=0.9))
+
+        provider_is_telcel = any(
+            f.get("key") == "proveedor" and "TELCEL" in _normalize_text(str(f.get("value", ""))).upper()
+            for f in fields
+        )
+        filename_is_telcel = "TELCEL" in _normalize_text(filename or "").upper()
+        telcel_in_text = "TELCEL" in full_text or provider_is_telcel or filename_is_telcel
+        if telcel_in_text:
+            telcel_text = re.sub(r"(?<=[A-Z])0(?=[A-Z])", "O", full_text)
+            telcel_text = re.sub(r"(?<=[A-Z])1(?=[A-Z])", "I", telcel_text)
+
+            if not any(f.get("key") == "proveedor" and str(f.get("value", "")).upper() == "TELCEL" for f in fields):
+                fields.append(_make_field("proveedor", "Proveedor", "TELCEL", ocr_boxes, confidence=0.9))
+
+            if not any(f.get("key") == "numero_servicio" and f.get("value") for f in fields):
+                num_match = re.search(
+                    r"(?:LINEA\s+TELCEL|NUMERO\s+TELCEL|NUMERO\s+DE\s+LINEA|NUMERO\s+DE\s+TELEFONO|TELEFONO|NUMERO)\D*((?:[0-9OIL][\s().-]*){10,12})",
+                    telcel_text,
+                )
+                if num_match:
+                    num_value = _normalize_numeric_field(num_match.group(1))
+                    if len(num_value) > 10:
+                        num_value = num_value[-10:]
+                    if re.fullmatch(r"\d{10}", num_value):
+                        fields.append(_make_field("numero_servicio", "Numero de servicio", num_value, ocr_boxes, confidence=0.95))
+
+            if not any(f.get("key") == "cuenta" and f.get("value") for f in fields):
+                cuenta_match = re.search(
+                    r"(?:NO\.?\s*DE\s*CUENTA|NUMERO\s+DE\s+CUENTA|CUENTA)\D*((?:[0-9OIL][\s.-]*){8,24})",
+                    telcel_text,
+                )
+                if cuenta_match:
+                    cuenta_value = _normalize_numeric_field(cuenta_match.group(1))
+                    if 8 <= len(cuenta_value) <= 22:
+                        fields.append(_make_field("cuenta", "Cuenta", cuenta_value, ocr_boxes, confidence=0.93))
+
+            ref_match = re.search(
+                r"(?:REFERENCIA(?:\s+DE\s+PAGO)?|REF(?:ERENCIA)?|LINEA\s+DE\s+CAPTURA)\s*[:#-]?\s*((?:[0-9OIL][\s.-]*){10,30})(?=\s+(?:PAGAR|FECHA|TOTAL|IMPORTE|SALDO|LIMITE|VENC)\b|$)",
+                telcel_text,
+            )
+            if ref_match:
+                ref_value = _normalize_value_for_key("referencia", ref_match.group(1))
+                if ref_value:
+                    fields.append(_make_field("referencia", "Referencia", ref_value, ocr_boxes, confidence=0.93))
+
+            if not any(f.get("key") == "fecha_limite" and f.get("value") for f in fields):
+                limit_match = re.search(
+                    r"(?:PAGAR\s+ANTES\s+DE|FECHA\s*LIMITE(?:\s*DE\s*PAGO)?|VENCIMIENTO|VENCE)\D*([0-9OIL]{1,2}(?:\s+|[-/])[A-Z]{3}(?:\s+|[-/])[0-9OIL]{2,4}|[0-9OIL]{2}[/-][0-9OIL]{2}[/-][0-9OIL]{2,4})",
+                    telcel_text,
+                )
+                if limit_match:
+                    raw_date = limit_match.group(1).upper().replace("O", "0").replace("I", "1").replace("L", "1")
+                    fields.append(_make_field("fecha_limite", "Fecha limite", _normalize_date_value(raw_date), ocr_boxes, confidence=0.9))
+
+            if not any(f.get("key") == "total" and f.get("value") for f in fields):
+                total_match = re.search(
+                    r"(?:TOTAL\s+A\s+PAGAR|IMPORTE\s+A\s+PAGAR|TOTAL|SALDO\s+TOTAL)\D*(\$?\s*[0-9OIL]{1,3}(?:[.,][0-9OIL]{3})*(?:[.,][0-9OIL]{2})?)",
+                    telcel_text,
+                )
+                if total_match:
+                    raw_total = total_match.group(1).upper().replace("O", "0").replace("I", "1").replace("L", "1")
+                    fields.append(_make_field("total", "Total", _normalize_text(raw_total), ocr_boxes, confidence=0.9))
+
+            dom_match = re.search(
+                r"(?:DOMICILIO(?:\s+DE\s+(?:ENVIO|FACTURACION|SERVICIO))?|DIRECCION(?:\s+DE\s+(?:ENVIO|FACTURACION))?)\s*[:\-]?\s*(.{15,220}?)(?=\s+(?:TOTAL|IMPORTE|PAGAR|LIMITE|VENC|REFERENCIA|CUENTA|RFC|TELCEL)\b|$)",
+                telcel_text,
+            )
+            if dom_match:
+                domicilio = _clean_address_value(dom_match.group(1))
+                if len(domicilio) >= 12:
+                    fields.append(_make_field("domicilio", "Domicilio", domicilio, ocr_boxes, confidence=0.92))
+
+            if not any(f.get("key") == "cp" and f.get("value") for f in fields):
+                cp_from_dom = None
+                for f in fields:
+                    if f.get("key") != "domicilio" or not f.get("value"):
+                        continue
+                    cp_candidate = _extract_postal_code(str(f.get("value", "")))
+                    if cp_candidate:
+                        cp_from_dom = cp_candidate
+                        break
+                if cp_from_dom:
+                    fields.append(_make_field("cp", "CP", cp_from_dom, ocr_boxes, confidence=0.9))
+                else:
+                    cp_match = re.search(r"\b([0-9OIL]{5})\b", full_text)
+                    if cp_match:
+                        cp_value = _normalize_value_for_key("cp", cp_match.group(1))
+                        if cp_value:
+                            fields.append(_make_field("cp", "CP", cp_value, ocr_boxes, confidence=0.88))
 
     # CFE fallback: many receipts only expose RMU and no explicit "Referencia" label.
     if document_type == "COMPROBANTE_DOMICILIO":

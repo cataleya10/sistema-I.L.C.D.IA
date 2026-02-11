@@ -43,6 +43,10 @@ export class DocumentsService {
     return `${this.baseUrl}/${id}/file`;
   }
 
+  downloadFile(id: string) {
+    return this.http.get(`${this.baseUrl}/${id}/file`, { responseType: 'blob' });
+  }
+
   process(id: string) {
     return this.http.post<DocumentProcessResponse>(`${this.baseUrl}/${id}/process`, {});
   }
