@@ -8,19 +8,19 @@ Sistema web empresarial para carga, clasificacion y extraccion de documentos ofi
 - ai-engine-python/app (FastAPI + PaddleOCR)
 
 ## Estado actual
-- MVP funcional sin base de datos (se deja pendiente por solicitud).
+- MVP funcional con persistencia EF Core (modo `InMemory` por defecto en desarrollo).
 - Autenticacion JWT con login.
 - Motor IA con OCR, clasificacion y extraccion por tipo.
-- Procesamiento sincrono usando cola + worker (la API espera el resultado).
+- Procesamiento asincrono usando cola + worker con consulta de estado.
 - Correccion manual de campos desde el frontend (Admin y User).
-- Métricas básicas en `GET /api/system/metrics` (requests, errores, latencias).
+- Metricas basicas en `GET /api/system/metrics` (requests, errores, latencias).
 
 ## Requisitos
 - Node 24.11.0 / npm 11.6.1
 - .NET 8 SDK
 - Python 3.11+
 
-## Configuracion basica (sin DB)
+## Configuracion basica
 - Copiar `.env.example` a `.env` y definir valores.
 - JWT SigningKey: definir en `Jwt__SigningKey` con una clave fuerte.
 - Refresh tokens persistentes: se almacenan en `storage/refresh_tokens.json`.
@@ -41,6 +41,10 @@ Sistema web empresarial para carga, clasificacion y extraccion de documentos ofi
 ## Smoke test
 - Ejecutar: `powershell -File scripts/smoke.ps1`
 
+## Verificacion local
+- Ejecutar: `powershell -File scripts/verify-all.ps1`
+- Rapido (sin frontend tests): `powershell -File scripts/verify-all.ps1 -SkipFrontendTests`
+
 ## Flujo MVP (sin BD)
 1) Cargar documento desde el frontend.
 2) Procesar documento (la llamada espera la respuesta del motor IA).
@@ -52,3 +56,6 @@ Sistema web empresarial para carga, clasificacion y extraccion de documentos ofi
 
 ## Contratos
 Ver [docs/contracts.md](docs/contracts.md).
+
+## Reglas OCR
+Ver [docs/ocr-field-normalization.md](docs/ocr-field-normalization.md).

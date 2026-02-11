@@ -36,7 +36,49 @@ function Wait-ForUrl {
     return $false
 }
 
+function Stop-PortListeners {
+    param([int]$port)
+    try {
+        $listeners = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+        if (-not $listeners) { return }
+        $processIds = $listeners | Select-Object -ExpandProperty OwningProcess -Unique
+        foreach ($processId in $processIds) {
+            if ($processId -and $processId -ne $PID) {
+                try { Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue } catch {}
+            }
+        }
+        Start-Sleep -Milliseconds 600
+    } catch {
+        # ignore cleanup failures
+    }
+}
+
+function Invoke-AiPreflight {
+    param([string]$rootPath)
+    Write-Host "Running AI preflight checks..." -ForegroundColor Cyan
+    Push-Location (Join-Path $rootPath "ai-engine-python")
+    try {
+        & py -3 -m py_compile "app/pipelines/extract.py"
+        if ($LASTEXITCODE -ne 0) {
+            throw "Python compile check failed."
+        }
+        & py -3 "tools/run_regressions.py"
+        if ($LASTEXITCODE -ne 0) {
+            throw "Regression suite check failed."
+        }
+        Write-Host "AI preflight checks passed." -ForegroundColor Green
+    } finally {
+        Pop-Location
+    }
+}
+
 $frontendPort = Get-FreePort
+
+Write-Host "Cleaning stale listeners..." -ForegroundColor Cyan
+Stop-PortListeners -port 8000
+Stop-PortListeners -port 5000
+
+Invoke-AiPreflight -rootPath $root
 
 Write-Host "Starting IA Engine..." -ForegroundColor Cyan
 $aiLog = Join-Path $logs "ai-engine.log"
@@ -44,7 +86,7 @@ $aiErr = Join-Path $logs "ai-engine.err.log"
 $ai = Start-Process powershell -PassThru -ArgumentList @(
     '-NoExit',
     '-Command',
-    "Set-Location -LiteralPath '$root\ai-engine-python'; . '$root\\load-env.ps1'; pip install -r requirements.txt; uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    "Set-Location -LiteralPath '$root\ai-engine-python'; . '$root\\load-env.ps1'; uvicorn app.main:app --host 0.0.0.0 --port 8000"
 ) -RedirectStandardOutput $aiLog -RedirectStandardError $aiErr
 
 Write-Host "Starting Backend API..." -ForegroundColor Cyan
@@ -59,7 +101,7 @@ $api = Start-Process powershell -PassThru -ArgumentList @(
 Write-Host "Starting Frontend (port $frontendPort)..." -ForegroundColor Cyan
 $feLog = Join-Path $logs "frontend.log"
 $feErr = Join-Path $logs "frontend.err.log"
-$fe = Start-Process powershell -PassThru -ArgumentList @('-NoExit', '-Command', "Set-Location -LiteralPath '$root\frontend-angular\web'; npm install; npm start -- --port $frontendPort") -RedirectStandardOutput $feLog -RedirectStandardError $feErr
+$fe = Start-Process powershell -PassThru -ArgumentList @('-NoExit', '-Command', "Set-Location -LiteralPath '$root\frontend-angular\web'; npm start -- --port $frontendPort") -RedirectStandardOutput $feLog -RedirectStandardError $feErr
 
 $pidFile = Join-Path $root "start-all.pids.json"
 @{

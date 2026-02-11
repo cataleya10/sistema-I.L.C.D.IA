@@ -1,0 +1,57 @@
+[
+  {
+    "id": "cfe_compact_name_totala",
+    "document_type": "COMPROBANTE_DOMICILIO",
+    "filename": "cfe_regression.pdf",
+    "ocr_text": "CFE COMISION FEDERAL DE ELECTRICIDAD RFC:CFE370814QI0 DAMIANHERNANDEZGABRIEL TOTALA PAGAR: $548 NO.DESERVICI0:795130504593 CUENTA:29DW05A012970875 LIMITE DE PAGO:05 FEB 26 C.P. 24180",
+    "raw_text": "CFE COMISION FEDERAL DE ELECTRICIDAD RFC:CFE370814QI0 DAMIANHERNANDEZGABRIEL TOTALA PAGAR: $548 NO.DESERVICI0:795130504593 CUENTA:29DW05A012970875 LIMITE DE PAGO:05 FEB 26 C.P. 24180",
+    "ocr_lines": [],
+    "expected": {
+      "titular": {
+        "equals": "DAMIAN HERNANDEZ GABRIEL"
+      },
+      "total": {
+        "starts_with": "548"
+      },
+      "cp": {
+        "equals": "24180"
+      }
+    }
+  },
+  {
+    "id": "telmex_customer_block",
+    "document_type": "COMPROBANTE_DOMICILIO",
+    "filename": "telmex_regression.pdf",
+    "ocr_text": "TELMEX CALDERON CORDOVA JOSE ALEJANDRO PUBLICO EN GENERAL CLL DEL GOLFO SN MZ SN LT SN ATASTA ATASTA, CARMEN, CA C.P. 24326 NUMERO: 9386883644 CUENTA: 00001000000711443734 REFERENCIA: 93868836440000549001 PAGAR ANTES DE: 23-ENE-2026 TOTAL A PAGAR 549.00",
+    "raw_text": "TELMEX CALDERON CORDOVA JOSE ALEJANDRO PUBLICO EN GENERAL CLL DEL GOLFO SN MZ SN LT SN ATASTA ATASTA, CARMEN, CA C.P. 24326 NUMERO: 9386883644 CUENTA: 00001000000711443734 REFERENCIA: 93868836440000549001 PAGAR ANTES DE: 23-ENE-2026 TOTAL A PAGAR 549.00",
+    "ocr_lines": [
+      "TELMEX",
+      "CALDERON CORDOVA JOSE ALEJANDRO",
+      "PUBLICO EN GENERAL",
+      "CLL DEL GOLFO SN",
+      "MZ SN LT SN",
+      "ATASTA",
+      "ATASTA, CARMEN, CA",
+      "C.P. 24326",
+      "NUMERO: 9386883644",
+      "CUENTA: 00001000000711443734",
+      "REFERENCIA: 93868836440000549001",
+      "PAGAR ANTES DE: 23-ENE-2026",
+      "TOTAL A PAGAR 549.00"
+    ],
+    "expected": {
+      "titular": {
+        "equals": "CALDERON CORDOVA JOSE ALEJANDRO"
+      },
+      "domicilio": {
+        "contains": "CLL DEL GOLFO SN"
+      },
+      "cp": {
+        "equals": "24326"
+      },
+      "total": {
+        "starts_with": "549"
+      }
+    }
+  }
+]

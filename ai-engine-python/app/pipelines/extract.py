@@ -1,18 +1,21 @@
-import re
+﻿import re
 import json
 import os
+import logging
 
 from app.pipelines.legacy_adapter import legacy_extract_fields
 
+logger = logging.getLogger(__name__)
+
 CURP_PATTERN = re.compile(r"\b[A-Z][AEIOUX][A-Z]{2}\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])[HM][A-Z]{5}[A-Z0-9]\d\b")
-RFC_PATTERN = re.compile(r"\b[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}\b")
+RFC_PATTERN = re.compile(r"\b[A-Z&]{3,4}\d{6}[A-Z0-9]{3}\b")
 NSS_PATTERN = re.compile(r"\b\d{11}\b")
 CLABE_PATTERN = re.compile(r"\b\d{18}\b")
 ACCOUNT_PATTERN = re.compile(r"\b\d{10,16}\b")
 AMOUNT_PATTERN = re.compile(r"\b\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})\b")
 DATE_PATTERN = re.compile(r"\b\d{2}[/-]\d{2}[/-]\d{4}\b")
-NAME_PATTERN = re.compile(r"\b[A-ZÁÉÍÓÚÑ]{2,}(?:\s+[A-ZÁÉÍÓÚÑ]{2,}){1,4}\b")
-RFC_WITH_HOMOCLAVE = re.compile(r"\b[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}\b")
+NAME_PATTERN = re.compile(r"\b[A-Z]{2,}(?:\s+[A-Z]{2,}){1,4}\b")
+RFC_WITH_HOMOCLAVE = re.compile(r"\b[A-Z&]{3,4}\d{6}[A-Z0-9]{3}\b")
 CP_PATTERN = re.compile(r"\b\d{5}\b")
 
 LABEL_MAP = {
@@ -57,23 +60,23 @@ LEGACY_LABELS = {
     "domicilio": "Domicilio",
     "clave_elector": "Clave de elector",
     "curp": "CURP",
-    "anio_registro": "Año de registro",
+    "anio_registro": "Anio de registro",
     "fecha_nacimiento": "Fecha de nacimiento",
-    "seccion": "Sección",
+    "seccion": "Seccion",
     "vigencia": "Vigencia",
     "entidad_registro": "Entidad de registro",
     "municipio_registro": "Municipio de registro",
     "primer_apellido": "Primer apellido",
     "segundo_apellido": "Segundo apellido",
     "lugar_nacimiento": "Lugar de nacimiento",
-    "fecha_emision": "Fecha de emisión",
+    "fecha_emision": "Fecha de emision",
     "nss": "NSS",
     "fecha_documento": "Fecha documento",
     "folio_solicitud": "Folio solicitud",
     "rfc": "RFC",
     "cp": "CP",
     "id_cif": "Id CIF",
-    "regimen": "Régimen",
+    "regimen": "Regimen",
     "banco": "Banco",
     "titular": "Titular",
     "clabe": "CLABE",
@@ -130,6 +133,7 @@ def _load_alias_model():
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
+        logger.exception("Failed to load alias model from %s", path)
         return {}
 
 
@@ -213,15 +217,32 @@ def _pick_address(lines: list[str]):
         "CP",
         "C.P.",
         "CODIGO POSTAL",
-        "CÓDIGO POSTAL",
+        "CODIGO POSTAL",
         "NUM",
-        "NÚM",
+        "NUM",
         "NO.",
         "#",
         "MUNICIPIO",
         "ESTADO",
     )
-    candidates = [line for line in lines if any(k in line for k in keywords)]
+    noise_tokens = (
+        "TELMEX",
+        "TELEFON",
+        "NUMERO DE SERVICIO",
+        "LINEA DE CAPTURA",
+        "REFERENCIA",
+        "CUENTA",
+        "PAGAR",
+        "TOTAL",
+        "SALDO",
+        "IMPORTE",
+    )
+    candidates = [
+        line
+        for line in lines
+        if any(k in line for k in keywords)
+        and not any(token in line for token in noise_tokens)
+    ]
     if not candidates:
         return None
     primary = candidates[0]
@@ -468,9 +489,11 @@ def _extract_acta_from_boxes(ocr_boxes):
             value_regex=regex,
         )
 
-    folio = pick("FOLIO", re.compile(r"\b\d{1,6}\b"))
-    if folio and re.fullmatch(r"\d{1,6}", folio.strip()):
-        result["folio"] = {"value": folio}
+    folio = pick("FOLIO", re.compile(r"\b[0-9OIL]{1,6}\b"))
+    if folio:
+        normalized_folio = _normalize_value_for_key("folio", folio)
+        if normalized_folio:
+            result["folio"] = {"value": normalized_folio}
     fecha = pick("FECHA", DATE_PATTERN)
     if fecha:
         match = DATE_PATTERN.search(fecha)
@@ -494,7 +517,7 @@ def _extract_acta_from_boxes(ocr_boxes):
     def _clean_name_piece(value: str) -> str | None:
         if not value:
             return None
-        cleaned = re.sub(r"[^A-ZÃÃ‰ÃÃ“ÃšÃ‘ ]", " ", value.upper()).strip()
+        cleaned = re.sub(r"[^A-Z ]", " ", value.upper()).strip()
         cleaned = re.sub(r"\s+", " ", cleaned)
         if not cleaned:
             return None
@@ -744,11 +767,15 @@ def _extract_acta_from_boxes(ocr_boxes):
         lines, "NUMERO DE CERTIFICADO DE NACIMIENTO", stop_labels=["IDENTIFICADOR", "ENTIDAD"]
     )
     if numero_certificado:
-        result["numero_certificado"] = {"value": numero_certificado}
+        normalized_cert = _normalize_value_for_key("numero_certificado", numero_certificado)
+        if normalized_cert:
+            result["numero_certificado"] = {"value": normalized_cert}
 
     identificador = _extract_label_value(lines, "IDENTIFICADOR ELECTRONICO", stop_labels=["DATOS", "ENTIDAD"])
     if identificador:
-        result["identificador_electronico"] = {"value": identificador}
+        normalized_id = _normalize_value_for_key("identificador_electronico", identificador)
+        if normalized_id:
+            result["identificador_electronico"] = {"value": normalized_id}
 
     if "sexo" not in result or "fecha_nacimiento" not in result or "lugar_nacimiento" not in result:
         match = re.search(
@@ -811,7 +838,9 @@ def _extract_acta_from_boxes(ocr_boxes):
     if "numero_acta" not in result:
         match = re.search(r"NUMERO DE ACT[AE]\s+([A-Z0-9-]{3,})", full_text)
         if match:
-            result["numero_acta"] = {"value": match.group(1).strip()}
+            normalized_numero_acta = _normalize_value_for_key("numero_acta", match.group(1))
+            if normalized_numero_acta:
+                result["numero_acta"] = {"value": normalized_numero_acta}
 
     return result
 
@@ -1000,10 +1029,10 @@ def _extract_nss_from_boxes(ocr_boxes):
                 continue
             if "HTTP" in upper_raw or "WWW" in upper_raw or ".COM" in upper_raw:
                 continue
-            tokens = re.findall(r"[A-ZÃ‘]+", upper_raw)
+            tokens = re.findall(r"[A-Z]+", upper_raw)
             if len(tokens) != 1:
                 continue
-            candidate = re.sub(r"[^A-ZÃ‘]", "", upper_raw)
+            candidate = re.sub(r"[^A-Z]", "", upper_raw)
             if not candidate or candidate in stop_words:
                 continue
             if candidate.startswith("HOJA"):
@@ -1013,7 +1042,7 @@ def _extract_nss_from_boxes(ocr_boxes):
             if candidate in nombre.replace(" ", ""):
                 continue
             # Single surname-like token
-            if re.fullmatch(r"[A-ZÃ‘]{4,}", candidate):
+            if re.fullmatch(r"[A-Z]{4,}", candidate):
                 nombre = f"{nombre} {candidate}".strip()
                 break
     if nombre:
@@ -1027,9 +1056,19 @@ def _extract_service_from_boxes(ocr_boxes):
     lines = _line_groups(boxes)
     result = {}
 
+    def _parse_amount(value: str | None) -> float | None:
+        if not value:
+            return None
+        raw = str(value).replace("$", "").replace(" ", "")
+        raw = raw.replace(",", "")
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
+
     base_label_map = {
         "NUMERO DE SERVICIO": "numero_servicio",
-        "NÚMERO DE SERVICIO": "numero_servicio",
+        "NUMERO DE SERVICIO": "numero_servicio",
         "NUMERO SERVICIO": "numero_servicio",
         "NO. DE SERVICIO": "numero_servicio",
         "NO DE SERVICIO": "numero_servicio",
@@ -1061,6 +1100,8 @@ def _extract_service_from_boxes(ocr_boxes):
         "CFE": "CFE",
         "COMISION FEDERAL DE ELECTRICIDAD": "CFE",
         "TELMEX": "TELMEX",
+        "TELEFONOS DE MEXICO": "TELMEX",
+        "TELMEX-TEL": "TELMEX",
         "TELCEL": "TELCEL",
         "AT&T": "AT&T",
         "ATT": "AT&T",
@@ -1089,10 +1130,21 @@ def _extract_service_from_boxes(ocr_boxes):
         },
         "TELMEX": {
             "REFERENCIA": "referencia",
+            "REFERENCIA UNICA": "referencia",
+            "LINEA DE CAPTURA": "referencia",
             "CUENTA": "cuenta",
             "NUMERO": "numero_servicio",
+            "NUMERO TELEFONICO": "numero_servicio",
+            "NUMERO DE TELEFONO": "numero_servicio",
+            "TELEFONO": "numero_servicio",
+            "LINEA": "numero_servicio",
             "TOTAL": "total",
+            "TOTAL A PAGAR": "total",
+            "SALDO TOTAL": "total",
+            "IMPORTE A PAGAR": "total",
             "PERIODO": "periodo",
+            "PAGAR ANTES DE": "fecha_limite",
+            "FECHA LIMITE DE PAGO": "fecha_limite",
         },
         "TELCEL": {
             "REFERENCIA": "referencia",
@@ -1181,16 +1233,33 @@ def _extract_service_from_boxes(ocr_boxes):
         "total": AMOUNT_PATTERN,
     }
     for label, key in label_map.items():
+        stop_labels = ["DOMICILIO", "DIRECCION", "FECHA", "TOTAL", "IMPORTE"]
+        if key == "fecha_limite":
+            stop_labels = ["DOMICILIO", "DIRECCION", "TOTAL", "IMPORTE"]
+        if key == "total":
+            stop_labels = ["DOMICILIO", "DIRECCION", "FECHA"]
         value = _extract_label_value(
             lines,
             label,
-            stop_labels=["DOMICILIO", "DIRECCION", "FECHA", "TOTAL", "IMPORTE"],
+            stop_labels=stop_labels,
             value_regex=value_regex_map.get(key),
         )
         if value:
             result[key] = {"value": value}
 
-    # Fallback amount extraction if total missing
+    total_amount = _parse_amount(result.get("total", {}).get("value"))
+    if "total" not in result or total_amount is None or total_amount <= 0:
+        priority_tags = ["TOTAL A PAGAR", "IMPORTE A PAGAR", "SALDO TOTAL"]
+        for line in lines:
+            upper = line["text"].upper()
+            if not any(tag in upper for tag in priority_tags):
+                continue
+            match = AMOUNT_PATTERN.search(line["text"])
+            if match:
+                result["total"] = {"value": match.group(0)}
+                break
+
+    # Generic fallback amount extraction
     if "total" not in result:
         for line in lines:
             if any(tag in line["text"].upper() for tag in ["TOTAL", "IMPORTE", "PAGO"]):
@@ -1286,7 +1355,7 @@ def _extract_ine_from_boxes(ocr_boxes):
             if "<<" not in line.get("text", ""):
                 continue
             raw = line["text"].upper().replace(" ", "")
-            match = re.search(r"([A-ZÑ]+)<<([A-ZÑ]+)<<([A-ZÑ<]+)", raw)
+            match = re.search(r"([A-Z]+)<<([A-Z]+)<<([A-Z<]+)", raw)
             if not match:
                 continue
             last1, last2, first = match.group(1), match.group(2), match.group(3)
@@ -1409,7 +1478,7 @@ def _extract_ine_from_boxes(ocr_boxes):
 
 def _extract_mrz_name_from_text(text: str) -> str | None:
     raw = text.upper().replace(" ", "")
-    match = re.search(r"([A-ZÑ]{2,})<([A-ZÑ]{2,})<<([A-ZÑ<]{2,})", raw)
+    match = re.search(r"([A-Z]{2,})<([A-Z]{2,})<<([A-Z<]{2,})", raw)
     if not match:
         return None
     last1, last2, first = match.group(1), match.group(2), match.group(3)
@@ -1443,13 +1512,451 @@ def _normalize_name(value: str) -> str:
     return value.upper()
 
 
+def _split_compact_given_names(value: str) -> str:
+    compact = _normalize_alnum(value)
+    if not compact:
+        return ""
+    known_pairs = {
+        "JOSEALEJANDRO": "JOSE ALEJANDRO",
+        "MARIAJOSE": "MARIA JOSE",
+        "JOSELUIS": "JOSE LUIS",
+        "JUANCARLOS": "JUAN CARLOS",
+        "MIGUELANGEL": "MIGUEL ANGEL",
+        "LUISFERNANDO": "LUIS FERNANDO",
+    }
+    for key, spaced in known_pairs.items():
+        if compact == key:
+            return spaced
+    return compact
+
+
+def _split_compact_surnames(value: str) -> str:
+    token = _normalize_alnum(value)
+    if len(token) < 8:
+        return token
+
+    def _vowel_ratio(part: str) -> float:
+        letters = [ch for ch in part if ch.isalpha()]
+        if not letters:
+            return 0.0
+        vowels = sum(1 for ch in letters if ch in "AEIOU")
+        return vowels / len(letters)
+
+    best_split = None
+    best_score = None
+    for i in range(4, len(token) - 3):
+        left = token[:i]
+        right = token[i:]
+        score = abs(len(left) - len(right)) * 0.1
+        score += abs(_vowel_ratio(left) - 0.4)
+        score += abs(_vowel_ratio(right) - 0.4)
+        common_endings = ("EZ", "ES", "ON", "OS", "AS", "IA", "VA", "RA", "DO", "ZA", "GA", "NA")
+        if left.endswith(common_endings):
+            score -= 0.15
+        if right.startswith("N") and left.endswith(("A", "E", "I", "O", "U")):
+            score += 0.12
+        if best_score is None or score < best_score:
+            best_score = score
+            best_split = (left, right)
+
+    if not best_split:
+        return token
+    return f"{best_split[0]} {best_split[1]}"
+
+
+def _extract_possible_telmex_holder(line: str) -> str | None:
+    upper = _normalize_text(line).upper()
+    if "PUBLICO EN GENERAL" in upper:
+        return None
+
+    # Prefer already spaced names (e.g., "CALDERON CORDOVA JOSE ALEJANDRO")
+    spaced = re.sub(r"[^A-Z ]", " ", upper)
+    spaced = re.sub(r"\s+", " ", spaced).strip()
+    if spaced:
+        tokens = [tok for tok in spaced.split() if tok]
+        blacklist = {
+            "PUBLICO", "GENERAL", "RFC", "FACTURA", "NUMERO", "PAGAR", "TOTAL",
+            "CALLE", "CLL", "COL", "CP", "MZ", "LT", "SN", "S", "N",
+            "ATASTA", "CIUDAD", "MEXICO",
+        }
+        if (
+            3 <= len(tokens) <= 6
+            and all(len(tok) >= 2 for tok in tokens)
+            and not any(tok in blacklist for tok in tokens)
+            and not any(ch.isdigit() for ch in spaced)
+        ):
+            return _normalize_name(" ".join(tokens))
+
+    upper = re.split(r"\b(?:FACTURA|RFC|NUMERO|PAGAR|TOTAL|DV\d+|SELLO|CADENA)\b", upper, maxsplit=1)[0]
+    compact_tokens = re.findall(r"[A-Z]{14,60}", _normalize_alnum(upper))
+    if not compact_tokens:
+        return None
+    token = compact_tokens[0]
+    if token in {"PUBLICOENGENERAL"}:
+        return None
+
+    first_names = [
+        "JOSEALEJANDRO",
+        "JOSELUIS",
+        "JUANCARLOS",
+        "MIGUELANGEL",
+        "LUISFERNANDO",
+        "ALEJANDRO",
+        "CARLOS",
+        "MIGUEL",
+        "FERNANDO",
+        "DANIEL",
+        "RICARDO",
+        "ADRIAN",
+        "JOSE",
+        "MARIA",
+        "JUAN",
+        "LUIS",
+        "ANA",
+    ]
+    split_at = None
+    found_name = None
+    for name in first_names:
+        idx = token.rfind(name)
+        if idx >= 6:
+            split_at = idx
+            found_name = name
+            break
+    if split_at is None or not found_name:
+        return None
+
+    surnames = token[:split_at]
+    given = token[split_at:]
+    surnames_spaced = _split_compact_surnames(surnames)
+    given_spaced = _split_compact_given_names(given)
+    holder = _normalize_name(f"{surnames_spaced} {given_spaced}")
+    return holder if len(holder) >= 10 else None
+
+
+def _cleanup_telmex_holder(value: str) -> str:
+    text = _normalize_text(str(value)).upper()
+    text = re.sub(r"[^A-Z ]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return ""
+
+    garbage = {"PUBLICO", "GENERAL", "RFC", "FACTURA", "NUMERO", "TOTAL", "PAGAR"}
+    known_compound = ("JOSEALEJANDRO", "JOSELUIS", "JUANCARLOS", "MIGUELANGEL", "LUISFERNANDO", "MARIAJOSE")
+    tokens = []
+    for tok in text.split():
+        if tok in garbage:
+            continue
+        for comp in known_compound:
+            if tok.startswith(comp):
+                tok = comp
+                break
+        vowels = sum(1 for ch in tok if ch in "AEIOU")
+        if len(tok) > 18:
+            continue
+        if len(tok) >= 12 and vowels <= 2:
+            continue
+        tokens.append(tok)
+
+    normalized_tokens = []
+    for tok in tokens:
+        split = _split_compact_given_names(tok)
+        normalized_tokens.extend([t for t in split.split() if t])
+
+    if len(normalized_tokens) > 4:
+        normalized_tokens = normalized_tokens[:4]
+    return " ".join(normalized_tokens).strip()
+
+
+def _clean_telmex_customer_line(line: str) -> str:
+    text = _normalize_text(str(line)).upper()
+    if not text:
+        return ""
+    text = re.split(
+        r"\b(?:SERIE\s+DEL\s+CERTIFICADO|CERTIFICADO\s+DEL\s+CSD|SELLO\s+DIGITAL|CADENA\s+ORIGINAL|ESTADO\s+DE\s+CUENTA|TUESTADO\s+DE\s+CUENTA\s+PUEDE\s+SER|TU\s*ESTADO\s+DE\s+CUENTA\s+PUEDE\s+SER|FACTURA|RFC|LINEA\s+DE\s+CAPTURA|NUMERO\s+DE\s+SERVICIO|REFERENCIA\s+UNICA|TOTAL\s+A\s+PAGAR|TOTAL|PAGAR\s+ANTES)\b",
+        text,
+        maxsplit=1,
+    )[0]
+    text = re.sub(r"[^A-Z0-9N ,./-]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip(" .,-")
+    return text
+
+
+def _extract_telmex_customer_address_cp(lines: list[str], customer_idx: int) -> tuple[str | None, str | None]:
+    stop_tokens = (
+        "SERIE DEL CERTIFICADO",
+        "CERTIFICADO DEL CSD",
+        "CADENA ORIGINAL",
+        "SELLO DIGITAL",
+        "ESTADO DE CUENTA",
+        "FACTURA",
+        "RFC",
+        "LINEA DE CAPTURA",
+        "REFERENCIA",
+        "PAGAR",
+        "TOTAL",
+        "COBRO",
+        "REVERSO",
+        "RECIBO",
+    )
+    strong_markers = ("CLL", "CALLE", "AV", "AVENIDA")
+    start_markers = ("CLL", "CALLE", "AV", "AVENIDA", "COL", "FRACC", "MZ", "LT", "SN")
+    continue_markers = ("CLL", "CALLE", "AV", "AVENIDA", "COL", "FRACC", "MZ", "LT", "SN", "ATASTA", "CARMEN")
+
+    parts: list[str] = []
+    cp_candidates: list[str] = []
+    prepared: list[dict] = []
+
+    context_start = max(0, customer_idx - 2)
+    context_end = min(len(lines), customer_idx + 15)
+    window: list[str] = []
+    for idx in range(context_start, context_end):
+        line = _normalize_text(lines[idx]).upper()
+        if not line:
+            continue
+        if idx == customer_idx and "PUBLICO EN GENERAL" in line:
+            tail = line.split("PUBLICO EN GENERAL", 1)[-1].strip()
+            if tail:
+                window.append(tail)
+            continue
+        window.append(line)
+
+    for raw_line in window:
+        upper = _normalize_text(raw_line).upper()
+        if not upper:
+            continue
+
+        cp_with_label = re.findall(r"C\.?\s*P\.?\s*[:.-]?\s*([0-9OIL]{5})", upper)
+        cp_candidates.extend(cp_with_label)
+        loose_cp = re.findall(r"\b([0-9OIL]{5})(?:-[A-Z0-9-]{2,})?\b", upper)
+        cp_candidates.extend(loose_cp)
+
+        has_stop = any(token in upper for token in stop_tokens)
+        cleaned = _clean_telmex_customer_line(upper)
+        if not cleaned:
+            if has_stop and parts:
+                break
+            continue
+        # Remove long OCR crypto/signature blobs but keep nearby address words.
+        cleaned = re.sub(r"\b[A-Z0-9]{16,}\b", " ", cleaned)
+        cleaned = re.sub(r"(?:^|\s)/+[A-Z0-9]{0,14}(?=\s|$)", " ", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,-")
+        # Keep the canonical street segment when present (e.g., "CLL DEL GOLFO SN").
+        cstreet = re.search(r"\b(CLL\s+[A-Z ]{2,50}\bS/?N)\b", cleaned)
+        if not cstreet:
+            cstreet = re.search(r"\b(CALLE\s+[A-Z ]{2,60}\bS/?N)\b", cleaned)
+        if cstreet:
+            cleaned = cstreet.group(1)
+        cleaned = re.split(r"C\.?\s*P\.?", cleaned, maxsplit=1)[0]
+        cleaned = re.sub(r"\b[0-9OIL]{5}(?:-[A-Z0-9-]{2,})?\b", " ", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,-")
+        if not cleaned:
+            if has_stop and parts:
+                break
+            continue
+        if len(cleaned) > 60:
+            continue
+        if re.search(r"[A-Z0-9]{18,}", cleaned):
+            continue
+        prepared.append(
+            {
+                "text": cleaned,
+                "has_stop": has_stop,
+                "strong": any(marker in cleaned for marker in strong_markers),
+                "addr": any(marker in cleaned for marker in continue_markers),
+            }
+        )
+
+    if prepared:
+        start_idx = next((i for i, item in enumerate(prepared) if item["strong"]), None)
+        if start_idx is None:
+            start_idx = next((i for i, item in enumerate(prepared) if item["addr"]), None)
+        if start_idx is not None:
+            for item in prepared[start_idx:]:
+                text_item = item["text"]
+                has_addr = any(marker in text_item for marker in start_markers)
+                if not has_addr and parts:
+                    break
+                if not has_addr:
+                    continue
+                parts.append(text_item)
+                if item["has_stop"] or len(parts) >= 5:
+                    break
+
+    address_value = _clean_address_value(" ".join(parts)) if parts else None
+    if address_value and len(address_value) < 8:
+        address_value = None
+
+    cp_value = None
+    for cp in cp_candidates:
+        normalized_cp = _normalize_value_for_key("cp", cp)
+        if normalized_cp and normalized_cp != "06500":
+            cp_value = normalized_cp
+            break
+    if not cp_value and cp_candidates:
+        cp_value = _normalize_value_for_key("cp", cp_candidates[0]) or None
+
+    return address_value, cp_value
+
+
+def _sanitize_telmex_domicilio(value: str) -> str:
+    cleaned = _clean_telmex_customer_line(value)
+    cleaned = re.sub(r"\b(?:PAGADO\s+EN|INDICADO\s+AL\s+REVERSO|DE\s+ESTE\s+RECIBO)\b.*$", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,-")
+    return _clean_address_value(cleaned) if cleaned else ""
+
+
+def _choose_telmex_cp(fields: list[dict], full_text: str) -> str | None:
+    cp_candidates = re.findall(r"(?:C\.?\s*P\.?\s*[:.-]?\s*)([0-9OIL]{5})", full_text)
+    cp_candidates.extend(re.findall(r"\b([0-9OIL]{5})\b", full_text))
+    for cp in cp_candidates:
+        normalized_cp = _normalize_value_for_key("cp", cp)
+        if normalized_cp and normalized_cp != "06500":
+            return normalized_cp
+    if cp_candidates:
+        fallback = _normalize_value_for_key("cp", cp_candidates[0])
+        return fallback or None
+    return None
+
+
+def _choose_telmex_domicilio(fields: list[dict]) -> str | None:
+    candidates = []
+    for field in fields:
+        if field.get("key") != "domicilio":
+            continue
+        raw = _normalize_text(str(field.get("value", "")))
+        if not raw:
+            continue
+        clean = _sanitize_telmex_domicilio(raw)
+        if not clean:
+            continue
+        upper = clean.upper()
+        tokens = [t for t in upper.split() if t]
+        if not tokens:
+            continue
+        marker_score = 0
+        for marker in ("CLL", "CALLE", "AV", "COL", "FRACC", "MZ", "LT", "SN"):
+            if marker in upper:
+                marker_score += 2
+        if "CLL" in upper or "CALLE" in upper:
+            marker_score += 5
+        length_score = min(len(upper), 60) / 10.0
+        only_manzana_lote = re.fullmatch(r"(?:MZ|LT|SN|\d+|\s)+", upper) is not None
+        penalty = 8 if only_manzana_lote else 0
+        score = marker_score + length_score - penalty
+        candidates.append((score, clean))
+    if not candidates:
+        return None
+    strong_candidates = [item for item in candidates if ("CLL" in item[1] or "CALLE" in item[1] or " AV " in f" {item[1]} ")]
+    pool = strong_candidates if strong_candidates else candidates
+    pool.sort(key=lambda x: x[0], reverse=True)
+    return pool[0][1]
+
+
+def _extract_telmex_domicilio_from_full_text(full_text: str) -> str | None:
+    text = _normalize_text(str(full_text)).upper()
+    if not text:
+        return None
+
+    matches = list(re.finditer(r"PUBLICO\s+EN\s+GENERAL\s+(.+?)\s+C\.?\s*P\.?\s*\d{5}", text))
+    if not matches:
+        return None
+
+    candidates: list[tuple[float, str]] = []
+    for match in matches:
+        chunk = match.group(1)
+        chunk = re.sub(
+            r"\b(?:TUESTADO\s+DE\s+CUENTA\s+PUEDE\s+SER|TU\s*ESTADO\s+DE\s+CUENTA\s+PUEDE\s+SER|ESTADO\s+DE\s+CUENTA\s+PUEDE\s+SER)\b",
+            " ",
+            chunk,
+        )
+        # Keep locality lines after payment legend; only strip the legend phrase itself.
+        chunk = re.sub(r"\bPAGADO\s+EN\s+CUALQUIER\s+CENTRO\s+DE\s+COBRO\b", " ", chunk)
+        chunk = re.split(
+            r"\b(?:INDICADO\s+AL\s+REVERSO|DE\s+ESTE\s+RECIBO|CDC|RFCPUBLICOENGENERAL|FACTURA|TOTAL\s+A\s+PAGAR|PAGAR\s+ANTES)\b",
+            chunk,
+            maxsplit=1,
+        )[0]
+        chunk = re.sub(r"\s+", " ", chunk).strip(" .,-")
+        if not chunk:
+            continue
+        cleaned = _clean_address_value(chunk)
+        if not cleaned or len(cleaned) < 10:
+            continue
+        if not any(marker in cleaned for marker in ("CLL", "CALLE", "MZ", "LT", "SN", "ATASTA", "CARMEN")):
+            continue
+        score = len(cleaned) / 10.0
+        if "CLL" in cleaned or "CALLE" in cleaned:
+            score += 6
+        candidates.append((score, cleaned))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return candidates[0][1]
+
+
+def _pick_telmex_customer_index(lines: list[str]) -> int | None:
+    indices = []
+    for idx, line in enumerate(lines):
+        norm = _normalize_text(line).upper()
+        if "PUBLICO EN GENERAL" in norm or "PUBLICOENGENERAL" in _normalize_alnum(line):
+            indices.append(idx)
+    if not indices:
+        return None
+    if len(indices) == 1:
+        return indices[0]
+
+    best_idx = indices[0]
+    best_score = -1
+    for idx in indices:
+        score = 0
+        window = lines[idx:idx + 14]
+        for line in window:
+            upper = _normalize_text(line).upper()
+            if any(marker in upper for marker in ("CLL", "CALLE", "AV", "MZ", "LT", "SN", "ATASTA", "CARMEN")):
+                score += 2
+            if re.search(r"C\.?\s*P\.?\s*\d{5}", upper):
+                score += 4
+            if "PAG 1 DE" in upper or "TELMEX TOTAL A PAGAR" in upper:
+                score -= 3
+        # Prefer later candidate when score is tied.
+        score += idx * 0.01
+        if score > best_score:
+            best_score = score
+            best_idx = idx
+    return best_idx
+
+
+def _enrich_telmex_domicilio(base_dom: str, full_text: str) -> str:
+    dom = _normalize_text(base_dom).upper()
+    text = _normalize_text(full_text).upper()
+    if not dom or not text:
+        return dom
+
+    extras: list[str] = []
+    mz = re.search(r"\bMZ\s+SN\s+LT\s+SN\b", text)
+    if mz and "MZ SN LT SN" not in dom:
+        extras.append("MZ SN LT SN")
+
+    # Keep locality labels often present in Telmex receipts.
+    if re.search(r"\bATASTA\b", text) and "ATASTA" not in dom:
+        extras.append("ATASTA")
+    loc = re.search(r"\bATASTA\s*,\s*CARMEN\s*,\s*CA\b", text)
+    if loc and "ATASTA CARMEN CA" not in dom:
+        extras.append("ATASTA CARMEN CA")
+
+    if extras:
+        dom = _clean_address_value(" ".join([dom, *extras]))
+    return dom
+
+
 def _normalize_address(value: str) -> str:
     value = _normalize_text(value)
     replacements = {
         "AV.": "AV ",
         "AVENIDA": "AV ",
         "C.P.": "CP ",
-        "CÓDIGO POSTAL": "CP ",
+        "CODIGO POSTAL": "CP ",
         "COL.": "COL ",
         "COLONIA": "COL ",
         "FRACC.": "FRACC ",
@@ -1562,6 +2069,101 @@ def _normalize_numeric_field(value: str) -> str:
     return re.sub(r"\D", "", value)
 
 
+def _normalize_cp_value(value: str) -> str:
+    raw = _normalize_numeric_field(value)
+    if len(raw) == 5:
+        return raw
+    if len(raw) > 5:
+        return raw[:5]
+    return ""
+
+
+def _normalize_folio_value(value: str) -> str:
+    text = str(value or "").upper()
+    candidates = re.findall(r"[0-9OIL]{1,6}", text)
+    # Avoid false positives from words that only contribute I/O noise.
+    candidates = [c for c in candidates if re.search(r"\d", c)]
+    if not candidates:
+        return ""
+    candidate = max(candidates, key=len)
+    raw = _normalize_numeric_field(candidate)
+    return raw if re.fullmatch(r"\d{1,6}", raw) else ""
+
+
+def _normalize_numero_acta_value(value: str) -> str:
+    text = str(value or "").upper().strip()
+    if not text:
+        return ""
+    if re.search(r"\d", text) or re.fullmatch(r"[0-9OIL\s-]+", text):
+        raw = _normalize_numeric_field(text)
+        if re.fullmatch(r"\d{3,12}", raw):
+            return raw
+    normalized = _normalize_alnum(text)
+    return normalized if len(normalized) >= 3 else ""
+
+
+def _normalize_numero_certificado_value(value: str) -> str:
+    text = str(value or "").upper().strip()
+    if not text:
+        return ""
+    numeric = _normalize_numeric_field(text)
+    if len(numeric) >= 6:
+        return numeric
+    alnum = _normalize_alnum(text)
+    return alnum if len(alnum) >= 6 else ""
+
+
+def _normalize_identificador_electronico_value(value: str) -> str:
+    text = str(value or "").upper().strip()
+    if not text:
+        return ""
+    alnum = _normalize_alnum(text)
+    return alnum if len(alnum) >= 6 else ""
+
+
+def _normalize_reference_value(value: str) -> str:
+    text = str(value or "").upper().strip()
+    if not text:
+        return ""
+    numeric = _normalize_numeric_field(text)
+    if 10 <= len(numeric) <= 30:
+        return numeric
+    alnum = _normalize_alnum(text)
+    digits = sum(1 for ch in alnum if ch.isdigit())
+    if 10 <= len(alnum) <= 30 and digits >= 8:
+        return alnum
+    return ""
+
+
+def _normalize_seccion_value(value: str) -> str:
+    text = str(value or "").upper().replace("O", "0")
+    raw = re.sub(r"\D", "", text)
+    if not raw:
+        return ""
+    trimmed = raw.lstrip("0")
+    if re.fullmatch(r"\d{3,4}", trimmed):
+        return trimmed
+    return raw
+
+
+FIELD_VALUE_NORMALIZERS = {
+    "cp": _normalize_cp_value,
+    "folio": _normalize_folio_value,
+    "seccion": _normalize_seccion_value,
+    "numero_acta": _normalize_numero_acta_value,
+    "numero_certificado": _normalize_numero_certificado_value,
+    "identificador_electronico": _normalize_identificador_electronico_value,
+    "referencia": _normalize_reference_value,
+}
+
+
+def _normalize_value_for_key(key: str, value: str) -> str:
+    normalizer = FIELD_VALUE_NORMALIZERS.get(str(key or ""))
+    if normalizer is None:
+        return str(value or "")
+    return normalizer(str(value or ""))
+
+
 def _extract_city_state(lines: list[str]) -> tuple[str | None, str | None]:
     city = None
     state = None
@@ -1574,8 +2176,12 @@ def _extract_city_state(lines: list[str]) -> tuple[str | None, str | None]:
 
 
 def _extract_postal_code(text: str) -> str | None:
-    match = CP_PATTERN.search(text)
-    return match.group(0) if match else None
+    upper = str(text or "").upper()
+    match = re.search(r"\b([0-9OIL]{5})\b", upper)
+    if not match:
+        return None
+    normalized = _normalize_value_for_key("cp", match.group(1))
+    return normalized or None
 
 
 def _extract_curp_state(curps: list[str]) -> str | None:
@@ -1662,6 +2268,23 @@ def _find_value_after_keyword(lines: list[str], keywords: list[str]) -> str | No
 
 
 def _dedupe_fields(fields: list[dict]) -> list[dict]:
+    def _parse_amount_for_rank(value: str | None) -> float | None:
+        if not value:
+            return None
+        raw = str(value).replace("$", "").replace(" ", "").replace(",", "")
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
+
+    def _rank(field: dict) -> tuple[int, float]:
+        key = str(field.get("key", ""))
+        confidence = float(field.get("confidence", 0) or 0)
+        if key == "total":
+            amount = _parse_amount_for_rank(field.get("value"))
+            return (1 if amount is not None and amount > 0 else 0, confidence)
+        return (1, confidence)
+
     best: dict[str, dict] = {}
     for field in fields:
         key = field.get("key")
@@ -1670,7 +2293,7 @@ def _dedupe_fields(fields: list[dict]) -> list[dict]:
         if key not in best:
             best[key] = field
             continue
-        if field.get("confidence", 0) > best[key].get("confidence", 0):
+        if _rank(field) > _rank(best[key]):
             best[key] = field
     return list(best.values())
 
@@ -1722,7 +2345,7 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
             normalized_birth = _normalize_date_value(box_values["fecha_nacimiento"]["value"])
             if DATE_PATTERN.search(normalized_birth):
                 fields.append(_make_field("fecha_nacimiento", "Fecha de nacimiento", normalized_birth, ocr_boxes, confidence=0.8))
-        sexo = _find_value_after_keyword(lines, ["SEXO", "GENERO", "GÉNERO"])
+        sexo = _find_value_after_keyword(lines, ["SEXO", "GENERO"])
         normalized_sexo = _normalize_sex(sexo) if sexo else ""
         if normalized_sexo in {"H", "M"}:
             fields.append(_make_field("sexo", "Sexo", normalized_sexo, ocr_boxes, confidence=0.6))
@@ -1749,16 +2372,16 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                 normalized_clave = _normalize_alnum(box_values["clave_elector"]["value"])
                 if re.fullmatch(r"[A-Z0-9]{18}", normalized_clave):
                     fields.append(_make_field("clave_elector", "Clave de elector", normalized_clave, ocr_boxes, confidence=0.8))
-            seccion = _find_value_after_keyword(lines, ["SECCION", "SECCIÓN"])
+            seccion = _find_value_after_keyword(lines, ["SECCION"])
             if seccion:
-                normalized_seccion = re.sub(r"\D", "", seccion)
+                normalized_seccion = _normalize_value_for_key("seccion", seccion)
                 if re.fullmatch(r"\d{3,4}", normalized_seccion):
-                    fields.append(_make_field("seccion", "Sección", normalized_seccion, ocr_boxes, confidence=0.6))
+                    fields.append(_make_field("seccion", "Seccion", normalized_seccion, ocr_boxes, confidence=0.6))
             if "seccion" in box_values:
-                normalized_seccion = re.sub(r"\D", "", box_values["seccion"]["value"])
+                normalized_seccion = _normalize_value_for_key("seccion", box_values["seccion"]["value"])
                 if re.fullmatch(r"\d{3,4}", normalized_seccion):
-                    fields.append(_make_field("seccion", "Sección", normalized_seccion, ocr_boxes, confidence=0.8))
-            vigencia = _find_value_after_keyword(lines, ["VIGENCIA", "VÁLIDA HASTA", "VALIDA HASTA"])
+                    fields.append(_make_field("seccion", "Seccion", normalized_seccion, ocr_boxes, confidence=0.8))
+            vigencia = _find_value_after_keyword(lines, ["VIGENCIA", "VALIDA HASTA"])
             if vigencia:
                 fields.append(_make_field("vigencia", "Vigencia", _normalize_vigencia(vigencia), ocr_boxes, confidence=0.6))
             if "vigencia" in box_values:
@@ -1767,17 +2390,19 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
             text_lines = [line.strip().upper() for line in base_text_raw.splitlines() if line.strip()]
             seccion_value = None
             for line in text_lines:
-                if line.startswith("SECCION") and len(line) <= 12:
-                    match = re.search(r"\d{3,4}", line)
+                if re.search(r"^SECCI[O0]N", line) and len(line) <= 16:
+                    match = re.search(r"[0-9OIL]{3,5}", line)
                     if match:
                         seccion_value = match.group(0)
                         break
             if not seccion_value:
-                match = re.search(r"SECCION\s*(\d{3,4})", text)
+                match = re.search(r"SECCI[O0]N\s*([0-9OIL]{3,5})", text)
                 if match:
                     seccion_value = match.group(1)
             if seccion_value:
-                fields.append(_make_field("seccion", "Sección", seccion_value, ocr_boxes, confidence=0.95))
+                normalized_seccion = _normalize_value_for_key("seccion", seccion_value)
+                if re.fullmatch(r"\d{3,4}", normalized_seccion):
+                    fields.append(_make_field("seccion", "Seccion", normalized_seccion, ocr_boxes, confidence=0.95))
             match = re.search(r"(?:VIGENCIA|VGENCIA)\s*(\d{4})", text)
             if match:
                 fields.append(_make_field("vigencia", "Vigencia", match.group(1), ocr_boxes, confidence=0.95))
@@ -1821,7 +2446,7 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                 if addr_lines:
                     raw_addr = " ".join(addr_lines)
                     # Stop at known trailing fields if they leaked into the address line
-                    raw_addr = re.split(r"\b(CLAVE|CURP|FECHA|SECCION|SECCIÓN|VIGENCIA)\b", raw_addr)[0]
+                    raw_addr = re.split(r"\b(CLAVE|CURP|FECHA|SECCION|VIGENCIA)\b", raw_addr)[0]
                     address = _clean_address_value(raw_addr)
                     fields.append(_make_field("domicilio", "Domicilio", address, ocr_boxes, confidence=0.95))
         curp_entidad = _extract_curp_state(curps)
@@ -1851,9 +2476,9 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
             fields.append(_make_field("rfc", "RFC", _normalize_alnum(labeled_rfc), ocr_boxes, confidence=0.8))
 
     if document_type == "CONSTANCIA_SITUACION_FISCAL":
-        regimen = _find_value_after_keyword(lines, ["REGIMEN FISCAL", "RÉGIMEN FISCAL", "REGIMEN", "RÉGIMEN"])
+        regimen = _find_value_after_keyword(lines, ["REGIMEN FISCAL", "REGIMEN"])
         if regimen:
-            fields.append(_make_field("regimen", "Régimen", _normalize_text(regimen), ocr_boxes, confidence=0.7))
+            fields.append(_make_field("regimen", "Regimen", _normalize_text(regimen), ocr_boxes, confidence=0.7))
         else:
             if (
                 "NOMBRE, DENOMINACION O RAZON" in text
@@ -1861,7 +2486,7 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                 or "DENOMINACION O RAZON" in text
                 or "RAZON SOCIAL" in text
             ):
-                fields.append(_make_field("regimen", "Régimen", "PERSONA MORAL", ocr_boxes, confidence=0.6))
+                fields.append(_make_field("regimen", "Regimen", "PERSONA MORAL", ocr_boxes, confidence=0.6))
         nombres = _find_value_after_keyword(lines, ["NOMBRE (S)", "NOMBRE(S)"])
         apellido1 = _find_value_after_keyword(lines, ["PRIMER APELLIDO"])
         apellido2 = _find_value_after_keyword(lines, ["SEGUNDO APELLIDO"])
@@ -1869,10 +2494,10 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
         if name_parts:
             fields.append(_make_field("nombre", "Nombre", _normalize_name(" ".join(name_parts)), ocr_boxes, confidence=0.75))
 
-        cp = _find_value_after_keyword(lines, ["CODIGO POSTAL", "CÓDIGO POSTAL", "C.P", "CP"])
+        cp = _find_value_after_keyword(lines, ["CODIGO POSTAL", "C.P", "CP"])
         colonia = _find_value_after_keyword(lines, ["NOMBRE DE LA COLONIA", "COLONIA"])
         localidad = _find_value_after_keyword(lines, ["NOMBRE DE LA LOCALIDAD", "LOCALIDAD"])
-        municipio = _find_value_after_keyword(lines, ["NOMBRE DEL MUNICIPIO", "MUNICIPIO", "DEMARCACION TERRITORIAL", "DEMARCACIÓN TERRITORIAL"])
+        municipio = _find_value_after_keyword(lines, ["NOMBRE DEL MUNICIPIO", "MUNICIPIO", "DEMARCACION TERRITORIAL"])
         entidad = _find_value_after_keyword(lines, ["NOMBRE DE LA ENTIDAD FEDERATIVA", "ENTIDAD FEDERATIVA"])
         if entidad:
             entidad = entidad.strip()
@@ -1880,7 +2505,9 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                 entidad = entidad[:4]
         domicilio_parts = [p for p in [colonia, localidad or municipio, entidad] if p]
         if cp:
-            domicilio_parts.insert(1, f"C.P.{re.sub(r'\\D', '', cp)}")
+            normalized_cp = _normalize_value_for_key("cp", cp)
+            if normalized_cp:
+                domicilio_parts.insert(1, f"C.P.{normalized_cp}")
         if domicilio_parts:
             fields.append(_make_field("domicilio", "Domicilio", _normalize_address(" ".join(domicilio_parts)), ocr_boxes, confidence=0.7))
 
@@ -1893,7 +2520,7 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                 fields.append(_make_field("nombre", "Nombre", _normalize_name(nss_box_values["nombre"]["value"]), ocr_boxes, confidence=0.7))
         for value in nss:
             fields.append(_make_field("nss", "NSS", _normalize_alnum(value), ocr_boxes))
-        afiliacion = _find_value_after_keyword(lines, ["NUMERO DE SEGURIDAD SOCIAL", "NÚMERO DE SEGURIDAD SOCIAL", "SEGURIDAD SOCIAL"])
+        afiliacion = _find_value_after_keyword(lines, ["NUMERO DE SEGURIDAD SOCIAL", "SEGURIDAD SOCIAL"])
         if afiliacion:
             fields.append(_make_field("nss", "NSS", _normalize_numeric_field(afiliacion), ocr_boxes, confidence=0.7))
 
@@ -1918,7 +2545,7 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                 fields.append(_make_field("periodo", "Periodo", _normalize_text(fin_box_values["periodo"]["value"]), ocr_boxes, confidence=0.6))
         for value in clabes:
             fields.append(_make_field("clabe", "CLABE", _normalize_alnum(value), ocr_boxes))
-        banco = _find_value_after_keyword(lines, ["BANCO", "INSTITUCION", "INSTITUCIÓN"])
+        banco = _find_value_after_keyword(lines, ["BANCO", "INSTITUCION"])
         if banco:
             fields.append(_make_field("banco", "Banco", _normalize_address(banco), ocr_boxes, confidence=0.6))
         labeled_clabe = _find_labeled_value(lines, "CLABE")
@@ -1933,7 +2560,7 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                 ("fecha", "Fecha"),
                 ("libro", "Libro"),
                 ("tomo", "Tomo"),
-                ("oficialia", "Oficial??a"),
+                ("oficialia", "Oficialia"),
                 ("registro_civil", "Registro civil"),
                 ("juez", "Juez"),
                 ("nombre", "Nombre"),
@@ -1960,13 +2587,25 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                         value = _normalize_name(value)
                     if key in {"lugar_nacimiento", "entidad_registro", "municipio_registro"}:
                         value = _normalize_address(value)
+                    if key == "numero_acta":
+                        value = _normalize_value_for_key("numero_acta", value)
+                        if not value:
+                            continue
+                    if key == "numero_certificado":
+                        value = _normalize_value_for_key("numero_certificado", value)
+                        if not value:
+                            continue
+                    if key == "identificador_electronico":
+                        value = _normalize_value_for_key("identificador_electronico", value)
+                        if not value:
+                            continue
                     fields.append(_make_field(key, label, value, ocr_boxes, confidence=0.7))
         for value in dates:
             fields.append(_make_field("fecha", "Fecha", _normalize_date_value(value), ocr_boxes, confidence=0.6))
-        folio = _find_value_after_keyword(lines, ["FOLIO", "ACTA"])
+        folio = _find_value_after_keyword(lines, ["FOLIO", "NO ACTA", "NUMERO DE ACTA"])
         if folio:
-            folio_num = _normalize_numeric_field(folio)
-            if re.fullmatch(r"\d{1,6}", folio_num):
+            folio_num = _normalize_value_for_key("folio", folio)
+            if folio_num:
                 fields.append(_make_field("folio", "Folio", folio_num, ocr_boxes, confidence=0.6))
         if document_type == "ACTA_NACIMIENTO":
             libro = _find_value_after_keyword(lines, ["LIBRO"])
@@ -1975,15 +2614,44 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
             tomo = _find_value_after_keyword(lines, ["TOMO"])
             if tomo:
                 fields.append(_make_field("tomo", "Tomo", _normalize_alnum(tomo), ocr_boxes, confidence=0.6))
-            oficialia = _find_value_after_keyword(lines, ["OFICIALIA", "OFICIALÍA"])
+            oficialia = _find_value_after_keyword(lines, ["OFICIALIA"])
             if oficialia:
-                fields.append(_make_field("oficialia", "Oficialía", _normalize_alnum(oficialia), ocr_boxes, confidence=0.6))
+                fields.append(_make_field("oficialia", "Oficialia", _normalize_alnum(oficialia), ocr_boxes, confidence=0.6))
             registro_civil = _find_value_after_keyword(lines, ["REGISTRO CIVIL"])
             if registro_civil:
                 fields.append(_make_field("registro_civil", "Registro civil", _normalize_address(registro_civil), ocr_boxes, confidence=0.6))
             juez = _find_value_after_keyword(lines, ["JUEZ", "JUEZA"])
             if juez:
                 fields.append(_make_field("juez", "Juez", _normalize_name(juez), ocr_boxes, confidence=0.6))
+            numero_certificado = _find_value_after_keyword(
+                lines,
+                ["NUMERO DE CERTIFICADO DE NACIMIENTO", "NUMERO CERTIFICADO", "NO CERTIFICADO", "CERTIFICADO NACIMIENTO"],
+            )
+            if numero_certificado:
+                normalized_cert = _normalize_value_for_key("numero_certificado", numero_certificado)
+                if normalized_cert:
+                    fields.append(
+                        _make_field(
+                            "numero_certificado",
+                            "Numero de certificado",
+                            normalized_cert,
+                            ocr_boxes,
+                            confidence=0.6,
+                        )
+                    )
+            identificador = _find_value_after_keyword(lines, ["IDENTIFICADOR ELECTRONICO", "IDENTIFICADOR"])
+            if identificador:
+                normalized_id = _normalize_value_for_key("identificador_electronico", identificador)
+                if normalized_id:
+                    fields.append(
+                        _make_field(
+                            "identificador_electronico",
+                            "Identificador electronico",
+                            normalized_id,
+                            ocr_boxes,
+                            confidence=0.6,
+                        )
+                    )
 
     if document_type == "COMPROBANTE_DOMICILIO":
         box_lines = _lines_text_from_boxes(ocr_boxes) if ocr_boxes else None
@@ -1991,16 +2659,19 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
         full_text = " ".join(box_text_lines) if box_text_lines else ""
         if ocr_boxes:
             svc_values = _extract_service_from_boxes(ocr_boxes)
+            provider_text = _normalize_text(str(svc_values.get("proveedor", {}).get("value", ""))).upper()
             if "proveedor" in svc_values:
                 fields.append(_make_field("proveedor", "Proveedor", _normalize_name(svc_values["proveedor"]["value"]), ocr_boxes, confidence=0.8))
             if "numero_servicio" in svc_values:
-                fields.append(_make_field("numero_servicio", "Número de servicio", _normalize_numeric_field(svc_values["numero_servicio"]["value"]), ocr_boxes, confidence=0.8))
+                fields.append(_make_field("numero_servicio", "Numero de servicio", _normalize_numeric_field(svc_values["numero_servicio"]["value"]), ocr_boxes, confidence=0.8))
             if "cuenta" in svc_values:
                 fields.append(_make_field("cuenta", "Cuenta", _normalize_numeric_field(svc_values["cuenta"]["value"]), ocr_boxes, confidence=0.7))
             if "contrato" in svc_values:
                 fields.append(_make_field("contrato", "Contrato", _normalize_alnum(svc_values["contrato"]["value"]), ocr_boxes, confidence=0.7))
             if "referencia" in svc_values:
-                fields.append(_make_field("referencia", "Referencia", _normalize_alnum(svc_values["referencia"]["value"]), ocr_boxes, confidence=0.7))
+                normalized_ref = _normalize_value_for_key("referencia", svc_values["referencia"]["value"])
+                if normalized_ref:
+                    fields.append(_make_field("referencia", "Referencia", normalized_ref, ocr_boxes, confidence=0.7))
             if "medidor" in svc_values:
                 fields.append(_make_field("medidor", "Medidor", _normalize_alnum(svc_values["medidor"]["value"]), ocr_boxes, confidence=0.7))
             if "cliente" in svc_values:
@@ -2029,19 +2700,256 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
             if "fecha_corte" in svc_values:
                 fields.append(_make_field("fecha_corte", "Fecha de corte", _normalize_date_value(svc_values["fecha_corte"]["value"]), ocr_boxes, confidence=0.6))
             if "fecha_limite" in svc_values:
-                fields.append(_make_field("fecha_limite", "Fecha límite", _normalize_date_value(svc_values["fecha_limite"]["value"]), ocr_boxes, confidence=0.6))
+                fields.append(_make_field("fecha_limite", "Fecha limite", _normalize_date_value(svc_values["fecha_limite"]["value"]), ocr_boxes, confidence=0.6))
             if "total" in svc_values:
                 fields.append(_make_field("total", "Total", _normalize_text(svc_values["total"]["value"]), ocr_boxes, confidence=0.6))
 
+            telmex_markers = ("TELMEX", "TELEFONOS DE MEXICO", "TELMEX-TEL")
+            is_telmex = provider_text == "TELMEX" or any(marker in full_text for marker in telmex_markers)
+            if is_telmex:
+                if not any(f.get("key") == "proveedor" and str(f.get("value", "")).upper() == "TELMEX" for f in fields):
+                    fields.append(_make_field("proveedor", "Proveedor", "TELMEX", ocr_boxes, confidence=0.86))
+
+                existing_num = next((f for f in fields if f.get("key") == "numero_servicio"), None)
+                num_ok = False
+                if existing_num and existing_num.get("value"):
+                    num_digits = _normalize_numeric_field(str(existing_num["value"]))
+                    num_ok = bool(re.fullmatch(r"\d{10}", num_digits))
+                if not num_ok:
+                    match = re.search(
+                        r"(?:NUMERO\s+TELEFONICO|NUMERO\s+DE\s+TELEFONO|TELEFONO|LINEA(?!\s+DE\s+CAPTURA)|NUMERO(?!\s+DE\s+CUENTA))\D*((?:\d[\s().-]*){10,12})",
+                        full_text,
+                    )
+                    if match:
+                        raw_num = _normalize_numeric_field(match.group(1))
+                        if len(raw_num) > 10:
+                            raw_num = raw_num[-10:]
+                        if re.fullmatch(r"\d{10}", raw_num):
+                            fields.append(_make_field("numero_servicio", "Numero de servicio", raw_num, ocr_boxes, confidence=0.88))
+
+                existing_cuenta = next((f for f in fields if f.get("key") == "cuenta"), None)
+                cuenta_ok = False
+                if existing_cuenta and existing_cuenta.get("value"):
+                    cuenta_norm = _normalize_alnum(str(existing_cuenta["value"]))
+                    cuenta_ok = len(cuenta_norm) >= 8
+                if not cuenta_ok:
+                    match = re.search(
+                        r"(?:NO\.?\s*DE\s*CUENTA|NUMERO\s+DE\s+CUENTA|CUENTA)\D*((?:[A-Z0-9][\s.-]*){8,24})",
+                        full_text,
+                    )
+                    if match:
+                        cuenta_value = _normalize_alnum(match.group(1))
+                        bad_tokens = ("PAGAR", "LIMITE", "FECHA", "TOTAL", "IMPORTE", "SALDO")
+                        if 8 <= len(cuenta_value) <= 24 and not any(token in cuenta_value for token in bad_tokens):
+                            fields.append(_make_field("cuenta", "Cuenta", cuenta_value, ocr_boxes, confidence=0.86))
+
+                existing_ref = next((f for f in fields if f.get("key") == "referencia"), None)
+                ref_ok = False
+                if existing_ref and existing_ref.get("value"):
+                    ref_value_norm = _normalize_alnum(str(existing_ref["value"]))
+                    digits = sum(1 for ch in ref_value_norm if ch.isdigit())
+                    has_noise = any(token in ref_value_norm for token in ["PAGAR", "LIMITE", "FECHA"])
+                    ref_ok = len(ref_value_norm) >= 10 and digits >= 6 and not has_noise
+                if not ref_ok:
+                    match = re.search(
+                        r"(?:LINEA\s+DE\s+CAPTURA|REFERENCIA(?:\s+UNICA)?|REF(?:ERENCIA)?)\D*((?:\d[\s.-]*){10,30})(?=\s+(?:PAGAR|FECHA|TOTAL|IMPORTE|SALDO|LIMITE)\b|$)",
+                        full_text,
+                    )
+                    if match:
+                        ref_value = _normalize_value_for_key("referencia", match.group(1))
+                        if ref_value:
+                            fields.append(_make_field("referencia", "Referencia", ref_value, ocr_boxes, confidence=0.86))
+
+                existing_limite = next((f for f in fields if f.get("key") == "fecha_limite"), None)
+                limite_ok = False
+                if existing_limite and existing_limite.get("value"):
+                    limite_ok = bool(DATE_PATTERN.search(str(existing_limite["value"])) or re.search(r"\d{1,2}\s*[A-Z]{3}\s*\d{2,4}", str(existing_limite["value"])))
+                if not limite_ok:
+                    match = re.search(
+                        r"(?:PAGAR\s+ANTES\s+DE|FECHA\s*LIMITE(?:\s*DE\s*PAGO)?)\D*([0-9]{1,2}\s*[A-Z]{3}\s*[0-9]{2,4}|\d{2}[/-]\d{2}[/-]\d{2,4})",
+                        full_text,
+                    )
+                    if match:
+                        fields.append(_make_field("fecha_limite", "Fecha limite", match.group(1), ocr_boxes, confidence=0.82))
+
+                existing_total = next((f for f in fields if f.get("key") == "total"), None)
+                total_ok = False
+                if existing_total and existing_total.get("value"):
+                    total_ok = bool(AMOUNT_PATTERN.search(str(existing_total["value"])))
+                if not total_ok:
+                    match = re.search(
+                        r"(?:TOTAL\s+A\s+PAGAR|SALDO\s+TOTAL|IMPORTE\s+A\s+PAGAR)\D*(\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)",
+                        full_text,
+                    )
+                    if match:
+                        fields.append(_make_field("total", "Total", _normalize_text(match.group(1)), ocr_boxes, confidence=0.82))
+
+        provider_is_telmex = any(
+            f.get("key") == "proveedor" and "TELMEX" in _normalize_text(str(f.get("value", ""))).upper()
+            for f in fields
+        )
+        filename_is_telmex = "TELMEX" in _normalize_text(filename or "").upper()
+        telmex_in_text = any(marker in full_text for marker in ("TELMEX", "TELEFONOS DE MEXICO", "TELMEX-TEL")) or provider_is_telmex or filename_is_telmex
+        if telmex_in_text:
+            if not any(f.get("key") == "proveedor" and str(f.get("value", "")).upper() == "TELMEX" for f in fields):
+                fields.append(_make_field("proveedor", "Proveedor", "TELMEX", ocr_boxes, confidence=0.86))
+
+            existing_num = next((f for f in fields if f.get("key") == "numero_servicio"), None)
+            num_ok = False
+            if existing_num and existing_num.get("value"):
+                num_digits = _normalize_numeric_field(str(existing_num["value"]))
+                num_ok = bool(re.fullmatch(r"\d{10}", num_digits))
+            if not num_ok:
+                match = re.search(
+                    r"(?:NUMERO\s+TELEFONICO|NUMERO\s+DE\s+TELEFONO|TELEFONO|LINEA(?!\s+DE\s+CAPTURA)|NUMERO(?!\s+DE\s+CUENTA))\D*((?:\d[\s().-]*){10,12})",
+                    full_text,
+                )
+                if match:
+                    raw_num = _normalize_numeric_field(match.group(1))
+                    if len(raw_num) > 10:
+                        raw_num = raw_num[-10:]
+                    if re.fullmatch(r"\d{10}", raw_num):
+                        fields.append(_make_field("numero_servicio", "Numero de servicio", raw_num, ocr_boxes, confidence=0.89))
+
+            existing_cuenta = next((f for f in fields if f.get("key") == "cuenta"), None)
+            cuenta_ok = False
+            if existing_cuenta and existing_cuenta.get("value"):
+                cuenta_norm = _normalize_alnum(str(existing_cuenta["value"]))
+                cuenta_ok = len(cuenta_norm) >= 8
+            if not cuenta_ok:
+                match = re.search(
+                    r"(?:NO\.?\s*DE\s*CUENTA|NUMERO\s+DE\s+CUENTA|CUENTA)\D*((?:[A-Z0-9][\s.-]*){8,24})",
+                    full_text,
+                )
+                if match:
+                    cuenta_raw = re.split(
+                        r"\b(?:REFERENCIA|PAGAR|TOTAL|IMPORTE|FECHA|LIMITE|SALDO)\b",
+                        match.group(1),
+                        maxsplit=1,
+                    )[0]
+                    cuenta_value = _normalize_alnum(cuenta_raw)
+                    bad_tokens = ("PAGAR", "LIMITE", "FECHA", "TOTAL", "IMPORTE", "SALDO")
+                    if 8 <= len(cuenta_value) <= 24 and not any(token in cuenta_value for token in bad_tokens):
+                        fields.append(_make_field("cuenta", "Cuenta", cuenta_value, ocr_boxes, confidence=0.88))
+
+            existing_ref = next((f for f in fields if f.get("key") == "referencia"), None)
+            ref_ok = False
+            if existing_ref and existing_ref.get("value"):
+                ref_value_norm = _normalize_alnum(str(existing_ref["value"]))
+                digits = sum(1 for ch in ref_value_norm if ch.isdigit())
+                has_noise = any(token in ref_value_norm for token in ("PAGAR", "LIMITE", "FECHA", "TOTAL", "IMPORTE"))
+                ref_ok = len(ref_value_norm) >= 10 and digits >= 6 and not has_noise
+            if not ref_ok:
+                match = re.search(
+                    r"(?:LINEA\s+DE\s+CAPTURA|REFERENCIA(?:\s+UNICA)?|REF(?:ERENCIA)?)\D*((?:\d[\s.-]*){10,30})(?=\s+(?:PAGAR|FECHA|TOTAL|IMPORTE|SALDO|LIMITE)\b|$)",
+                    full_text,
+                )
+                if match:
+                    ref_value = _normalize_alnum(match.group(1))
+                    if ref_value.startswith("UNICA"):
+                        ref_value = ref_value[5:]
+                    digits = sum(1 for ch in ref_value if ch.isdigit())
+                    if 10 <= len(ref_value) <= 30 and digits >= 10:
+                        fields.append(_make_field("referencia", "Referencia", ref_value, ocr_boxes, confidence=0.88))
+
         # CFE-style documents: prefer user address block and service identifiers
         if full_text and ("CFE" in full_text or "COMISION FEDERAL" in full_text):
+            def _extract_cfe_address(lines_local: list[str], full_text_local: str) -> str | None:
+                address_markers = ("DOMICILIO", "CALLE", "CLL", "COL", "COLONIA", "AV", "AVENIDA", "FRACC", "MZ", "LT", "CP", "C.P.")
+                stop_tokens = ("TOTAL", "IMPORTE", "PAGAR", "LIMITE", "CORTE", "RFC", "TARIFA", "MEDIDOR", "SERVICIO")
+
+                for idx, raw_line in enumerate(lines_local):
+                    line = _normalize_text(str(raw_line)).upper()
+                    if "DOMICILIO" not in line:
+                        continue
+                    tail = re.sub(r"^.*DOMICILIO(?:\s+DEL\s+SERVICIO|\s+DE\s+SUMINISTRO)?\s*[:\-]?\s*", "", line).strip(" .,-")
+                    pieces = []
+                    if tail and not any(token in tail for token in ("COMISION FEDERAL", "CFE SUMINISTRADOR")):
+                        pieces.append(tail)
+                    for next_line in lines_local[idx + 1: idx + 3]:
+                        upper_next = _normalize_text(str(next_line)).upper()
+                        if not upper_next:
+                            continue
+                        if any(token in upper_next for token in stop_tokens):
+                            break
+                        pieces.append(upper_next)
+                    candidate = _clean_address_value(" ".join(pieces))
+                    if len(candidate) >= 12 and any(marker in candidate for marker in address_markers):
+                        return candidate
+
+                for idx, raw_line in enumerate(lines_local):
+                    line = _normalize_text(str(raw_line)).upper()
+                    if not any(marker in line for marker in address_markers):
+                        continue
+                    if any(token in line for token in ("TOTAL", "IMPORTE", "PAGAR", "TARIFA", "MEDIDOR", "RFC")):
+                        continue
+                    pieces = [line]
+                    for next_line in lines_local[idx + 1: idx + 3]:
+                        upper_next = _normalize_text(str(next_line)).upper()
+                        if not upper_next:
+                            continue
+                        if any(token in upper_next for token in stop_tokens):
+                            break
+                        pieces.append(upper_next)
+                    candidate = _clean_address_value(" ".join(pieces))
+                    if len(candidate) >= 12 and any(marker in candidate for marker in address_markers):
+                        return candidate
+
+                match = re.search(
+                    r"(?:DOMICILIO(?:\s+DEL\s+SERVICIO|\s+DE\s+SUMINISTRO)?|DIRECCION)\s*[:\-]?\s*(.{15,180}?)(?=\s+(?:TOTAL|IMPORTE|PAGAR|RFC|TARIFA|MEDIDOR|NO\.?\s*DE\s*SERVICI[O0]|SERVICI[O0])\b|$)",
+                    full_text_local,
+                )
+                if match:
+                    candidate = _clean_address_value(match.group(1))
+                    if len(candidate) >= 12 and any(marker in candidate for marker in address_markers):
+                        return candidate
+                return None
+
+            def _parse_amount_local(value: str | None) -> float | None:
+                if not value:
+                    return None
+                raw = str(value).replace("$", "").replace(" ", "").replace(",", "")
+                try:
+                    return float(raw)
+                except (TypeError, ValueError):
+                    return None
+
+            def _recover_compact_person_name(value: str) -> str:
+                cleaned = re.sub(r"[^A-Z ]", "", str(value).upper()).strip()
+                cleaned = re.sub(r"\s+", " ", cleaned)
+                if not cleaned:
+                    return ""
+                if " " in cleaned:
+                    return _normalize_name(cleaned)
+                if len(cleaned) < 10:
+                    return cleaned
+                known_names = [
+                    "ALEJANDRO", "GABRIEL", "MIGUEL", "ANGEL", "DAMIAN", "JOSE", "MARIA", "CARLOS", "DANIEL",
+                    "LUIS", "JAVIER", "OSCAR", "ERWIN", "JUAN", "PEDRO", "ANA",
+                ]
+                for first in sorted(known_names, key=len, reverse=True):
+                    if not cleaned.startswith(first):
+                        continue
+                    rest = cleaned[len(first):]
+                    if len(rest) < 4:
+                        continue
+                    for last in sorted(known_names, key=len, reverse=True):
+                        if not rest.endswith(last):
+                            continue
+                        middle = rest[:-len(last)]
+                        if len(middle) < 4:
+                            continue
+                        return _normalize_name(f"{first} {middle} {last}")
+                return cleaned
+
             blacklist_cp = {"06600", "06500", "01210"}
             cp_match = None
             cp_index = None
             for idx, line in enumerate(box_text_lines):
-                match = re.search(r"\b(\d{5})\b", line)
-                if match and match.group(1) not in blacklist_cp:
-                    cp_match = match.group(1)
+                match = re.search(r"\b([0-9OIL]{5})\b", line)
+                normalized_cp = _normalize_value_for_key("cp", match.group(1)) if match else ""
+                if normalized_cp and normalized_cp not in blacklist_cp:
+                    cp_match = normalized_cp
                     cp_index = idx
                     break
 
@@ -2077,7 +2985,7 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                             ref_lines.append(next_line)
                 domicilio_lines = list(pre_lines)
                 if cp_line:
-                    cp_clean = re.sub(r"\d{5}", "", cp_line)
+                    cp_clean = re.sub(r"[0-9OIL]{5}", "", cp_line)
                     cp_clean = cp_clean.replace("C.P.", "").replace("CP", "").replace("FCP", "")
                     cp_clean = re.sub(r"\b[A-Z]\b", "", cp_clean)
                     cp_clean = re.sub(r"F\b", "", cp_clean)
@@ -2094,7 +3002,9 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                 if existing_ref and existing_ref.get("value"):
                     ref_ok = "RMU" not in existing_ref["value"]
                 if not ref_ok:
-                    fields.append(_make_field("referencia", "Referencia", _normalize_text(referencia_block), ocr_boxes, confidence=0.8))
+                    normalized_ref = _normalize_value_for_key("referencia", referencia_block)
+                    if normalized_ref:
+                        fields.append(_make_field("referencia", "Referencia", normalized_ref, ocr_boxes, confidence=0.8))
 
             existing_num = next((f for f in fields if f.get("key") == "numero_servicio"), None)
             num_ok = False
@@ -2103,7 +3013,7 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
             if not num_ok:
                 match = re.search(r"(?:NO\.?\s*DE\s*SERVICI[O0]|NO\.?DESERVICI[O0]|SERVICI[O0])\D*(\d{10,13})", full_text)
                 if match:
-                    fields.append(_make_field("numero_servicio", "Número de servicio", match.group(1), ocr_boxes, confidence=0.85))
+                    fields.append(_make_field("numero_servicio", "Numero de servicio", match.group(1), ocr_boxes, confidence=0.85))
 
             existing_cuenta = next((f for f in fields if f.get("key") == "cuenta"), None)
             cuenta_ok = False
@@ -2124,18 +3034,63 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
             if not limite_ok:
                 match = re.search(r"(?:LIMITE\s*DE\s*PAGO|FECHA\s*LIMITE|VENCE)\D*([0-9]{1,2}\s*[A-Z]{3}\s*[0-9]{2,4})", full_text)
                 if match:
-                    fields.append(_make_field("fecha_limite", "Fecha límite", match.group(1), ocr_boxes, confidence=0.75))
+                    fields.append(_make_field("fecha_limite", "Fecha limite", match.group(1), ocr_boxes, confidence=0.75))
+
+            existing_total = next((f for f in fields if f.get("key") == "total"), None)
+            total_ok = False
+            if existing_total and existing_total.get("value"):
+                parsed_existing_total = _parse_amount_local(str(existing_total["value"]))
+                total_ok = parsed_existing_total is not None and parsed_existing_total > 0
+            if not total_ok:
+                match = re.search(
+                    r"(?:TOTAL\s*A\s*PAGAR|TOTALA\s*PAGAR|IMPORTE\s*A\s*PAGAR|SALDO\s+TOTAL|TOTAL)\D*(\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)",
+                    full_text,
+                )
+                if match:
+                    fields.append(_make_field("total", "Total", _normalize_text(match.group(1)), ocr_boxes, confidence=0.9))
+                else:
+                    for line in box_text_lines:
+                        if "TOTAL" not in line and "IMPORTE A PAGAR" not in line and "TOTALA PAGAR" not in line:
+                            continue
+                        amount = re.search(r"(\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)", line)
+                        if amount:
+                            fields.append(_make_field("total", "Total", _normalize_text(amount.group(1)), ocr_boxes, confidence=0.86))
+                            break
 
             def _is_person_name(text: str) -> bool:
-                text = re.sub(r"[^A-ZÑ ]", " ", text.upper()).strip()
+                text = re.sub(r"[^A-Z ]", " ", text.upper()).strip()
                 if not text:
                     return False
-                if any(tag in text for tag in ["CFE", "COMISION", "FEDERAL", "ELECTRICIDAD"]):
+                if any(tag in text for tag in ["CFE", "COMISION", "FEDERAL", "ELECTRICIDAD", "RFC", "TOTAL"]):
                     return False
                 parts = [p for p in text.split() if p]
                 if len(parts) < 2:
                     return False
+                if len(parts) > 6:
+                    return False
+                if any(len(p) < 2 for p in parts):
+                    return False
                 return True
+
+            if not any(f.get("key") == "titular" for f in fields):
+                inline_rfc_name = re.search(
+                    r"RFC[:\s]*[A-Z0-9]{12,13}\s+([A-Z ]{8,50}?)(?=\s+(?:TOTALA?\s*PAGAR|TOTAL|NO\.?\s*DE\s*SERVICI[O0]|RMU:))",
+                    full_text,
+                )
+                if inline_rfc_name:
+                    candidate = _recover_compact_person_name(inline_rfc_name.group(1))
+                    if _is_person_name(candidate):
+                        fields.append(_make_field("titular", "Titular", candidate, ocr_boxes, confidence=0.9))
+
+            if not any(f.get("key") == "titular" for f in fields):
+                label_match = re.search(
+                    r"(?:NOMBRE(?:\s+DEL\s+(?:CLIENTE|USUARIO))?|CLIENTE|USUARIO)[^A-Z0-9]{0,8}([A-Z ]{2,}(?:\s+[A-Z ]{2,}){1,5})(?=\s+(?:RFC|DOMICILIO|TOTAL|SERVICIO|TARIFA|PERIODO)\b|$)",
+                    full_text,
+                )
+                if label_match:
+                    candidate = _normalize_name(label_match.group(1))
+                    if _is_person_name(candidate):
+                        fields.append(_make_field("titular", "Titular", candidate, ocr_boxes, confidence=0.9))
 
             if not any(f.get("key") == "titular" for f in fields):
                 rfc_idx = None
@@ -2146,7 +3101,7 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                 stop_words = ["CFE", "COMISION", "RFC", "TOTAL", "PAGAR", "LIMITE", "CORTE", "TARIFA", "MEDIDOR"]
                 candidates = box_text_lines[rfc_idx + 1:rfc_idx + 4] if rfc_idx is not None else box_text_lines
                 for line in candidates:
-                    cleaned = re.sub(r"[^A-ZÑ ]", " ", line).strip()
+                    cleaned = re.sub(r"[^A-Z ]", " ", line).strip()
                     if len(cleaned) < 10:
                         continue
                     if any(sw in cleaned for sw in stop_words):
@@ -2174,6 +3129,8 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                         continue
                     if re.search(r"\d", line):
                         continue
+                    if len(line) > 45:
+                        continue
                     name_part = line.split("TOTAL", 1)[0].strip()
                     if len(name_part) >= 6 and _is_person_name(name_part):
                         fields.append(_make_field("titular", "Titular", name_part, ocr_boxes, confidence=0.75))
@@ -2186,6 +3143,16 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                     cliente_value = _normalize_name(str(cliente_field["value"]))
                     if _is_person_name(cliente_value):
                         fields.append(_make_field("titular", "Titular", cliente_value, ocr_boxes, confidence=0.72))
+
+            # CFE receipts sometimes omit/merge CP and lose address in generic picker.
+            if not any(f.get("key") == "domicilio" and f.get("value") for f in fields):
+                cfe_address = _extract_cfe_address(box_text_lines, full_text)
+                if cfe_address:
+                    fields.append(_make_field("domicilio", "Domicilio", cfe_address, ocr_boxes, confidence=0.83))
+                    if not any(f.get("key") == "cp" and f.get("value") for f in fields):
+                        cfe_cp = _extract_postal_code(cfe_address)
+                        if cfe_cp:
+                            fields.append(_make_field("cp", "CP", cfe_cp, ocr_boxes, confidence=0.8))
         address = _pick_address(box_text_lines)
         if address:
             fields.append(_make_field("domicilio", "Domicilio", _clean_address_value(address), ocr_boxes, confidence=0.8))
@@ -2197,9 +3164,210 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
             fields.append(_make_field("ciudad", "Ciudad", _normalize_address(city), ocr_boxes, confidence=0.6))
         if state:
             fields.append(_make_field("estado", "Estado", _normalize_address(state), ocr_boxes, confidence=0.6))
-        referencia = _find_value_after_keyword(box_text_lines, ["REFERENCIA", "REFERENCIA DE PAGO", "NUMERO DE SERVICIO", "NUMERO DE SERVICIO"])
+        referencia = _find_value_after_keyword(box_text_lines, ["REFERENCIA", "REFERENCIA DE PAGO", "LINEA DE CAPTURA"])
         if referencia:
-            fields.append(_make_field("referencia", "Referencia", referencia, ocr_boxes, confidence=0.7))
+            normalized_ref = _normalize_value_for_key("referencia", referencia)
+            if normalized_ref:
+                fields.append(_make_field("referencia", "Referencia", normalized_ref, ocr_boxes, confidence=0.7))
+
+        if telmex_in_text:
+            def _is_valid_telmex_field(key: str, value: str) -> bool:
+                cleaned = _normalize_text(str(value or "")).upper()
+                if not cleaned:
+                    return False
+                if key == "numero_servicio":
+                    digits = _normalize_numeric_field(cleaned)
+                    return bool(re.fullmatch(r"\d{10}", digits)) and digits != "0000000000"
+                if key == "cuenta":
+                    normalized = _normalize_alnum(cleaned)
+                    if any(ch.isalpha() for ch in normalized):
+                        return False
+                    digits = _normalize_numeric_field(cleaned)
+                    return 8 <= len(digits) <= 22
+                if key == "referencia":
+                    normalized = _normalize_alnum(cleaned)
+                    digits = sum(1 for ch in normalized if ch.isdigit())
+                    if normalized in {"S", "DE", "SDE"}:
+                        return False
+                    return 10 <= len(normalized) <= 30 and digits >= 8
+                if key == "cp":
+                    return bool(re.fullmatch(r"\d{5}", _normalize_numeric_field(cleaned)))
+                if key == "fecha_limite":
+                    return bool(
+                        DATE_PATTERN.search(cleaned)
+                        or re.search(r"\d{1,2}(?:\s+|[-/])[A-Z]{3}(?:\s+|[-/])\d{2,4}", cleaned)
+                    )
+                if key == "domicilio":
+                    if any(token in cleaned for token in ["TELMEX", "TELEFON", "LINEA", "CAPTURA"]):
+                        return False
+                    address_markers = (
+                        "CLL",
+                        "CALLE",
+                        "COL",
+                        "COLONIA",
+                        "AV",
+                        "AVENIDA",
+                        "FRACC",
+                        "MZ",
+                        "LT",
+                        "SN",
+                        "CP",
+                        "C.P.",
+                        "MUNICIPIO",
+                        "ESTADO",
+                        "ATASTA",
+                        "CARMEN",
+                    )
+                    return len(cleaned) >= 12 and any(marker in cleaned for marker in address_markers)
+                return True
+
+            filtered = []
+            for field in fields:
+                key = str(field.get("key", ""))
+                if key in {"numero_servicio", "cuenta", "referencia", "cp", "fecha_limite", "domicilio"}:
+                    if not _is_valid_telmex_field(key, str(field.get("value", ""))):
+                        continue
+                filtered.append(field)
+            fields = filtered
+
+            num_match = re.search(
+                r"(?:NUMERO\s+TELEFONICO|NUMERO\s+DE\s+TELEFONO|TELEFONO|LINEA(?!\s+DE\s+CAPTURA)|NUMERO(?!\s+DE\s+CUENTA))\D*((?:\d[\s().-]*){10,12})",
+                full_text,
+            )
+            if num_match:
+                num_value = _normalize_numeric_field(num_match.group(1))
+                if len(num_value) > 10:
+                    num_value = num_value[-10:]
+                if re.fullmatch(r"\d{10}", num_value) and num_value != "0000000000":
+                    fields.append(_make_field("numero_servicio", "Numero de servicio", num_value, ocr_boxes, confidence=0.96))
+
+            cuenta_match = re.search(
+                r"(?:NO\.?\s*DE\s*CUENTA|NUMERO\s+DE\s+CUENTA|CUENTA)\D*([0-9][0-9\s.-]{7,24})",
+                full_text,
+            )
+            if cuenta_match:
+                cuenta_value = _normalize_numeric_field(cuenta_match.group(1))
+                if 8 <= len(cuenta_value) <= 22 and not (len(cuenta_value) == 10 and cuenta_value.startswith(("800", "900"))):
+                    fields.append(_make_field("cuenta", "Cuenta", cuenta_value, ocr_boxes, confidence=0.95))
+
+            ref_match = re.search(
+                r"(?:LINEA\s+DE\s+CAPTURA|REFERENCIA(?:\s+UNICA)?|REF(?:ERENCIA)?)\D*((?:\d[\s.-]*){10,30})(?=\s+(?:PAGAR|FECHA|TOTAL|IMPORTE|SALDO|LIMITE|TELMEX)\b|$)",
+                full_text,
+            )
+            if ref_match:
+                ref_value = _normalize_value_for_key("referencia", ref_match.group(1))
+                if ref_value:
+                    fields.append(_make_field("referencia", "Referencia", ref_value, ocr_boxes, confidence=0.95))
+
+            if not any(f.get("key") == "cp" for f in fields):
+                cp_match = re.search(r"\b([0-9OIL]{5})\b", full_text)
+                if cp_match:
+                    normalized_cp = _normalize_value_for_key("cp", cp_match.group(1))
+                    if normalized_cp:
+                        fields.append(_make_field("cp", "CP", normalized_cp, ocr_boxes, confidence=0.9))
+
+            if not any(f.get("key") == "fecha_limite" for f in fields):
+                limit_match = re.search(
+                    r"(?:PAGAR\s+ANTES\s+DE|FECHA\s*LIMITE(?:\s*DE\s*PAGO)?|VENCE)\D*([0-9]{1,2}(?:\s+|[-/])[A-Z]{3}(?:\s+|[-/])[0-9]{2,4}|\d{2}[/-]\d{2}[/-]\d{2,4})",
+                    full_text,
+                )
+                if limit_match:
+                    fields.append(_make_field("fecha_limite", "Fecha limite", limit_match.group(1), ocr_boxes, confidence=0.92))
+
+            if not any(f.get("key") == "total" for f in fields):
+                total_match = re.search(
+                    r"(?:TOTAL\s+A\s+PAGAR|SALDO\s+TOTAL|IMPORTE\s+A\s+PAGAR|TOTAL)\D*(\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)",
+                    full_text,
+                )
+                if total_match:
+                    fields.append(_make_field("total", "Total", _normalize_text(total_match.group(1)), ocr_boxes, confidence=0.92))
+
+            best_num = next((f for f in fields if f.get("key") == "numero_servicio"), None)
+            if best_num and best_num.get("value"):
+                num_value = _normalize_numeric_field(str(best_num["value"]))
+                sanitized = []
+                for field in fields:
+                    if field.get("key") == "referencia" and field.get("value"):
+                        ref_digits = _normalize_numeric_field(str(field["value"]))
+                        if ref_digits and ref_digits == num_value:
+                            continue
+                    sanitized.append(field)
+                fields = sanitized
+
+            customer_idx = _pick_telmex_customer_index(box_text_lines)
+            if customer_idx is not None:
+                current_holder = next((f for f in fields if f.get("key") == "titular" and f.get("value")), None)
+                holder_value = _normalize_text(str(current_holder.get("value", ""))).upper() if current_holder else ""
+                needs_holder = not holder_value or holder_value == "PUBLICO EN GENERAL"
+                if needs_holder:
+                    holder_candidate = None
+                    start = max(0, customer_idx - 4)
+                    end = min(len(box_text_lines), customer_idx + 2)
+                    for line in box_text_lines[start:end]:
+                        candidate = _extract_possible_telmex_holder(line)
+                        if candidate:
+                            holder_candidate = _cleanup_telmex_holder(candidate)
+                            break
+
+                    if holder_candidate:
+                        fields.append(_make_field("titular", "Titular", holder_candidate, ocr_boxes, confidence=0.99))
+                    elif not current_holder:
+                        fields.append(_make_field("titular", "Titular", "PUBLICO EN GENERAL", ocr_boxes, confidence=0.94))
+                customer_address, customer_cp = _extract_telmex_customer_address_cp(box_text_lines, customer_idx)
+                if customer_address:
+                    fields.append(_make_field("domicilio", "Domicilio", customer_address, ocr_boxes, confidence=0.99))
+                if customer_cp:
+                    normalized_cp = _normalize_value_for_key("cp", customer_cp)
+                    if normalized_cp:
+                        fields.append(_make_field("cp", "CP", normalized_cp, ocr_boxes, confidence=1.0))
+
+            # Final Telmex hardening for noisy OCR:
+            # 1) sanitize any selected domicilio to remove payment footer text
+            # 2) prefer customer CP over corporate CP 06500
+            best_dom = _choose_telmex_domicilio(fields)
+            fallback_dom = _extract_telmex_domicilio_from_full_text(full_text)
+            if fallback_dom:
+                if not best_dom:
+                    best_dom = fallback_dom
+                else:
+                    best_has_street = ("CLL" in best_dom) or ("CALLE" in best_dom)
+                    fb_has_street = ("CLL" in fallback_dom) or ("CALLE" in fallback_dom)
+                    if fb_has_street and not best_has_street:
+                        best_dom = fallback_dom
+            if best_dom:
+                best_dom = _enrich_telmex_domicilio(best_dom, full_text)
+                fields = [f for f in fields if f.get("key") != "domicilio"]
+                fields.append(_make_field("domicilio", "Domicilio", best_dom, ocr_boxes, confidence=1.0))
+
+            current_cp = next((f for f in fields if f.get("key") == "cp" and f.get("value")), None)
+            cp_value = _normalize_numeric_field(str(current_cp["value"])) if current_cp else ""
+            if not cp_value or cp_value == "06500":
+                better_cp = _choose_telmex_cp(fields, full_text)
+                if better_cp:
+                    fields = [f for f in fields if f.get("key") != "cp"]
+                    fields.append(_make_field("cp", "CP", better_cp, ocr_boxes, confidence=1.0))
+
+            if not any(f.get("key") == "referencia" for f in fields):
+                long_numbers = re.findall(r"\b\d{18,24}\b", full_text)
+                if best_num and best_num.get("value"):
+                    num_value = _normalize_numeric_field(str(best_num["value"]))
+                    candidate = next((n for n in long_numbers if n.startswith(num_value) and n != num_value), None)
+                    if candidate:
+                        fields.append(_make_field("referencia", "Referencia", candidate, ocr_boxes, confidence=0.94))
+                elif long_numbers:
+                    fields.append(_make_field("referencia", "Referencia", long_numbers[0], ocr_boxes, confidence=0.9))
+
+    # CFE fallback: many receipts only expose RMU and no explicit "Referencia" label.
+    if document_type == "COMPROBANTE_DOMICILIO":
+        has_ref = any(f.get("key") == "referencia" and f.get("value") for f in fields)
+        provider_val = next((str(f.get("value", "")).upper() for f in fields if f.get("key") == "proveedor"), "")
+        is_cfe = provider_val == "CFE" or "CFE" in text or "COMISION FEDERAL" in text
+        if is_cfe and not has_ref:
+            rmu_match = re.search(r"\bRMU[:\s-]*([A-Z0-9-]{12,40})", text)
+            if rmu_match:
+                rmu_value = _normalize_value_for_key("referencia", rmu_match.group(1))
+                if rmu_value:
+                    fields.append(_make_field("referencia", "Referencia", rmu_value, ocr_boxes, confidence=0.86))
 
     legacy_values = legacy_extract_fields(document_type, ocr_boxes)
     if legacy_values:

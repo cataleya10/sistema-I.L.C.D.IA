@@ -68,7 +68,13 @@ export class LoginPage implements OnInit {
 
   submit(): void {
     this.error = false;
-    this.auth.login(this.username, this.password).subscribe({
+    const username = this.username.trim();
+    if (!username || !this.password) {
+      this.error = true;
+      return;
+    }
+
+    this.auth.login(username, this.password).subscribe({
       next: (response) => {
         this.auth.setToken(response.token);
         this.auth.setRefreshToken(response.refresh_token);

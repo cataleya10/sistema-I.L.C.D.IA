@@ -1,7 +1,7 @@
-import xml.etree.ElementTree as ET
-import os
 import json
+import os
 import time
+import xml.etree.ElementTree as ET
 
 
 class SepomexLoader:
@@ -18,27 +18,27 @@ class SepomexLoader:
     def cargar_desde_json(self):
         try:
             inicio = time.time()
-            print(f"⚡ Cargando caché {self.json_path}...")
+            print(f"[SEPOMEX] Cargando cache {self.json_path}...")
             with open(self.json_path, "r", encoding="utf-8") as f:
                 self.db = json.load(f)
             fin = time.time()
-            print(f"✅ SEPOMEX cargado desde JSON en {fin - inicio:.2f} segundos. ({len(self.db)} CPs)")
+            print(f"[SEPOMEX] Cargado desde JSON en {fin - inicio:.2f} segundos. ({len(self.db)} CPs)")
         except Exception as e:
-            print(f"❌ Error leyendo JSON (se intentará regenerar): {e}")
+            print(f"[SEPOMEX] Error leyendo JSON (se intentara regenerar): {e}")
             self.cargar_desde_xml_y_convertir()
 
     def cargar_desde_xml_y_convertir(self):
         if not os.path.exists(self.xml_path):
-            print(f"⚠️ ADVERTENCIA: No se encontró {self.xml_path}")
+            print(f"[SEPOMEX] ADVERTENCIA: No se encontro {self.xml_path}")
             return
 
         try:
-            print(f"🐢 Cargando (y convirtiendo) XML original: {self.xml_path}...")
+            print(f"[SEPOMEX] Cargando y convirtiendo XML original: {self.xml_path}...")
             inicio = time.time()
 
             context = ET.iterparse(self.xml_path, events=("end",))
 
-            for event, elem in context:
+            for _event, elem in context:
                 tag_name = elem.tag.split("}")[-1].lower()
 
                 if tag_name in ["table", "table_data", "newdataset", "data"]:
@@ -71,15 +71,15 @@ class SepomexLoader:
                     elem.clear()
 
             fin = time.time()
-            print(f"✅ XML procesado en {fin - inicio:.2f} segundos.")
+            print(f"[SEPOMEX] XML procesado en {fin - inicio:.2f} segundos.")
 
-            print("💾 Guardando archivo JSON optimizado para la próxima vez...")
+            print("[SEPOMEX] Guardando archivo JSON optimizado para la proxima vez...")
             with open(self.json_path, "w", encoding="utf-8") as f:
                 json.dump(self.db, f, ensure_ascii=False)
-            print("✨ ¡Conversión completada! El próximo reinicio será instantáneo.")
+            print("[SEPOMEX] Conversion completada. El proximo reinicio sera instantaneo.")
 
         except Exception as e:
-            print(f"❌ Error crítico leyendo XML: {e}")
+            print(f"[SEPOMEX] Error critico leyendo XML: {e}")
 
     def buscar_cp(self, cp):
         return self.db.get(str(cp))

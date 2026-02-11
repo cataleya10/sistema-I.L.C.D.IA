@@ -47,6 +47,10 @@ export class DocumentsService {
     return this.http.post<DocumentProcessResponse>(`${this.baseUrl}/${id}/process`, {});
   }
 
+  getProcessStatus(id: string) {
+    return this.http.get<DocumentProcessResponse>(`${this.baseUrl}/${id}/process/status`);
+  }
+
   reprocess(id: string) {
     return this.http.post<DocumentProcessResponse>(`${this.baseUrl}/${id}/reprocess`, {});
   }
@@ -65,5 +69,9 @@ export class DocumentsService {
 
   downloadWord(id: string) {
     return this.http.get(`${this.baseUrl}/${id}/export/word`, { responseType: 'blob' });
+  }
+
+  downloadExcel(id: string) {
+    return this.http.get(`${this.baseUrl}/${id}/export/excel`, { responseType: 'blob' });
   }
 }

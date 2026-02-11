@@ -119,6 +119,25 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 builder.Services.AddAuthorization();
 
+var corsOptions = builder.Configuration.GetSection(CorsOptions.SectionName).Get<CorsOptions>() ?? new CorsOptions();
+if (!builder.Environment.IsDevelopment())
+{
+    if (corsOptions.AllowedOrigins.Length == 0)
+    {
+        throw new InvalidOperationException("Cors:AllowedOrigins debe configurarse para ambientes no Development.");
+    }
+
+    var hasInvalidOrigin = corsOptions.AllowedOrigins.Any(origin =>
+        string.IsNullOrWhiteSpace(origin)
+        || origin.Contains("localhost", StringComparison.OrdinalIgnoreCase)
+        || origin == "*");
+
+    if (hasInvalidOrigin)
+    {
+        throw new InvalidOperationException("Cors:AllowedOrigins contiene valores no seguros para ambientes no Development.");
+    }
+}
+
 builder.Services.AddRateLimiter(options =>
 {
     var rateOptions = builder.Configuration.GetSection(RateLimitOptions.SectionName).Get<RateLimitOptions>() ?? new RateLimitOptions();
@@ -148,7 +167,6 @@ builder.Services.AddRateLimiter(options =>
 
 builder.Services.AddCors(options =>
 {
-    var corsOptions = builder.Configuration.GetSection(CorsOptions.SectionName).Get<CorsOptions>() ?? new CorsOptions();
     options.AddPolicy("WebClient", policy =>
         policy.WithOrigins(corsOptions.AllowedOrigins)
             .AllowAnyHeader()
@@ -158,6 +176,21 @@ builder.Services.AddCors(options =>
 builder.Services.AddInfrastructure(builder.Configuration);
 
 var app = builder.Build();
+
+var jwtSigningKey = app.Configuration.GetValue<string>("Jwt:SigningKey") ?? string.Empty;
+var weakJwtKey = string.IsNullOrWhiteSpace(jwtSigningKey)
+    || jwtSigningKey.Contains("CHANGE_ME", StringComparison.OrdinalIgnoreCase)
+    || jwtSigningKey.Length < 32;
+
+if (!app.Environment.IsDevelopment() && weakJwtKey)
+{
+    throw new InvalidOperationException("Jwt:SigningKey insegura. Configura una clave fuerte de al menos 32 caracteres.");
+}
+
+if (app.Environment.IsDevelopment() && weakJwtKey)
+{
+    app.Logger.LogWarning("Jwt:SigningKey de desarrollo es insegura. Define Jwt__SigningKey en .env antes de desplegar.");
+}
 
 if (app.Environment.IsDevelopment())
 {

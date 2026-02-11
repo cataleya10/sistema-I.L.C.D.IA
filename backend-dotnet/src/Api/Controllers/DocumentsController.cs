@@ -6,7 +6,12 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Shared.Options;
 using Api.Authorization;
+using DocumentFormat.OpenXml;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Spreadsheet;
 using System.IO;
+using System.Globalization;
+using System.Xml;
 
 namespace Api.Controllers;
 
@@ -135,11 +140,49 @@ public class DocumentsController : ControllerBase
         return File(global::System.Text.Encoding.UTF8.GetBytes(rtf), "application/rtf", $"{outputName}.doc");
     }
 
+    [HttpGet("{id:guid}/export/excel")]
+    [RequireRole("Admin,User")]
+    public async Task<IActionResult> ExportExcel(Guid id, CancellationToken cancellationToken)
+    {
+        var detail = await _documentService.GetByIdAsync(id, cancellationToken);
+        if (detail is null)
+        {
+            return NotFound("Documento no encontrado.");
+        }
+
+        var bytes = BuildXlsx(detail);
+        var filename = Path.GetFileNameWithoutExtension(detail.OriginalFilename);
+        var outputName = string.IsNullOrWhiteSpace(filename) ? "documento" : filename;
+        return File(
+            bytes,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            $"{outputName}.xlsx");
+    }
+
     [HttpPost("{id:guid}/process")]
     [RequireRole("Admin")]
     public async Task<ActionResult<DocumentProcessResponse>> Process(Guid id, CancellationToken cancellationToken)
     {
         var result = await _documentService.ProcessAsync(id, cancellationToken);
+        if (result.Status == DocumentStatus.Processing)
+        {
+            return Accepted(result);
+        }
+
+        return Ok(result);
+    }
+
+    [HttpGet("{id:guid}/process/status")]
+    [RequireRole("Admin,User")]
+    public async Task<ActionResult<DocumentProcessResponse>> ProcessStatus(Guid id, CancellationToken cancellationToken)
+    {
+        var detail = await _documentService.GetByIdAsync(id, cancellationToken);
+        if (detail is null)
+        {
+            return NotFound("Documento no encontrado.");
+        }
+
+        var result = await _documentService.GetProcessStatusAsync(id, cancellationToken);
         return Ok(result);
     }
 
@@ -147,8 +190,8 @@ public class DocumentsController : ControllerBase
     [RequireRole("Admin")]
     public async Task<ActionResult<DocumentProcessResponse>> Reprocess(Guid id, CancellationToken cancellationToken)
     {
-        var result = await _documentService.ProcessNowAsync(id, cancellationToken);
-        return Ok(result);
+        var result = await _documentService.ReprocessAsync(id, cancellationToken);
+        return Accepted(result);
     }
 
     [HttpPut("{id:guid}/fields")]
@@ -324,8 +367,18 @@ public class DocumentsController : ControllerBase
         var fieldMap = detail.Fields
             .GroupBy(field => field.Key, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var excludedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "texto_detectado" };
+        var orderedTemplate = template
+            .Where(item => !excludedKeys.Contains(item.Key))
+            .ToList();
+        var templateKeys = new HashSet<string>(orderedTemplate.Select(item => item.Key), StringComparer.OrdinalIgnoreCase);
+        var extraFields = detail.Fields
+            .Where(field => !excludedKeys.Contains(field.Key) && !templateKeys.Contains(field.Key))
+            .Select(field => (field.Key, string.IsNullOrWhiteSpace(field.Label) ? field.Key : field.Label))
+            .ToList();
+        var exportFields = orderedTemplate.Concat(extraFields).ToList();
 
-        foreach (var (key, label) in template)
+        foreach (var (key, label) in exportFields)
         {
             if (fieldMap.TryGetValue(key, out var field))
             {
@@ -340,6 +393,223 @@ public class DocumentsController : ControllerBase
 
         sb.Append("}");
         return sb.ToString();
+    }
+
+    private static byte[] BuildXlsx(DocumentDetailDto detail)
+    {
+        static IReadOnlyList<(string Key, string Label)> GetTemplate(DocumentType documentType)
+        {
+            return documentType switch
+            {
+                DocumentType.Ine => new List<(string, string)>
+                {
+                    ("nombre", "Nombre completo"),
+                    ("curp", "CURP"),
+                    ("clave_elector", "Clave de elector"),
+                    ("fecha_nacimiento", "Fecha de nacimiento"),
+                    ("sexo", "Sexo"),
+                    ("domicilio", "Domicilio"),
+                    ("seccion", "Seccion"),
+                    ("vigencia", "Vigencia")
+                },
+                DocumentType.Curp => new List<(string, string)>
+                {
+                    ("nombre", "Nombre completo"),
+                    ("curp", "CURP"),
+                    ("fecha_nacimiento", "Fecha de nacimiento"),
+                    ("sexo", "Sexo"),
+                    ("entidad_nacimiento", "Entidad de nacimiento")
+                },
+                DocumentType.ActaNacimiento => new List<(string, string)>
+                {
+                    ("nombre", "Nombre completo"),
+                    ("sexo", "Sexo"),
+                    ("fecha_nacimiento", "Fecha de nacimiento"),
+                    ("lugar_nacimiento", "Lugar de nacimiento"),
+                    ("folio", "Folio"),
+                    ("numero_acta", "Numero de acta"),
+                    ("fecha_registro", "Fecha de registro"),
+                    ("municipio_registro", "Municipio de registro"),
+                    ("entidad_registro", "Entidad de registro")
+                },
+                DocumentType.Nss => new List<(string, string)>
+                {
+                    ("nombre", "Nombre completo"),
+                    ("nss", "NSS")
+                },
+                DocumentType.ComprobanteDomicilio => new List<(string, string)>
+                {
+                    ("proveedor", "Proveedor"),
+                    ("numero_servicio", "Numero de servicio"),
+                    ("cuenta", "Cuenta"),
+                    ("referencia", "Referencia"),
+                    ("titular", "Titular"),
+                    ("domicilio", "Domicilio"),
+                    ("cp", "Codigo postal"),
+                    ("fecha_limite", "Fecha limite"),
+                    ("total", "Total")
+                },
+                DocumentType.DatosBancarios => new List<(string, string)>
+                {
+                    ("banco", "Banco"),
+                    ("clabe", "CLABE"),
+                    ("cuenta", "Cuenta"),
+                    ("titular", "Titular"),
+                    ("rfc", "RFC"),
+                    ("fecha_corte", "Fecha de corte"),
+                    ("periodo", "Periodo")
+                },
+                DocumentType.ConstanciaSituacionFiscal => new List<(string, string)>
+                {
+                    ("rfc", "RFC"),
+                    ("nombre", "Nombre completo"),
+                    ("regimen", "Regimen"),
+                    ("domicilio", "Domicilio")
+                },
+                _ => new List<(string, string)>()
+            };
+        }
+
+        static string SanitizeText(string? value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return string.Empty;
+            }
+
+            var normalized = value
+                .Replace("\r\n", "\n")
+                .Replace("\r", "\n");
+            var sb = new global::System.Text.StringBuilder(normalized.Length);
+            foreach (var ch in normalized)
+            {
+                if (XmlConvert.IsXmlChar(ch))
+                {
+                    sb.Append(ch);
+                }
+            }
+            return sb.ToString();
+        }
+
+        static Cell TextCell(string cellRef, string? value)
+        {
+            return new Cell
+            {
+                CellReference = cellRef,
+                DataType = CellValues.InlineString,
+                InlineString = new InlineString(
+                    new Text(SanitizeText(value))
+                    {
+                        Space = SpaceProcessingModeValues.Preserve
+                    })
+            };
+        }
+
+        static string Col(int index)
+        {
+            const string letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+            if (index <= 26)
+            {
+                return letters[index - 1].ToString();
+            }
+
+            var first = (index - 1) / 26;
+            var second = (index - 1) % 26;
+            return $"{letters[first - 1]}{letters[second]}";
+        }
+
+        static Row BuildRow(uint rowIndex, params string[] values)
+        {
+            var row = new Row { RowIndex = rowIndex };
+            for (var i = 0; i < values.Length; i++)
+            {
+                var cellRef = $"{Col(i + 1)}{rowIndex}";
+                row.Append(TextCell(cellRef, values[i]));
+            }
+            return row;
+        }
+
+        var template = GetTemplate(detail.DocumentType);
+        if (template.Count == 0 && detail.Fields.Count > 0)
+        {
+            template = detail.Fields
+                .Select(field => (field.Key, field.Label))
+                .ToList();
+        }
+
+        var fieldMap = detail.Fields
+            .GroupBy(field => field.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var excludedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "texto_detectado" };
+        var orderedTemplate = template
+            .Where(item => !excludedKeys.Contains(item.Key))
+            .ToList();
+        var templateKeys = new HashSet<string>(orderedTemplate.Select(item => item.Key), StringComparer.OrdinalIgnoreCase);
+        var extraFields = detail.Fields
+            .Where(field => !excludedKeys.Contains(field.Key) && !templateKeys.Contains(field.Key))
+            .Select(field => (field.Key, string.IsNullOrWhiteSpace(field.Label) ? field.Key : field.Label))
+            .ToList();
+        var exportFields = orderedTemplate.Concat(extraFields).ToList();
+
+        var rowNumber = 7u;
+        var sheetData = new SheetData();
+        sheetData.Append(BuildRow(1, "SISTEMA DE LECTURA INTELIGENTE"));
+        sheetData.Append(BuildRow(2, "Documento", detail.OriginalFilename));
+        sheetData.Append(BuildRow(3, "Tipo", detail.DocumentType.ToString()));
+        sheetData.Append(BuildRow(4, "Fecha de carga", detail.UploadedAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)));
+        sheetData.Append(BuildRow(6, "Campo", "Valor", "Validez", "Confianza"));
+
+        foreach (var (key, label) in exportFields)
+        {
+            var hasField = fieldMap.TryGetValue(key, out var field);
+            var value = hasField ? (field!.CorrectedValue ?? field.Value ?? "-") : "-";
+            var validity = hasField ? (field!.Valid ? "OK" : "Revisar") : "-";
+            var confidence = hasField ? field!.Confidence.ToString("0.00", CultureInfo.InvariantCulture) : "-";
+            sheetData.Append(BuildRow(rowNumber, label, value, validity, confidence));
+            rowNumber++;
+        }
+
+        using var stream = new MemoryStream();
+        using (var spreadsheet = SpreadsheetDocument.Create(stream, SpreadsheetDocumentType.Workbook, true))
+        {
+            var workbookPart = spreadsheet.AddWorkbookPart();
+            workbookPart.Workbook = new Workbook();
+
+            var worksheetPart = workbookPart.AddNewPart<WorksheetPart>();
+            var lastDataRow = Math.Max(7u, rowNumber - 1);
+            worksheetPart.Worksheet = new Worksheet(
+                new SheetViews(
+                    new SheetView
+                    {
+                        WorkbookViewId = 0U,
+                        Pane = new Pane
+                        {
+                            VerticalSplit = 6D,
+                            TopLeftCell = "A7",
+                            ActivePane = PaneValues.BottomLeft,
+                            State = PaneStateValues.Frozen
+                        }
+                    }),
+                new Columns(
+                    new Column { Min = 1U, Max = 1U, Width = 28D, CustomWidth = true },
+                    new Column { Min = 2U, Max = 2U, Width = 58D, CustomWidth = true },
+                    new Column { Min = 3U, Max = 3U, Width = 14D, CustomWidth = true },
+                    new Column { Min = 4U, Max = 4U, Width = 14D, CustomWidth = true }),
+                sheetData,
+                new AutoFilter { Reference = $"A6:D{lastDataRow}" });
+
+            var sheets = workbookPart.Workbook.AppendChild(new Sheets());
+            sheets.Append(new Sheet
+            {
+                Id = workbookPart.GetIdOfPart(worksheetPart),
+                SheetId = 1U,
+                Name = "Extraccion"
+            });
+
+            workbookPart.Workbook.Save();
+        }
+
+        return stream.ToArray();
     }
 
     private static bool HasValidFileSignature(Stream stream, string contentType)
