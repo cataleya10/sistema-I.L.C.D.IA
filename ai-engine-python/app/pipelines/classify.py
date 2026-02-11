@@ -10,8 +10,8 @@ def _normalize_text(text: str) -> str:
     text = unicodedata.normalize("NFKD", text)
     text = text.encode("ascii", "ignore").decode("ascii")
     text = text.upper()
-    text = re.sub(r"[^A-Z0-9\\s]", " ", text)
-    return re.sub(r"\\s+", " ", text).strip()
+    text = re.sub(r"[^A-Z0-9\s]", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _tokenize(text: str) -> list[str]:
@@ -68,7 +68,8 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         "CFE",
         "TELMEX",
         "TELCEL",
-        "AT&T",
+        "AT T",
+        "ATT",
         "TOTALPLAY",
         "IZZI",
         "MEGACABLE",
@@ -81,6 +82,14 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         "NUMERO TELEFONICO",
         "TOTAL A PAGAR",
     )
+    service_markers_compact = (
+        "LINEADECAPTURA",
+        "REFERENCIAUNICA",
+        "PAGARANTESDE",
+        "NUMEROTELEFONICO",
+        "TOTALAPAGAR",
+        "COMISIONFEDERALDEELECTRICIDAD",
+    )
 
     if (
         "INSTITUTO NACIONAL ELECTORAL" in text
@@ -89,15 +98,30 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         or "CREDENCIALPARAVOTAR" in compact_text
     ):
         return "INE", 0.88
-    if "NUMERO DE SEGURIDAD SOCIAL" in text or "NSS" in text or "IMSS" in text or "SEGURIDAD SOCIAL" in text:
+    if (
+        "NUMERO DE SEGURIDAD SOCIAL" in text
+        or "NSS" in text
+        or "IMSS" in text
+        or "SEGURIDAD SOCIAL" in text
+        or "NUMERODESEGURIDADSOCIAL" in compact_text
+        or "SEGURIDADSOCIAL" in compact_text
+    ):
         return "NSS", 0.85
     if (
         "CONSTANCIA DE LA CLAVE UNICA" in text
         or "CONSTANCIA DE LA CLAVE UNICA DE REGISTRO DE POBLACION" in text
         or "CURP CERTIFICADA" in text
+        or "CONSTANCIADELACLAVEUNICA" in compact_text
+        or "CONSTANCIADELACLAVEUNICADEREGISTRODEPOBLACION" in compact_text
+        or "CURPCERTIFICADA" in compact_text
     ):
         return "CURP", 0.9
-    if "ACTA DE NACIMIENTO" in text or "REGISTRO CIVIL" in text:
+    if (
+        "ACTA DE NACIMIENTO" in text
+        or "REGISTRO CIVIL" in text
+        or "ACTADENACIMIENTO" in compact_text
+        or "REGISTROCIVIL" in compact_text
+    ):
         return "ACTA_NACIMIENTO", 0.85
     if (
         "CERTIFICADO DE NACIMIENTO" in text
@@ -110,11 +134,13 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         or "TOMO" in text
     ):
         return "ACTA_NACIMIENTO", 0.85
-    if any(marker in text for marker in service_markers):
+    if any(marker in text for marker in service_markers) or any(marker in compact_text for marker in service_markers_compact):
         return "COMPROBANTE_DOMICILIO", 0.86
     if (
         "CONSTANCIA DE SITUACION FISCAL" in text
         or "CEDULA DE IDENTIFICACION FISCAL" in text
+        or "CONSTANCIADESITUACIONFISCAL" in compact_text
+        or "CEDULADEIDENTIFICACIONFISCAL" in compact_text
         or (
             "SITUACION FISCAL" in text
             and ("RFC" in text or "REGIMEN" in text or "CIF" in text)
@@ -123,19 +149,26 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
             "SAT" in text
             and ("CEDULA DE IDENTIFICACION FISCAL" in text or "CONSTANCIA DE SITUACION FISCAL" in text)
         )
+        or (
+            "SITUACIONFISCAL" in compact_text
+            and ("RFC" in compact_text or "REGIMEN" in compact_text or "CIF" in compact_text)
+        )
+        or (
+            "SAT" in compact_text
+            and ("CEDULADEIDENTIFICACIONFISCAL" in compact_text or "CONSTANCIADESITUACIONFISCAL" in compact_text)
+        )
     ):
         return "CONSTANCIA_SITUACION_FISCAL", 0.86
     if "CLAVE UNICA DE REGISTRO DE POBLACION" in text or "CURP" in text:
         return "CURP", 0.9
     if "NSS" in text or "IMSS" in text or "SEGURIDAD SOCIAL" in text:
         return "NSS", 0.82
-    if any(marker in text for marker in service_markers):
-        return "COMPROBANTE_DOMICILIO", 0.8
     if (
         "CLABE" in text
         or "BANCO" in text
         or "CUENTA" in text
         or "ESTADO DE CUENTA" in text
+        or "ESTADODECUENTA" in compact_text
         or "ACCOUNT STATEMENT" in text
         or "BBVA" in text
         or "BANCOMER" in text
@@ -147,7 +180,7 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         or "AZTECA" in text
     ):
         return "DATOS_BANCARIOS", 0.8
-    name = (filename or "").upper()
+    name = _normalize_text(filename or "")
     if "INE" in name or "ELECTOR" in name:
         return "INE", 0.9
     if "ACTA" in name or "NACIMIENTO" in name:
@@ -158,7 +191,7 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         return "NSS", 0.85
     if "CLABE" in name or "BANCO" in name:
         return "DATOS_BANCARIOS", 0.85
-    if "ESTADO DE CUENTA" in name or "ESTADO_CUENTA" in name or "CUENTA" in name:
+    if "ESTADO DE CUENTA" in name or "ESTADO CUENTA" in name or "CUENTA" in name:
         return "DATOS_BANCARIOS", 0.8
     if "RFC" in name or "SITUACION" in name:
         return "CONSTANCIA_SITUACION_FISCAL", 0.85
@@ -178,21 +211,19 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
 
 
 async def classify_document(image, ocr_text: str, filename: str | None = None):
-    text = (ocr_text or "").upper()
-    name = (filename or "").upper()
-    text = text.replace("\u00a0", " ")
-    text = " ".join(text.split())
+    text = _normalize_text(ocr_text or "")
     compact_text = text.replace(" ", "")
+    name = _normalize_text(filename or "")
 
     model = _load_model()
     if model:
         predicted, confidence = _predict_nb(model, ocr_text or "")
         if predicted and confidence >= 0.6:
-            override, override_conf = _keyword_override(text, compact_text, filename)
+            override, override_conf = _keyword_override(text, compact_text, name)
             if override:
                 return override, max(confidence, override_conf)
             return predicted, confidence
-    override, override_conf = _keyword_override(text, compact_text, filename)
+    override, override_conf = _keyword_override(text, compact_text, name)
     if override:
         return override, override_conf
     return "UNKNOWN", 0.5
