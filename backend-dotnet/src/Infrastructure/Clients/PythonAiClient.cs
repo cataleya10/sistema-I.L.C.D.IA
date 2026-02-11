@@ -20,6 +20,11 @@ public class PythonAiClient : IPythonAiClient
         _httpClient = httpClient;
         var baseUrl = configuration["PythonAi:BaseUrl"] ?? "http://localhost:8000";
         _httpClient.BaseAddress = new Uri(baseUrl);
+        var timeoutSeconds = configuration.GetValue<int?>("PythonAi:TimeoutSeconds");
+        _httpClient.Timeout = TimeSpan.FromSeconds(
+            timeoutSeconds.HasValue && timeoutSeconds.Value > 0
+                ? timeoutSeconds.Value
+                : 300);
         _apiKey = configuration["PythonAi:ApiKey"];
         _jsonOptions = new JsonSerializerOptions
         {

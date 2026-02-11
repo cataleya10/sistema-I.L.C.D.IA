@@ -318,8 +318,6 @@ public class DocumentService : IDocumentService
                 Level = "ERROR",
                 Message = ex.Message
             });
-            document.Status = DocumentStatus.Failed;
-            document.ErrorMessage = ex.Message;
             await _dbContext.SaveChangesAsync(cancellationToken);
             throw;
         }

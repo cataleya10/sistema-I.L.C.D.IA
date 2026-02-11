@@ -83,8 +83,17 @@ public sealed class RefreshTokenStore
             }
             catch (CryptographicException)
             {
-                json = payload;
-                _logger.LogWarning("Refresh token store is not encrypted yet. It will be encrypted on next write.");
+                var trimmed = payload.TrimStart();
+                if (trimmed.StartsWith("[", StringComparison.Ordinal) || trimmed.StartsWith("{", StringComparison.Ordinal))
+                {
+                    json = payload;
+                    _logger.LogWarning("Refresh token store is not encrypted yet. It will be encrypted on next write.");
+                }
+                else
+                {
+                    _logger.LogWarning("Refresh token store payload cannot be decrypted with current keys. Skipping load.");
+                    return;
+                }
             }
             var entries = JsonSerializer.Deserialize<List<RefreshTokenEntry>>(json) ?? new List<RefreshTokenEntry>();
             foreach (var entry in entries)

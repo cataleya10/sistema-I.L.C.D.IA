@@ -64,6 +64,16 @@ public sealed class DocumentProcessingWorker : BackgroundService
                 if (attempt >= _options.MaxAttempts)
                 {
                     _logger.LogError(ex, "Document {DocumentId} failed after {Attempts} attempts", job.DocumentId, attempt);
+                    try
+                    {
+                        using var failureScope = _scopeFactory.CreateScope();
+                        var failureService = failureScope.ServiceProvider.GetRequiredService<IDocumentService>();
+                        await failureService.MarkFailedAsync(job.DocumentId, ex.Message, stoppingToken);
+                    }
+                    catch (Exception markEx)
+                    {
+                        _logger.LogError(markEx, "Unable to mark document {DocumentId} as failed", job.DocumentId);
+                    }
                     _tracker.Fail(job.DocumentId, ex);
                     return;
                 }
