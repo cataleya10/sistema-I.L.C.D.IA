@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def _to_legacy_ocr_results(ocr_boxes: list[dict] | None) -> list[list[list[Any]]]:
@@ -126,6 +129,7 @@ def legacy_extract_fields(document_type: str, ocr_boxes: list[dict] | None) -> d
                 "proveedor": data.get("servicio_detectado"),
             }
     except Exception:
+        logger.exception("legacy_extract_fields failed for document_type=%s", document_type)
         return {}
 
     return {}

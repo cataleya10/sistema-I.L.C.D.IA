@@ -1,6 +1,9 @@
 from thefuzz import fuzz
 import re
 from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ProcesadorActa:
@@ -168,7 +171,7 @@ class ProcesadorActa:
                 siglo = "20" if int(aa) <= anio_actual else "19"
                 self.datos["fecha_nacimiento"] = f"{dd}/{mm}/{siglo}{aa}"
             except Exception:
-                pass
+                logger.exception("No se pudo inferir fecha_nacimiento desde CURP")
 
         if not self.datos["sexo"]:
             self.datos["sexo"] = "HOMBRE" if curp[10] == "H" else "MUJER"
