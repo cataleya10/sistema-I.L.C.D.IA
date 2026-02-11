@@ -70,4 +70,8 @@ export class DocumentsService {
   downloadWord(id: string) {
     return this.http.get(`${this.baseUrl}/${id}/export/word`, { responseType: 'blob' });
   }
+
+  downloadExcel(id: string) {
+    return this.http.get(`${this.baseUrl}/${id}/export/excel`, { responseType: 'blob' });
+  }
 }

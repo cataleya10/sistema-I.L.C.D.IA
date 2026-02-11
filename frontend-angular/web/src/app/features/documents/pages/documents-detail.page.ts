@@ -40,6 +40,7 @@ import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
           Guardar cambios
         </button>
         <button type="button" class="ghost" (click)="downloadWord()" [disabled]="!document">Descargar Word</button>
+        <button type="button" class="ghost" (click)="downloadExcel()" [disabled]="!document">Descargar Excel</button>
         <button type="button" class="ghost" (click)="copyFields()" [disabled]="!document">Copiar campos</button>
         <a class="ghost" [routerLink]="['/documents', document.id, 'results']">Ver resultados</a>
       </div>
@@ -504,6 +505,32 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
         this.stopProcessingPoll();
         this.message = 'No se pudo cargar el documento.';
         this.isLoading = false;
+      }
+    });
+  }
+
+  downloadExcel(): void {
+    if (!this.document || this.isDownloading) {
+      return;
+    }
+    this.isDownloading = true;
+    this.documents.downloadExcel(this.document.id).subscribe({
+      next: (blob) => {
+        const baseName = (this.document?.original_filename || 'documento')
+          .replace(/\.[^/.]+$/, '')
+          .trim();
+        const filename = baseName ? `${baseName}.xlsx` : 'documento.xlsx';
+        const url = window.URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = filename;
+        anchor.click();
+        window.URL.revokeObjectURL(url);
+        this.isDownloading = false;
+      },
+      error: () => {
+        this.message = 'No se pudo descargar el Excel.';
+        this.isDownloading = false;
       }
     });
   }
