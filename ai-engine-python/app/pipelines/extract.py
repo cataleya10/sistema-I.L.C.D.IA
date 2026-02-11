@@ -2854,6 +2854,57 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
 
         # CFE-style documents: prefer user address block and service identifiers
         if full_text and ("CFE" in full_text or "COMISION FEDERAL" in full_text):
+            def _extract_cfe_address(lines_local: list[str], full_text_local: str) -> str | None:
+                address_markers = ("DOMICILIO", "CALLE", "CLL", "COL", "COLONIA", "AV", "AVENIDA", "FRACC", "MZ", "LT", "CP", "C.P.")
+                stop_tokens = ("TOTAL", "IMPORTE", "PAGAR", "LIMITE", "CORTE", "RFC", "TARIFA", "MEDIDOR", "SERVICIO")
+
+                for idx, raw_line in enumerate(lines_local):
+                    line = _normalize_text(str(raw_line)).upper()
+                    if "DOMICILIO" not in line:
+                        continue
+                    tail = re.sub(r"^.*DOMICILIO(?:\s+DEL\s+SERVICIO|\s+DE\s+SUMINISTRO)?\s*[:\-]?\s*", "", line).strip(" .,-")
+                    pieces = []
+                    if tail and not any(token in tail for token in ("COMISION FEDERAL", "CFE SUMINISTRADOR")):
+                        pieces.append(tail)
+                    for next_line in lines_local[idx + 1: idx + 3]:
+                        upper_next = _normalize_text(str(next_line)).upper()
+                        if not upper_next:
+                            continue
+                        if any(token in upper_next for token in stop_tokens):
+                            break
+                        pieces.append(upper_next)
+                    candidate = _clean_address_value(" ".join(pieces))
+                    if len(candidate) >= 12 and any(marker in candidate for marker in address_markers):
+                        return candidate
+
+                for idx, raw_line in enumerate(lines_local):
+                    line = _normalize_text(str(raw_line)).upper()
+                    if not any(marker in line for marker in address_markers):
+                        continue
+                    if any(token in line for token in ("TOTAL", "IMPORTE", "PAGAR", "TARIFA", "MEDIDOR", "RFC")):
+                        continue
+                    pieces = [line]
+                    for next_line in lines_local[idx + 1: idx + 3]:
+                        upper_next = _normalize_text(str(next_line)).upper()
+                        if not upper_next:
+                            continue
+                        if any(token in upper_next for token in stop_tokens):
+                            break
+                        pieces.append(upper_next)
+                    candidate = _clean_address_value(" ".join(pieces))
+                    if len(candidate) >= 12 and any(marker in candidate for marker in address_markers):
+                        return candidate
+
+                match = re.search(
+                    r"(?:DOMICILIO(?:\s+DEL\s+SERVICIO|\s+DE\s+SUMINISTRO)?|DIRECCION)\s*[:\-]?\s*(.{15,180}?)(?=\s+(?:TOTAL|IMPORTE|PAGAR|RFC|TARIFA|MEDIDOR|NO\.?\s*DE\s*SERVICI[O0]|SERVICI[O0])\b|$)",
+                    full_text_local,
+                )
+                if match:
+                    candidate = _clean_address_value(match.group(1))
+                    if len(candidate) >= 12 and any(marker in candidate for marker in address_markers):
+                        return candidate
+                return None
+
             def _parse_amount_local(value: str | None) -> float | None:
                 if not value:
                     return None
@@ -3092,6 +3143,16 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                     cliente_value = _normalize_name(str(cliente_field["value"]))
                     if _is_person_name(cliente_value):
                         fields.append(_make_field("titular", "Titular", cliente_value, ocr_boxes, confidence=0.72))
+
+            # CFE receipts sometimes omit/merge CP and lose address in generic picker.
+            if not any(f.get("key") == "domicilio" and f.get("value") for f in fields):
+                cfe_address = _extract_cfe_address(box_text_lines, full_text)
+                if cfe_address:
+                    fields.append(_make_field("domicilio", "Domicilio", cfe_address, ocr_boxes, confidence=0.83))
+                    if not any(f.get("key") == "cp" and f.get("value") for f in fields):
+                        cfe_cp = _extract_postal_code(cfe_address)
+                        if cfe_cp:
+                            fields.append(_make_field("cp", "CP", cfe_cp, ocr_boxes, confidence=0.8))
         address = _pick_address(box_text_lines)
         if address:
             fields.append(_make_field("domicilio", "Domicilio", _clean_address_value(address), ocr_boxes, confidence=0.8))
@@ -3295,6 +3356,18 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                         fields.append(_make_field("referencia", "Referencia", candidate, ocr_boxes, confidence=0.94))
                 elif long_numbers:
                     fields.append(_make_field("referencia", "Referencia", long_numbers[0], ocr_boxes, confidence=0.9))
+
+    # CFE fallback: many receipts only expose RMU and no explicit "Referencia" label.
+    if document_type == "COMPROBANTE_DOMICILIO":
+        has_ref = any(f.get("key") == "referencia" and f.get("value") for f in fields)
+        provider_val = next((str(f.get("value", "")).upper() for f in fields if f.get("key") == "proveedor"), "")
+        is_cfe = provider_val == "CFE" or "CFE" in text or "COMISION FEDERAL" in text
+        if is_cfe and not has_ref:
+            rmu_match = re.search(r"\bRMU[:\s-]*([A-Z0-9-]{12,40})", text)
+            if rmu_match:
+                rmu_value = _normalize_value_for_key("referencia", rmu_match.group(1))
+                if rmu_value:
+                    fields.append(_make_field("referencia", "Referencia", rmu_value, ocr_boxes, confidence=0.86))
 
     legacy_values = legacy_extract_fields(document_type, ocr_boxes)
     if legacy_values:

@@ -543,7 +543,7 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
     const fieldMap = new Map(
       document.fields.map((field) => [field.key.toLowerCase(), field])
     );
-      return template.map((field) => {
+    const mappedFromTemplate = template.map((field) => {
         const resolved = fieldMap.get(field.key.toLowerCase());
         return {
           key: field.key,
@@ -557,7 +557,11 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
           corrected: resolved?.corrected ?? false
         };
       });
-    }
+
+    const templateKeys = new Set(template.map((field) => field.key.toLowerCase()));
+    const extras = document.fields.filter((field) => !templateKeys.has(field.key.toLowerCase()));
+    return [...mappedFromTemplate, ...extras];
+  }
 
   private loadLogs(id: string): void {
     this.documents.getLogs(id).subscribe({

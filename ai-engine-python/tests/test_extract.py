@@ -148,6 +148,34 @@ class ExtractPipelineTests(unittest.TestCase):
 
         self.assertEqual(data.get("referencia"), "023451789012345678")
 
+    def test_extract_cfe_domicilio_from_supply_label(self):
+        ocr_text = "\n".join(
+            [
+                "COMISION FEDERAL DE ELECTRICIDAD",
+                "NO. DE SERVICIO 795130504593",
+                "CUENTA 29DW05A012970875",
+                "DOMICILIO DE SUMINISTRO CALLE PINO SUAREZ 123 COL CENTRO",
+                "CULIACAN SIN",
+            ]
+        )
+        fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertIn("CALLE PINO SUAREZ 123", data.get("domicilio", ""))
+
+    def test_extract_cfe_referencia_from_rmu_fallback(self):
+        ocr_text = "\n".join(
+            [
+                "CFE COMISION FEDERAL DE ELECTRICIDAD",
+                "NO. DE SERVICIO 795130504593",
+                "RMU:2418013-05-22XAXX-010101002CFE",
+            ]
+        )
+        fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("referencia"), "24180130522010101002")
+
     def test_extract_acta_numero_acta_with_ocr_confusions_from_boxes(self):
         ocr_boxes = [
             _box("ACTA DE NACIMIENTO", 10),
