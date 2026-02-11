@@ -367,8 +367,18 @@ public class DocumentsController : ControllerBase
         var fieldMap = detail.Fields
             .GroupBy(field => field.Key, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var excludedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "texto_detectado" };
+        var orderedTemplate = template
+            .Where(item => !excludedKeys.Contains(item.Key))
+            .ToList();
+        var templateKeys = new HashSet<string>(orderedTemplate.Select(item => item.Key), StringComparer.OrdinalIgnoreCase);
+        var extraFields = detail.Fields
+            .Where(field => !excludedKeys.Contains(field.Key) && !templateKeys.Contains(field.Key))
+            .Select(field => (field.Key, string.IsNullOrWhiteSpace(field.Label) ? field.Key : field.Label))
+            .ToList();
+        var exportFields = orderedTemplate.Concat(extraFields).ToList();
 
-        foreach (var (key, label) in template)
+        foreach (var (key, label) in exportFields)
         {
             if (fieldMap.TryGetValue(key, out var field))
             {
@@ -530,6 +540,16 @@ public class DocumentsController : ControllerBase
         var fieldMap = detail.Fields
             .GroupBy(field => field.Key, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var excludedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "texto_detectado" };
+        var orderedTemplate = template
+            .Where(item => !excludedKeys.Contains(item.Key))
+            .ToList();
+        var templateKeys = new HashSet<string>(orderedTemplate.Select(item => item.Key), StringComparer.OrdinalIgnoreCase);
+        var extraFields = detail.Fields
+            .Where(field => !excludedKeys.Contains(field.Key) && !templateKeys.Contains(field.Key))
+            .Select(field => (field.Key, string.IsNullOrWhiteSpace(field.Label) ? field.Key : field.Label))
+            .ToList();
+        var exportFields = orderedTemplate.Concat(extraFields).ToList();
 
         var rowNumber = 7u;
         var sheetData = new SheetData();
@@ -539,7 +559,7 @@ public class DocumentsController : ControllerBase
         sheetData.Append(BuildRow(4, "Fecha de carga", detail.UploadedAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)));
         sheetData.Append(BuildRow(6, "Campo", "Valor", "Validez", "Confianza"));
 
-        foreach (var (key, label) in template)
+        foreach (var (key, label) in exportFields)
         {
             var hasField = fieldMap.TryGetValue(key, out var field);
             var value = hasField ? (field!.CorrectedValue ?? field.Value ?? "-") : "-";
