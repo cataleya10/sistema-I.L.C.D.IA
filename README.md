@@ -13,7 +13,7 @@ Sistema web empresarial para carga, clasificacion y extraccion de documentos ofi
 - Motor IA con OCR, clasificacion y extraccion por tipo.
 - Procesamiento asincrono usando cola + worker con consulta de estado.
 - Correccion manual de campos desde el frontend (Admin y User).
-- Métricas básicas en `GET /api/system/metrics` (requests, errores, latencias).
+- Metricas basicas en `GET /api/system/metrics` (requests, errores, latencias).
 
 ## Requisitos
 - Node 24.11.0 / npm 11.6.1
@@ -41,6 +41,10 @@ Sistema web empresarial para carga, clasificacion y extraccion de documentos ofi
 ## Smoke test
 - Ejecutar: `powershell -File scripts/smoke.ps1`
 
+## Verificacion local
+- Ejecutar: `powershell -File scripts/verify-all.ps1`
+- Rapido (sin frontend tests): `powershell -File scripts/verify-all.ps1 -SkipFrontendTests`
+
 ## Flujo MVP (sin BD)
 1) Cargar documento desde el frontend.
 2) Procesar documento (la llamada espera la respuesta del motor IA).
@@ -52,3 +56,6 @@ Sistema web empresarial para carga, clasificacion y extraccion de documentos ofi
 
 ## Contratos
 Ver [docs/contracts.md](docs/contracts.md).
+
+## Reglas OCR
+Ver [docs/ocr-field-normalization.md](docs/ocr-field-normalization.md).
