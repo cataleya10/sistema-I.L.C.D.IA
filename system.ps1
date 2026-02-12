@@ -10,7 +10,7 @@ $startScript = Join-Path $root "start-all.ps1"
 $stopScript = Join-Path $root "stop-all.ps1"
 $pidFile = Join-Path $root "start-all.pids.json"
 
-function Require-Command {
+function Test-RequiredCommand {
     param([string]$Name)
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
         throw "No se encontro el comando requerido: $Name"
@@ -49,9 +49,9 @@ if (-not (Test-Path $stopScript)) {
 
 switch ($Action) {
     "start" {
-        Require-Command -Name "dotnet"
-        Require-Command -Name "npm"
-        Require-Command -Name "py"
+        Test-RequiredCommand -Name "dotnet"
+        Test-RequiredCommand -Name "npm"
+        Test-RequiredCommand -Name "py"
         Set-Location -LiteralPath $root
         & $startScript
     }
@@ -63,9 +63,9 @@ switch ($Action) {
         Set-Location -LiteralPath $root
         & $stopScript
         Start-Sleep -Seconds 1
-        Require-Command -Name "dotnet"
-        Require-Command -Name "npm"
-        Require-Command -Name "py"
+        Test-RequiredCommand -Name "dotnet"
+        Test-RequiredCommand -Name "npm"
+        Test-RequiredCommand -Name "py"
         & $startScript
     }
     "status" {
