@@ -16,15 +16,19 @@ security:
   script:
     - |
       set -eu
+      failed=0
       for project in $(find backend-dotnet/src -name "*.csproj"); do
         echo "Scanning NuGet vulnerabilities: $project"
-        output="$(dotnet list "$project" package --vulnerable --include-transitive --format json || true)"
-        if echo "$output" | grep -E '"severity"[[:space:]]*:|"advisoryurl"[[:space:]]*:' >/dev/null; then
-          echo "$output"
+        output="$(dotnet list "$project" package --vulnerable --include-transitive || true)"
+        echo "$output"
+        if echo "$output" | grep -Ei "has the following vulnerable packages|tiene los paquetes vulnerables siguientes" >/dev/null; then
           echo "NuGet vulnerabilities found in $project"
-          exit 1
+          failed=1
         fi
       done
+      if [ "$failed" -ne 0 ]; then
+        exit 1
+      fi
 
 backend:
   stage: test
