@@ -1,0 +1,256 @@
+Usando la configuración de inicio de C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\src\Api\Properties\launchSettings.json...
+Compilando...
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://localhost:5000
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\src\Api
+warn: Microsoft.AspNetCore.HttpsPolicy.HttpsRedirectionMiddleware[3]
+      Failed to determine the https port for redirect.
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/system/info responded 200 in 234ms User=anonymous CorrelationId=20589ef5-a4a6-4f77-82e6-74c3acb1bd0d
+fail: Microsoft.AspNetCore.Diagnostics.DeveloperExceptionPageMiddleware[1]
+      An unhandled exception has occurred while executing the request.
+      Swashbuckle.AspNetCore.SwaggerGen.SwaggerGeneratorException: Failed to generate Operation for action - Api.Controllers.DocumentsController.Upload (Api). See inner exception
+       ---> Swashbuckle.AspNetCore.SwaggerGen.SwaggerGeneratorException: Error reading parameter(s) for action Api.Controllers.DocumentsController.Upload (Api) as [FromForm] attribute used with IFormFile. Please refer to https://github.com/domaindrivendev/Swashbuckle.AspNetCore#handle-forms-and-file-uploads for more information
+         at Swashbuckle.AspNetCore.SwaggerGen.SwaggerGenerator.GenerateParameters(ApiDescription apiDescription, SchemaRepository schemaRespository)
+         at Swashbuckle.AspNetCore.SwaggerGen.SwaggerGenerator.GenerateOperation(ApiDescription apiDescription, SchemaRepository schemaRepository)
+         --- End of inner exception stack trace ---
+         at Swashbuckle.AspNetCore.SwaggerGen.SwaggerGenerator.GenerateOperation(ApiDescription apiDescription, SchemaRepository schemaRepository)
+         at Swashbuckle.AspNetCore.SwaggerGen.SwaggerGenerator.GenerateOperations(IEnumerable`1 apiDescriptions, SchemaRepository schemaRepository)
+         at Swashbuckle.AspNetCore.SwaggerGen.SwaggerGenerator.GeneratePaths(IEnumerable`1 apiDescriptions, SchemaRepository schemaRepository)
+         at Swashbuckle.AspNetCore.SwaggerGen.SwaggerGenerator.GetSwaggerDocumentWithoutFilters(String documentName, String host, String basePath)
+         at Swashbuckle.AspNetCore.SwaggerGen.SwaggerGenerator.GetSwaggerAsync(String documentName, String host, String basePath)
+         at Swashbuckle.AspNetCore.Swagger.SwaggerMiddleware.Invoke(HttpContext httpContext, ISwaggerProvider swaggerProvider)
+         at Microsoft.AspNetCore.Diagnostics.DeveloperExceptionPageMiddlewareImpl.Invoke(HttpContext context)
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/auth/login responded 204 in 2ms User=anonymous CorrelationId=fd09df34-b330-4612-9aae-b16f026ab36f
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      POST /api/auth/login responded 200 in 1523ms User=anonymous CorrelationId=c873c17f-3102-4d1f-b543-3ecdba0b43e8
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents responded 204 in 0ms User=anonymous CorrelationId=d0943b0c-19f5-4226-80a7-ec617fc7a95b
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents responded 200 in 2750ms User=ALEJANDROCALDERON CorrelationId=abf79e18-17c6-4346-84c0-00fa1342b48d
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/upload responded 204 in 0ms User=anonymous CorrelationId=fc7348e5-4e09-481b-ba24-003b6da7fc78
+info: Microsoft.EntityFrameworkCore.Update[30100]
+      Saved 1 entities to in-memory store.
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      POST /api/documents/upload responded 200 in 705ms User=ALEJANDROCALDERON CorrelationId=6612bb2f-7af7-4aaa-b551-5217f3761391
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents responded 204 in 0ms User=anonymous CorrelationId=a7677d3c-20c0-437a-908f-5832d5097f71
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents responded 200 in 118ms User=ALEJANDROCALDERON CorrelationId=4274e34a-d791-4976-be16-39851520d81a
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a responded 204 in 0ms User=anonymous CorrelationId=651925e7-a36f-4258-949c-77b3b3a4736e
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/logs responded 204 in 0ms User=anonymous CorrelationId=9325eaac-a633-4705-a215-c7e5f455bc98
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/logs responded 200 in 83ms User=ALEJANDROCALDERON CorrelationId=15297f1e-3f4d-4a3c-9d8a-a58a8ee1e4f4
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a responded 200 in 286ms User=ALEJANDROCALDERON CorrelationId=52f28585-f62a-40fa-aab4-de79adf483ad
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/file responded 204 in 0ms User=anonymous CorrelationId=cfb0b6c3-7ffa-411a-8b5d-4858936c48d2
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/file responded 200 in 109ms User=ALEJANDROCALDERON CorrelationId=8d5b8572-f266-46fe-99e7-cd0c5ecb68d2
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process responded 204 in 0ms User=anonymous CorrelationId=41f73dbb-1ed0-4aa1-8288-3642fee2c299
+info: Microsoft.EntityFrameworkCore.Update[30100]
+      Saved 2 entities to in-memory store.
+info: Microsoft.EntityFrameworkCore.Update[30100]
+      Saved 1 entities to in-memory store.
+info: Microsoft.EntityFrameworkCore.Update[30100]
+      Saved 1 entities to in-memory store.
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      POST /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process responded 202 in 200ms User=ALEJANDROCALDERON CorrelationId=bce1fc5e-445e-44aa-9b09-d7aad06adbf7
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a responded 204 in 0ms User=anonymous CorrelationId=f2c380fe-a3f7-4a1d-922a-ca17891bd160
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/logs responded 204 in 0ms User=anonymous CorrelationId=8de907e0-8555-4889-89b9-e4ccb4c06064
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a responded 200 in 6ms User=ALEJANDROCALDERON CorrelationId=3763deef-c762-44a8-8b38-8f6e7ef0969f
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/logs responded 200 in 15ms User=ALEJANDROCALDERON CorrelationId=80fc8ba0-ebf7-4993-93b3-e9a8587cb2c8
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/file responded 204 in 0ms User=anonymous CorrelationId=e1257e6e-1f85-46bf-931d-1ebcae01ff7c
+info: System.Net.Http.HttpClient.IPythonAiClient.LogicalHandler[100]
+      Start processing HTTP request POST http://localhost:8000/process-document
+info: System.Net.Http.HttpClient.IPythonAiClient.ClientHandler[100]
+      Sending HTTP request POST http://localhost:8000/process-document
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/file responded 200 in 38ms User=ALEJANDROCALDERON CorrelationId=a74fe17b-641e-4673-b53f-e9f1c032a53d
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process/status responded 204 in 0ms User=anonymous CorrelationId=857dcb8d-38b8-4601-a38d-abd22300c457
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process/status responded 200 in 28ms User=ALEJANDROCALDERON CorrelationId=5e2ac322-2b66-409a-bc3c-5f9aedc98c7a
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process/status responded 200 in 5ms User=ALEJANDROCALDERON CorrelationId=39cf2d1d-e5f5-4ac5-8a6f-45b1f03c0b36
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process/status responded 200 in 4ms User=ALEJANDROCALDERON CorrelationId=52be8548-f566-4956-9c40-78538d59d9af
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process/status responded 204 in 0ms User=anonymous CorrelationId=5dbd5e23-d41c-4328-abff-c2e2cdc2ef8b
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process/status responded 200 in 4ms User=ALEJANDROCALDERON CorrelationId=279aac4a-8398-4a18-92ec-5a01b72ac9aa
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process/status responded 200 in 4ms User=ALEJANDROCALDERON CorrelationId=3fc2e8bb-b3b9-49d6-8b8b-6d67f6ea8c1f
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process/status responded 200 in 4ms User=ALEJANDROCALDERON CorrelationId=b442dec8-fadb-4b35-b291-137000af2e13
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process/status responded 204 in 0ms User=anonymous CorrelationId=1a65bf78-e4f2-46a0-93d5-142286e533d2
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process/status responded 200 in 4ms User=ALEJANDROCALDERON CorrelationId=f1fafbd5-bfd7-4eea-a530-d3da2992c2a3
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process/status responded 200 in 3ms User=ALEJANDROCALDERON CorrelationId=1e480e5f-15a8-46ef-89cc-f651ef1fd6ba
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process/status responded 200 in 4ms User=ALEJANDROCALDERON CorrelationId=eaef65ed-c81d-41c5-9598-8617cb1e10da
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process/status responded 204 in 0ms User=anonymous CorrelationId=9e0d88f7-a07c-4735-bf91-9ab684970ea8
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process/status responded 200 in 3ms User=ALEJANDROCALDERON CorrelationId=bbd033ee-1996-427b-a6fd-92f42192b9c1
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process/status responded 200 in 4ms User=ALEJANDROCALDERON CorrelationId=5a006245-555b-4d8f-a77e-dbce8f71a13f
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process/status responded 200 in 6ms User=ALEJANDROCALDERON CorrelationId=035b3584-700a-471a-9afb-05b2b25418d0
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process/status responded 204 in 0ms User=anonymous CorrelationId=fcf591a8-8813-4e9b-923c-11d092b8b7ed
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process/status responded 200 in 3ms User=ALEJANDROCALDERON CorrelationId=f6b1316e-55b3-4f8a-a797-e27ba7ed51a4
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process responded 204 in 0ms User=anonymous CorrelationId=ad8b6721-3057-42da-bd9c-9303a4d6ae17
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      POST /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process responded 202 in 4ms User=ALEJANDROCALDERON CorrelationId=79e070b8-125c-4edb-9808-5ea63251cd26
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a responded 204 in 0ms User=anonymous CorrelationId=23a1bda4-7f80-4c4e-8cc1-8cdd96e222c5
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/logs responded 204 in 0ms User=anonymous CorrelationId=e63a4d4a-0a0e-48ec-b582-96ff1dd567dc
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a responded 200 in 4ms User=ALEJANDROCALDERON CorrelationId=4b262445-15ee-49e1-8724-729c2114f99f
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/logs responded 200 in 4ms User=ALEJANDROCALDERON CorrelationId=0d30acc2-e00c-4f46-97da-17755d6f4591
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/file responded 204 in 0ms User=anonymous CorrelationId=8eede1b9-3096-492f-935c-2c5a59aef49f
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/file responded 200 in 40ms User=ALEJANDROCALDERON CorrelationId=9949f500-7fcf-49f1-8f34-b20973a1f78c
+info: System.Net.Http.HttpClient.IPythonAiClient.ClientHandler[101]
+      Received HTTP response headers after 28221.2757ms - 200
+info: System.Net.Http.HttpClient.IPythonAiClient.LogicalHandler[101]
+      End processing HTTP request after 28280.4287ms - 200
+info: Microsoft.EntityFrameworkCore.Update[30100]
+      Saved 17 entities to in-memory store.
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/process/status responded 200 in 26ms User=ALEJANDROCALDERON CorrelationId=038bf402-247e-4e56-b524-7ce8aa7b77cd
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/logs responded 200 in 3ms User=ALEJANDROCALDERON CorrelationId=8b4f3bb1-5a4f-48f4-bf5a-bd73f51f7c31
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a responded 200 in 12ms User=ALEJANDROCALDERON CorrelationId=73109759-532f-42b6-9324-fc6596c8b7b3
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/file responded 200 in 19ms User=ALEJANDROCALDERON CorrelationId=ff6c89d3-f3dc-482e-9457-c18d0a239159
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /health responded 200 in 12ms User=anonymous CorrelationId=b733ba2f-4635-4965-ad16-74d983933aae
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/system/info responded 200 in 2ms User=anonymous CorrelationId=18e15266-3b2a-453d-9f02-8a436f963673
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      POST /api/auth/login responded 200 in 1131ms User=anonymous CorrelationId=32cbf957-e7d0-4412-bd3e-db719e7f6f9f
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /health responded 200 in 0ms User=anonymous CorrelationId=ee92a708-b17f-4a73-a78d-7610f8b59969
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/system/info responded 200 in 0ms User=anonymous CorrelationId=285241e1-0924-4288-bbeb-25be2b2416e7
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /health responded 200 in 0ms User=anonymous CorrelationId=9c45a7e6-3a96-4938-9cc1-6404fcfa6218
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/system/info responded 200 in 0ms User=anonymous CorrelationId=5804af9a-7a17-48c7-921e-2a812ceba15f
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /health responded 200 in 0ms User=anonymous CorrelationId=bfd469bc-3623-4209-b575-3a226763b0eb
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/system/info responded 200 in 0ms User=anonymous CorrelationId=839a91a4-35b0-4900-a87f-afb287486f65
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /health responded 200 in 0ms User=anonymous CorrelationId=c332fbf8-278a-48a6-bcd1-846c3907ee73
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/system/info responded 200 in 0ms User=anonymous CorrelationId=eb296902-3e9a-4539-a707-bc9c4b62ef58
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /health responded 200 in 0ms User=anonymous CorrelationId=9125b996-60ab-48d0-872e-06950c6caf45
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/system/info responded 200 in 0ms User=anonymous CorrelationId=f3a026d2-284a-4687-8f83-35b01e937331
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/system/info responded 204 in 0ms User=anonymous CorrelationId=8ea848a2-99e7-4b91-94d9-2ebd44e47105
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/system/info responded 200 in 0ms User=ALEJANDROCALDERON CorrelationId=70d5dbcf-8745-402f-bd4c-70ec27ac1b82
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a responded 204 in 0ms User=anonymous CorrelationId=3fa21ceb-f9e3-4c3b-b542-10243afb22fa
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/logs responded 204 in 0ms User=anonymous CorrelationId=ed42b09c-67a3-4af3-a672-510a076893f4
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/logs responded 200 in 2ms User=ALEJANDROCALDERON CorrelationId=3a5e35e1-4a9e-48a4-b133-5a5a0b7d1f8f
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a responded 200 in 2ms User=ALEJANDROCALDERON CorrelationId=1119eb5e-cd19-4135-a41b-d1baec0fc80a
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/file responded 204 in 0ms User=anonymous CorrelationId=75c5214a-b5ca-4957-a38f-ae423791cb93
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/file responded 200 in 4ms User=ALEJANDROCALDERON CorrelationId=23adcdb5-8aef-4715-8246-1548c36b0f3e
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/system/info responded 204 in 0ms User=anonymous CorrelationId=29adc5fc-3948-48f9-936c-a39f452c0b4f
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/system/info responded 200 in 0ms User=ALEJANDROCALDERON CorrelationId=2d05f76f-9730-4f79-af65-a103364d7c14
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a responded 204 in 0ms User=anonymous CorrelationId=fe204323-5557-4ed7-b416-e96b43e79f34
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/logs responded 204 in 0ms User=anonymous CorrelationId=3b54f093-6781-4d50-837f-ae52e84ca68d
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/logs responded 200 in 0ms User=ALEJANDROCALDERON CorrelationId=c499eb84-423c-48b9-a265-13a820cc5e45
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a responded 200 in 1ms User=ALEJANDROCALDERON CorrelationId=1003f9d5-5836-42a9-9fe0-6022cdccba78
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/file responded 204 in 0ms User=anonymous CorrelationId=ef78b722-a315-4c67-8eaf-7ee02626991f
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/file responded 200 in 8ms User=ALEJANDROCALDERON CorrelationId=d3c348b5-15d7-446b-884f-29ec5d956671
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/system/info responded 204 in 0ms User=anonymous CorrelationId=4819bd07-0442-4b63-9207-55193171c17d
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/system/info responded 200 in 0ms User=ALEJANDROCALDERON CorrelationId=a60310f4-82dd-439b-b68f-266350791a72
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a responded 204 in 0ms User=anonymous CorrelationId=60c349ee-5dc5-4867-9862-091aab4c00a1
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/logs responded 204 in 0ms User=anonymous CorrelationId=3ea64080-6083-4366-89c8-3f9713c340d9
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/logs responded 200 in 0ms User=ALEJANDROCALDERON CorrelationId=b3eaae64-65c4-4b63-8d1e-b6e3c5a4044f
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a responded 200 in 1ms User=ALEJANDROCALDERON CorrelationId=a5f88191-bc3c-4f11-af04-291882932a49
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/file responded 204 in 0ms User=anonymous CorrelationId=b88e3ca7-a65e-4bcc-9f8f-a024eaafba7a
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/file responded 200 in 4ms User=ALEJANDROCALDERON CorrelationId=824f0407-8cb3-4821-8f09-2bc6d3192d5b
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/system/info responded 204 in 0ms User=anonymous CorrelationId=6c3c09bf-6a10-4eb6-a2b8-96a9d72c7a9b
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/system/info responded 200 in 0ms User=ALEJANDROCALDERON CorrelationId=a9ba8e5e-e292-4696-9be1-45a47e93b723
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a responded 204 in 0ms User=anonymous CorrelationId=548e66be-63c1-4966-8853-0ee8aeb7814c
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/logs responded 204 in 0ms User=anonymous CorrelationId=f854583d-bb75-4857-9f64-79890577b4df
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/logs responded 200 in 1ms User=ALEJANDROCALDERON CorrelationId=14883dad-5c64-40d8-98a5-cb467f562e17
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a responded 200 in 1ms User=ALEJANDROCALDERON CorrelationId=17f9018c-ccf8-4af9-8ae2-8cb443819bed
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/file responded 204 in 0ms User=anonymous CorrelationId=2ac6156e-9496-4dd5-9dc2-6c4a0806254e
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/file responded 200 in 3ms User=ALEJANDROCALDERON CorrelationId=c17a43ef-ec21-40d8-bb8e-dbdfc7717f19
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/system/info responded 204 in 0ms User=anonymous CorrelationId=003f8473-99a8-4b52-bee6-25d17bfdf630
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/system/info responded 200 in 0ms User=ALEJANDROCALDERON CorrelationId=8be7c124-a2ba-4fe2-856a-434e578e1376
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a responded 204 in 0ms User=anonymous CorrelationId=0c62c7c6-7561-41c3-9cd3-9dcb532b4fce
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/logs responded 204 in 0ms User=anonymous CorrelationId=f4268425-4ebf-4a40-b0a6-b23d57bd76ff
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a responded 200 in 1ms User=ALEJANDROCALDERON CorrelationId=9b1c2d68-54cd-4005-9559-b528a8c4d4a4
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/logs responded 200 in 1ms User=ALEJANDROCALDERON CorrelationId=adb05c18-5a9e-4d28-88cf-745c63be9dc5
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      OPTIONS /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/file responded 204 in 0ms User=anonymous CorrelationId=3e8a5082-fc99-4c9f-9070-9ab7e51b8275
+info: Api.Middlewares.RequestLoggingMiddleware[0]
+      GET /api/documents/e181206b-2361-405e-b9ef-8fad5e333a3a/file responded 200 in 4ms User=ALEJANDROCALDERON CorrelationId=c9b39ab7-7e15-4c41-845b-922a8e6d17e3

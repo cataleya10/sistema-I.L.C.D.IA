@@ -1,0 +1,21 @@
+﻿{
+    "created_at_utc":  "2026-02-12T15:44:12.1097558Z",
+    "root":  "C:\\xampp\\htdocs\\Sistema I.L.C.D.IA",
+    "items":  [
+                  {
+                      "source_path":  "C:\\xampp\\htdocs\\Sistema I.L.C.D.IA\\backend-dotnet\\src\\Api\\storage",
+                      "archive":  "api-storage.zip",
+                      "target_relative_path":  "backend-dotnet\\src\\Api\\storage"
+                  },
+                  {
+                      "source_path":  "C:\\xampp\\htdocs\\Sistema I.L.C.D.IA\\logs",
+                      "archive":  "logs.zip",
+                      "target_relative_path":  "logs"
+                  },
+                  {
+                      "source_path":  "C:\\xampp\\htdocs\\Sistema I.L.C.D.IA\\.env",
+                      "archive":  "env.zip",
+                      "target_relative_path":  ".env"
+                  }
+              ]
+}
