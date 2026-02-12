@@ -17,7 +17,7 @@ Evidencia recomendada:
 Comando recomendado local:
 
 ```powershell
-powershell -File scripts/release-preflight.ps1 -ApiBase "http://localhost:5000" -AiBase "http://localhost:8000" -Username "<usuario>" -Password "<password>"
+powershell -File scripts/release-preflight.ps1 -ApiBase "http://localhost:5000" -AiBase "http://localhost:8000" -Username "<usuario>" -Secret "<password>"
 ```
 
 Verificacion CI/PR (si hay `GITHUB_TOKEN` disponible):
@@ -61,7 +61,7 @@ Endpoints de referencia:
 Chequeo sugerido con umbrales:
 
 ```powershell
-powershell -File scripts/check-operational-thresholds.ps1 -ApiBase "http://localhost:5000" -Username "<admin>" -Password "<password>" -MaxServerErrors 0 -MaxAvgDurationMs 2000 -MaxDurationMs 8000 -MaxProcessingBacklog 50
+powershell -File scripts/check-operational-thresholds.ps1 -ApiBase "http://localhost:5000" -Username "<admin>" -Secret "<password>" -MaxServerErrors 0 -MaxAvgDurationMs 2000 -MaxDurationMs 8000 -MaxProcessingBacklog 50
 ```
 
 ## 4) Respaldo (Backup) Antes de Release

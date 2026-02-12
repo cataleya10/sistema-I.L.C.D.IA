@@ -46,16 +46,16 @@ Sistema web empresarial para carga, clasificacion y extraccion de documentos ofi
 
 ## Smoke test
 - Ejecutar: `powershell -File scripts/smoke.ps1`
-- Con login: `powershell -File scripts/smoke.ps1 -Username "<usuario>" -Password "<password>"`
+- Con login: `powershell -File scripts/smoke.ps1 -Username "<usuario>" -Secret "<password>"`
 
 ## Verificacion local
 - Ejecutar: `powershell -File scripts/verify-all.ps1`
 - Rapido (sin frontend tests): `powershell -File scripts/verify-all.ps1 -SkipFrontendTests`
 - Validar secretos: `powershell -File scripts/validate-secrets.ps1`
 - Validar secretos + connection string DB: `powershell -File scripts/validate-secrets.ps1 -RequireDbConnectionString`
-- Preflight release: `powershell -File scripts/release-preflight.ps1 -ApiBase "http://localhost:5000" -AiBase "http://localhost:8000" -Username "<usuario>" -Password "<password>"`
-- Preflight release con DB persistente: `powershell -File scripts/release-preflight.ps1 -RequireDbConnectionString -ApiBase "http://localhost:5000" -AiBase "http://localhost:8000" -Username "<usuario>" -Password "<password>"`
-- Check de umbrales operativos: `powershell -File scripts/check-operational-thresholds.ps1 -ApiBase "http://localhost:5000" -Username "<admin>" -Password "<password>"`
+- Preflight release: `powershell -File scripts/release-preflight.ps1 -ApiBase "http://localhost:5000" -AiBase "http://localhost:8000" -Username "<usuario>" -Secret "<password>"`
+- Preflight release con DB persistente: `powershell -File scripts/release-preflight.ps1 -RequireDbConnectionString -ApiBase "http://localhost:5000" -AiBase "http://localhost:8000" -Username "<usuario>" -Secret "<password>"`
+- Check de umbrales operativos: `powershell -File scripts/check-operational-thresholds.ps1 -ApiBase "http://localhost:5000" -Username "<admin>" -Secret "<password>"`
 
 ## Flujo MVP (sin BD)
 1) Cargar documento desde el frontend.

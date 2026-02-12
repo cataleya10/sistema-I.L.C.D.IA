@@ -2,7 +2,7 @@ param(
     [string]$ApiBase = "http://localhost:5000",
     [string]$AiBase = "http://localhost:8000",
     [string]$Username = "",
-    [string]$Password = "",
+    [string]$Secret = "",
     [switch]$SkipFrontendTests,
     [switch]$RequireDbConnectionString
 )
@@ -79,10 +79,10 @@ try {
     Invoke-Step -Name "Smoke test (runtime)" -Action {
         Push-Location $root
         try {
-            if ([string]::IsNullOrWhiteSpace($Username) -or [string]::IsNullOrWhiteSpace($Password)) {
+            if ([string]::IsNullOrWhiteSpace($Username) -or [string]::IsNullOrWhiteSpace($Secret)) {
                 & powershell -File "scripts\smoke.ps1" -ApiBase $ApiBase -AiBase $AiBase
             } else {
-                & powershell -File "scripts\smoke.ps1" -ApiBase $ApiBase -AiBase $AiBase -Username $Username -Password $Password
+                & powershell -File "scripts\smoke.ps1" -ApiBase $ApiBase -AiBase $AiBase -Username $Username -Secret $Secret
             }
             Assert-LastExitCode "smoke.ps1 failed."
         } finally {

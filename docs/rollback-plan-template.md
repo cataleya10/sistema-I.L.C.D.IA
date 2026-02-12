@@ -30,7 +30,7 @@ Responsable: `<owner>`
 3. Redeploy AI engine previo.
 4. Redeploy frontend previo.
 5. Ejecutar smoke post-rollback:
-   - `powershell -File scripts/smoke.ps1 -ApiBase "<api>" -AiBase "<ai>" -Username "<user>" -Password "<pass>"`
+   - `powershell -File scripts/smoke.ps1 -ApiBase "<api>" -AiBase "<ai>" -Username "<user>" -Secret "<pass>"`
 6. Verificar metricas y backlog.
 7. Comunicar incidente y estado.
 
@@ -48,4 +48,3 @@ Responsable: `<owner>`
 2. Hora fin rollback: `<hh:mm:ss>`
 3. Comandos ejecutados: `<lista>`
 4. Resultado final: `<OK/FAIL>`
-

@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Username,
     [Parameter(Mandatory = $true)]
-    [string]$Password,
+    [string]$Secret,
     [int]$MaxServerErrors = 0,
     [int]$MaxClientErrors = 50,
     [double]$MaxAvgDurationMs = 2000,
@@ -19,7 +19,7 @@ function Fail([string]$message) {
 
 $login = Invoke-RestMethod -Uri "$ApiBase/api/auth/login" -Method Post -ContentType "application/json" -Body (@{
     username = $Username
-    password = $Password
+    password = $Secret
 } | ConvertTo-Json)
 
 if (-not $login.token) {

@@ -2,7 +2,7 @@ param(
     [string]$ApiBase = "http://localhost:5000",
     [string]$AiBase = "http://localhost:8000",
     [string]$Username = "",
-    [string]$Password = ""
+    [string]$Secret = ""
 )
 
 function Assert-Ok($name, $url) {
@@ -24,13 +24,13 @@ Assert-Ok "API Health" "$ApiBase/health" | Out-Null
 Assert-Ok "System Info" "$ApiBase/api/system/info" | Out-Null
 Assert-Ok "AI Docs" "$AiBase/docs" | Out-Null
 
-if ([string]::IsNullOrWhiteSpace($Username) -or [string]::IsNullOrWhiteSpace($Password)) {
-    Write-Host "[SKIP] Login (define -Username y -Password)" -ForegroundColor Yellow
+if ([string]::IsNullOrWhiteSpace($Username) -or [string]::IsNullOrWhiteSpace($Secret)) {
+    Write-Host "[SKIP] Login (define -Username y -Secret)" -ForegroundColor Yellow
 } else {
     try {
         $login = Invoke-RestMethod -Uri "$ApiBase/api/auth/login" -Method Post -ContentType "application/json" -Body (@{
             username = $Username
-            password = $Password
+            password = $Secret
         } | ConvertTo-Json)
         if ($login.token) {
             Write-Host "[OK] Login" -ForegroundColor Green

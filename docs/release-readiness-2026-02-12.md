@@ -12,10 +12,10 @@ Falta para Go/No-Go final: cierres externos (CI/PR/alertas/rollback firmado) y b
 ## Evidencia Tecnica Ejecutada
 
 1. Preflight completo:
-   - Comando: `powershell -File scripts/release-preflight.ps1 -ApiBase http://localhost:5000 -AiBase http://localhost:8000 -Username admin -Password Admin123!`
+   - Comando: `powershell -File scripts/release-preflight.ps1 -ApiBase http://localhost:5000 -AiBase http://localhost:8000 -Username admin -Secret Admin123!`
    - Resultado: `Release preflight passed.`
 2. Validacion operativa por umbrales:
-   - Comando: `powershell -File scripts/check-operational-thresholds.ps1 -ApiBase http://localhost:5000 -Username admin -Password Admin123! -MaxServerErrors 0 -MaxClientErrors 200 -MaxAvgDurationMs 2500 -MaxDurationMs 10000 -MaxProcessingBacklog 200`
+   - Comando: `powershell -File scripts/check-operational-thresholds.ps1 -ApiBase http://localhost:5000 -Username admin -Secret Admin123! -MaxServerErrors 0 -MaxClientErrors 200 -MaxAvgDurationMs 2500 -MaxDurationMs 10000 -MaxProcessingBacklog 200`
    - Resultado: `Operational threshold check passed.`
 3. Flujo funcional minimo (API end-to-end):
    - Login: OK
