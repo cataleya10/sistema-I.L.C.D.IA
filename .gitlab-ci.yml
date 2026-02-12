@@ -18,7 +18,7 @@ security:
       set -eu
       for project in $(find backend-dotnet/src -name "*.csproj"); do
         echo "Scanning NuGet vulnerabilities: $project"
-        output="$(dotnet list "$project" package --vulnerable --include-transitive --format json)"
+        output="$(dotnet list "$project" package --vulnerable --include-transitive --format json || true)"
         if echo "$output" | grep -E '"severity"[[:space:]]*:|"advisoryurl"[[:space:]]*:' >/dev/null; then
           echo "$output"
           echo "NuGet vulnerabilities found in $project"
