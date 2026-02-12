@@ -33,6 +33,16 @@ try {
         }
     }
 
+    Invoke-Step -Name "Backend tests (.NET Release)" -Action {
+        Push-Location $root
+        try {
+            & dotnet test "backend-dotnet\Backend.slnx" -c Release --no-build --verbosity minimal
+            Assert-LastExitCode "Backend tests failed."
+        } finally {
+            Pop-Location
+        }
+    }
+
     if (-not $SkipFrontendTests) {
         Invoke-Step -Name "Frontend tests (Angular/Karma)" -Action {
             Push-Location (Join-Path $root "frontend-angular\web")

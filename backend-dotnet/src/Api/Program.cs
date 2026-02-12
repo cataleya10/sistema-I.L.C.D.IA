@@ -84,13 +84,19 @@ builder.Services.Configure<JwtOptions>(
 
 builder.Services.PostConfigure<JwtOptions>(options =>
 {
+    var usersWithoutHash = options.Users
+        .Where(user => string.IsNullOrWhiteSpace(user.PasswordHash))
+        .Select(user => user.Username)
+        .ToArray();
+    if (usersWithoutHash.Length > 0)
+    {
+        throw new InvalidOperationException(
+            $"Jwt:Users contiene usuarios sin PasswordHash: {string.Join(", ", usersWithoutHash)}.");
+    }
+
     foreach (var user in options.Users)
     {
-        if (!string.IsNullOrWhiteSpace(user.Password) && string.IsNullOrWhiteSpace(user.PasswordHash))
-        {
-            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(user.Password);
-            user.Password = string.Empty;
-        }
+        user.PasswordHash = user.PasswordHash?.Trim();
     }
 });
 
@@ -196,15 +202,44 @@ var jwtSigningKey = app.Configuration.GetValue<string>("Jwt:SigningKey") ?? stri
 var weakJwtKey = string.IsNullOrWhiteSpace(jwtSigningKey)
     || jwtSigningKey.Contains("CHANGE_ME", StringComparison.OrdinalIgnoreCase)
     || jwtSigningKey.Length < 32;
+var pythonApiKey = app.Configuration.GetValue<string>("PythonAi:ApiKey") ?? string.Empty;
+var weakPythonApiKey = string.IsNullOrWhiteSpace(pythonApiKey)
+    || pythonApiKey.Contains("CHANGE_ME", StringComparison.OrdinalIgnoreCase)
+    || pythonApiKey.Length < 24;
+var dbProvider = app.Configuration.GetValue<string>("Database:Provider") ?? "Postgres";
+var dbConnection = app.Configuration.GetConnectionString("Default") ?? string.Empty;
+var dbConnectionInsecure = string.IsNullOrWhiteSpace(dbConnection)
+    || dbConnection.Contains("CHANGE_ME", StringComparison.OrdinalIgnoreCase);
+var usesExternalDb = !string.Equals(dbProvider, "InMemory", StringComparison.OrdinalIgnoreCase);
 
 if (!app.Environment.IsDevelopment() && weakJwtKey)
 {
     throw new InvalidOperationException("Jwt:SigningKey insegura. Configura una clave fuerte de al menos 32 caracteres.");
 }
 
+if (!app.Environment.IsDevelopment() && weakPythonApiKey)
+{
+    throw new InvalidOperationException("PythonAi:ApiKey insegura. Configura una llave compartida fuerte entre API y motor IA.");
+}
+
+if (!app.Environment.IsDevelopment() && usesExternalDb && dbConnectionInsecure)
+{
+    throw new InvalidOperationException("ConnectionStrings:Default insegura o no definida para proveedor de base de datos persistente.");
+}
+
 if (app.Environment.IsDevelopment() && weakJwtKey)
 {
     app.Logger.LogWarning("Jwt:SigningKey de desarrollo es insegura. Define Jwt__SigningKey en .env antes de desplegar.");
+}
+
+if (app.Environment.IsDevelopment() && weakPythonApiKey)
+{
+    app.Logger.LogWarning("PythonAi:ApiKey de desarrollo no definida o insegura. Define PythonAi__ApiKey y API_KEY para proteger el canal API->IA.");
+}
+
+if (app.Environment.IsDevelopment() && usesExternalDb && dbConnectionInsecure)
+{
+    app.Logger.LogWarning("ConnectionStrings:Default de desarrollo no definida o insegura para proveedor persistente.");
 }
 
 if (app.Environment.IsDevelopment())

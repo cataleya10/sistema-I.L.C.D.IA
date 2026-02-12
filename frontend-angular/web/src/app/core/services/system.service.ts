@@ -1,6 +1,6 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable } from '@angular/core';
-import { environment } from '../../../environments/environment';
+import { getApiBaseUrl } from '../config/runtime-config';
 
 export interface SystemInfo {
   service_name: string;
@@ -17,7 +17,7 @@ export interface SystemMetrics {
 
 @Injectable({ providedIn: 'root' })
 export class SystemService {
-  private readonly baseUrl = `${environment.apiUrl}/api/system`;
+  private readonly baseUrl = `${getApiBaseUrl()}/api/system`;
 
   constructor(private readonly http: HttpClient) {}
 

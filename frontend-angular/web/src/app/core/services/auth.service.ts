@@ -1,11 +1,11 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable } from '@angular/core';
-import { environment } from '../../../environments/environment';
+import { getApiBaseUrl } from '../config/runtime-config';
 import { LoginResponse } from '../../shared/models/document.models';
 
 @Injectable({ providedIn: 'root' })
 export class AuthService {
-  private readonly baseUrl = `${environment.apiUrl}/api/auth`;
+  private readonly baseUrl = `${getApiBaseUrl()}/api/auth`;
   private readonly tokenKey = 'ilcdia_token';
   private readonly refreshTokenKey = 'ilcdia_refresh_token';
   private readonly usernameKey = 'ilcdia_username';

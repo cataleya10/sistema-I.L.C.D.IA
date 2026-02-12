@@ -6,7 +6,7 @@ public sealed class JwtOptions
 
     public string Issuer { get; set; } = "ilcdia";
     public string Audience { get; set; } = "ilcdia-web";
-    public string SigningKey { get; set; } = "CHANGE_ME_SUPER_SECRET_KEY";
+    public string SigningKey { get; set; } = string.Empty;
     public int ExpirationMinutes { get; set; } = 60;
     public int RefreshTokenExpirationMinutes { get; set; } = 60 * 24 * 7;
     public List<JwtUser> Users { get; set; } = new();
@@ -15,7 +15,6 @@ public sealed class JwtOptions
 public sealed class JwtUser
 {
     public string Username { get; set; } = string.Empty;
-    public string Password { get; set; } = string.Empty;
     public string? PasswordHash { get; set; }
     public string Role { get; set; } = "User";
 }

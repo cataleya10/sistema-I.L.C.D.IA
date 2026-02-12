@@ -1,6 +1,6 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable } from '@angular/core';
-import { environment } from '../../../../environments/environment';
+import { getApiBaseUrl } from '../../../core/config/runtime-config';
 import { DocumentDetail, DocumentProcessResponse, DocumentSummary, ProcessingLog } from '../../../shared/models/document.models';
 
 export interface DocumentListQuery {
@@ -15,7 +15,7 @@ export interface DocumentListQuery {
 
 @Injectable({ providedIn: 'root' })
 export class DocumentsService {
-  private readonly baseUrl = `${environment.apiUrl}/api/documents`;
+  private readonly baseUrl = `${getApiBaseUrl()}/api/documents`;
 
   constructor(private readonly http: HttpClient) {}
 

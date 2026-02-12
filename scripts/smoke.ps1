@@ -1,8 +1,8 @@
 param(
     [string]$ApiBase = "http://localhost:5000",
     [string]$AiBase = "http://localhost:8000",
-    [string]$Username = "admin",
-    [string]$Password = "Admin123!"
+    [string]$Username = "",
+    [string]$Password = ""
 )
 
 function Assert-Ok($name, $url) {
@@ -24,16 +24,20 @@ Assert-Ok "API Health" "$ApiBase/health" | Out-Null
 Assert-Ok "System Info" "$ApiBase/api/system/info" | Out-Null
 Assert-Ok "AI Docs" "$AiBase/docs" | Out-Null
 
-try {
-    $login = Invoke-RestMethod -Uri "$ApiBase/api/auth/login" -Method Post -ContentType "application/json" -Body (@{
-        username = $Username
-        password = $Password
-    } | ConvertTo-Json)
-    if ($login.token) {
-        Write-Host "[OK] Login" -ForegroundColor Green
-    } else {
-        Write-Host "[FAIL] Login (no token)" -ForegroundColor Red
+if ([string]::IsNullOrWhiteSpace($Username) -or [string]::IsNullOrWhiteSpace($Password)) {
+    Write-Host "[SKIP] Login (define -Username y -Password)" -ForegroundColor Yellow
+} else {
+    try {
+        $login = Invoke-RestMethod -Uri "$ApiBase/api/auth/login" -Method Post -ContentType "application/json" -Body (@{
+            username = $Username
+            password = $Password
+        } | ConvertTo-Json)
+        if ($login.token) {
+            Write-Host "[OK] Login" -ForegroundColor Green
+        } else {
+            Write-Host "[FAIL] Login (no token)" -ForegroundColor Red
+        }
+    } catch {
+        Write-Host "[FAIL] Login ($($_.Exception.Message))" -ForegroundColor Red
     }
-} catch {
-    Write-Host "[FAIL] Login ($($_.Exception.Message))" -ForegroundColor Red
 }
