@@ -1,0 +1,61 @@
+stages:
+  - security
+  - test
+
+default:
+  interruptible: true
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+
+security:
+  stage: security
+  image: mcr.microsoft.com/dotnet/sdk:8.0
+  script:
+    - |
+      set -euo pipefail
+      for project in $(find backend-dotnet/src -name "*.csproj"); do
+        echo "Scanning NuGet vulnerabilities: $project"
+        output="$(dotnet list "$project" package --vulnerable --include-transitive --format json)"
+        if echo "$output" | grep -E '"severity"\s*:|"advisoryurl"\s*:' >/dev/null; then
+          echo "$output"
+          echo "NuGet vulnerabilities found in $project"
+          exit 1
+        fi
+      done
+
+backend:
+  stage: test
+  image: mcr.microsoft.com/dotnet/sdk:8.0
+  script:
+    - dotnet build backend-dotnet/Backend.slnx -c Release
+    - dotnet test backend-dotnet/Backend.slnx -c Release --no-build --verbosity normal
+
+frontend:
+  stage: test
+  image: node:24-bullseye
+  before_script:
+    - apt-get update
+    - apt-get install -y chromium
+    - cd frontend-angular/web
+    - npm ci
+  script:
+    - npm audit --omit=dev
+    - CHROME_BIN=/usr/bin/chromium npm test -- --watch=false --browsers=ChromeHeadless
+    - npm run build
+
+ai-engine:
+  stage: test
+  image: python:3.11-slim
+  variables:
+    PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  before_script:
+    - apt-get update
+    - apt-get install -y libgl1 libglib2.0-0
+    - cd ai-engine-python
+    - pip install -r requirements.txt
+  script:
+    - python -m compileall app
+    - python -m unittest discover -s tests -p "test_*.py" -v
