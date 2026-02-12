@@ -15,11 +15,11 @@ security:
   image: mcr.microsoft.com/dotnet/sdk:8.0
   script:
     - |
-      set -euo pipefail
+      set -eu
       for project in $(find backend-dotnet/src -name "*.csproj"); do
         echo "Scanning NuGet vulnerabilities: $project"
         output="$(dotnet list "$project" package --vulnerable --include-transitive --format json)"
-        if echo "$output" | grep -E '"severity"\s*:|"advisoryurl"\s*:' >/dev/null; then
+        if echo "$output" | grep -E '"severity"[[:space:]]*:|"advisoryurl"[[:space:]]*:' >/dev/null; then
           echo "$output"
           echo "NuGet vulnerabilities found in $project"
           exit 1
