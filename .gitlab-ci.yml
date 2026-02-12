@@ -43,12 +43,12 @@ frontend:
   before_script:
     - apt-get update
     - apt-get install -y chromium
-    - cd frontend-angular/web
-    - npm ci
+    - chown -R node:node "$CI_PROJECT_DIR"
   script:
-    - npm audit --omit=dev
-    - CHROME_BIN=/usr/bin/chromium npm test -- --watch=false --browsers=ChromeHeadless
-    - npm run build
+    - su node -s /bin/bash -c "cd \"$CI_PROJECT_DIR/frontend-angular/web\" && npm ci"
+    - su node -s /bin/bash -c "cd \"$CI_PROJECT_DIR/frontend-angular/web\" && npm audit --omit=dev"
+    - su node -s /bin/bash -c "cd \"$CI_PROJECT_DIR/frontend-angular/web\" && CHROME_BIN=/usr/bin/chromium npm test -- --watch=false --browsers=ChromeHeadless"
+    - su node -s /bin/bash -c "cd \"$CI_PROJECT_DIR/frontend-angular/web\" && npm run build"
 
 ai-engine:
   stage: test
