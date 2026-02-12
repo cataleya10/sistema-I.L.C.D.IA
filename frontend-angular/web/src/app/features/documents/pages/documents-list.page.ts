@@ -17,19 +17,22 @@ import { DocumentSummary, DocumentStatus, DocumentType } from '../../../shared/m
         <p>Historial con estado del procesamiento.</p>
       </header>
       <div class="filters">
-        <input type="text" [(ngModel)]="query.q" placeholder="Buscar por nombre" />
-        <select [(ngModel)]="query.status">
+        <input type="text" [(ngModel)]="query.q" placeholder="Buscar por nombre" aria-label="Buscar por nombre" />
+        <select [(ngModel)]="query.status" aria-label="Filtrar por estado">
           <option value="">Estado</option>
           <option *ngFor="let status of statusOptions" [value]="status">{{ status }}</option>
         </select>
-        <select [(ngModel)]="query.type">
+        <select [(ngModel)]="query.type" aria-label="Filtrar por tipo">
           <option value="">Tipo</option>
           <option *ngFor="let type of typeOptions" [value]="type">{{ type }}</option>
         </select>
         <button type="button" (click)="applyFilters()" [disabled]="isLoading">Filtrar</button>
       </div>
       <div class="loading" *ngIf="isLoading">Cargando documentos...</div>
-      <div class="error" *ngIf="errorMessage && !isLoading">{{ errorMessage }}</div>
+      <div class="error" *ngIf="errorMessage && !isLoading" role="alert">
+        <span>{{ errorMessage }}</span>
+        <button type="button" class="ghost" (click)="load()">Reintentar</button>
+      </div>
       <div class="list" *ngIf="documents.length && !isLoading; else empty">
         <div class="card" *ngFor="let doc of documents">
           <a class="card-link" [routerLink]="['/documents', doc.id]">
@@ -55,7 +58,10 @@ import { DocumentSummary, DocumentStatus, DocumentType } from '../../../shared/m
         <button type="button" class="ghost" (click)="nextPage()" [disabled]="isLoading || !hasNextPage">Siguiente</button>
       </div>
       <ng-template #empty>
-        <p *ngIf="!isLoading">No hay documentos aun.</p>
+        <div class="empty" *ngIf="!isLoading && !errorMessage">
+          <p>No hay documentos aun.</p>
+          <a routerLink="/documents/upload">Subir primer documento</a>
+        </div>
       </ng-template>
     </section>
   `,
@@ -77,6 +83,10 @@ import { DocumentSummary, DocumentStatus, DocumentType } from '../../../shared/m
       .error {
         font-size: 13px;
         color: #b91c1c;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
       }
       input,
       select {
@@ -95,6 +105,7 @@ import { DocumentSummary, DocumentStatus, DocumentType } from '../../../shared/m
         display: flex;
         gap: 12px;
         align-items: center;
+        flex-wrap: wrap;
       }
       .ghost {
         background: #e5e7eb;
@@ -143,6 +154,23 @@ import { DocumentSummary, DocumentStatus, DocumentType } from '../../../shared/m
       }
       .danger[disabled] {
         opacity: 0.6;
+      }
+      .empty {
+        display: grid;
+        gap: 6px;
+      }
+      .empty p {
+        margin: 0;
+      }
+      .empty a {
+        color: #4f46e5;
+        text-decoration: none;
+        font-size: 13px;
+      }
+      @media (max-width: 960px) {
+        .filters {
+          grid-template-columns: 1fr;
+        }
       }
     `
   ]
@@ -236,7 +264,7 @@ export class DocumentsListPage implements OnInit {
   confirmDelete(doc: DocumentSummary, event: Event): void {
     event.preventDefault();
     event.stopPropagation();
-    const ok = window.confirm(`¿Eliminar "${doc.original_filename}"? Esta acción no se puede deshacer.`);
+    const ok = window.confirm(`Eliminar "${doc.original_filename}"? Esta accion no se puede deshacer.`);
     if (!ok) {
       return;
     }
@@ -279,4 +307,5 @@ export class DocumentsListPage implements OnInit {
     return fallback;
   }
 }
+
 

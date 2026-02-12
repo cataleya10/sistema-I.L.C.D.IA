@@ -15,7 +15,7 @@ import { ToastNotificationComponent } from '../../shared/components/toast-notifi
       <header class="shell__header">
         <div>
           <h1>SISTEMA DE LECTURA INTELIGENTE</h1>
-          <p>Bufete de Mantenimiento Predictivo e Ingeniería</p>
+          <p>Bufete de Mantenimiento Predictivo e Ingenieria</p>
         </div>
         <div class="version" *ngIf="systemInfo">
           <span>{{ systemInfo.pipeline_version }}</span>
@@ -54,6 +54,8 @@ import { ToastNotificationComponent } from '../../shared/components/toast-notifi
         display: flex;
         align-items: center;
         justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 16px;
         padding: 24px 40px;
         background: #111827;
         color: #fff;
@@ -71,6 +73,7 @@ import { ToastNotificationComponent } from '../../shared/components/toast-notifi
         display: flex;
         gap: 16px;
         align-items: center;
+        flex-wrap: wrap;
       }
       .version {
         display: flex;
@@ -113,6 +116,20 @@ import { ToastNotificationComponent } from '../../shared/components/toast-notifi
       }
       .shell__content {
         padding: 32px 40px;
+      }
+      @media (max-width: 960px) {
+        .shell__header {
+          padding: 20px 16px;
+        }
+        .shell__content {
+          padding: 20px 16px;
+        }
+        .shell__header h1 {
+          font-size: 16px;
+        }
+        .shell__nav {
+          width: 100%;
+        }
       }
     `
   ]
@@ -166,3 +183,4 @@ export class AppShellComponent {
     this.router.navigate(['/login']);
   }
 }
+

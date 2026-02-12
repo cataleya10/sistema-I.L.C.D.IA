@@ -12,6 +12,11 @@ import { Component, EventEmitter, Input, Output } from '@angular/core';
       (dragover)="onDragOver($event)"
       (dragleave)="onDragLeave($event)"
       (drop)="onDrop($event)"
+      (keydown.enter)="openFilePicker(fileInput)"
+      (keydown.space)="openFilePicker(fileInput)"
+      tabindex="0"
+      role="button"
+      aria-label="Zona para subir documento"
     >
       <input
         type="file"
@@ -23,7 +28,7 @@ import { Component, EventEmitter, Input, Output } from '@angular/core';
       />
       <div class="dropzone__content">
         <p>{{ label }}</p>
-        <button type="button" (click)="fileInput.click()">Seleccionar archivo</button>
+        <button type="button" (click)="openFilePicker(fileInput)">Seleccionar archivo</button>
       </div>
     </div>
   `,
@@ -60,7 +65,7 @@ import { Component, EventEmitter, Input, Output } from '@angular/core';
   ]
 })
 export class DropzoneComponent {
-  @Input() label = 'Arrastra y suelta tu documento aquí';
+  @Input() label = 'Arrastra y suelta tu documento aqui';
   @Input() accept = '.pdf,.png,.jpg,.jpeg';
   @Input() multiple = false;
   @Output() fileDropped = new EventEmitter<File>();
@@ -94,4 +99,9 @@ export class DropzoneComponent {
       input.value = '';
     }
   }
+
+  openFilePicker(fileInput: HTMLInputElement): void {
+    fileInput.click();
+  }
 }
+

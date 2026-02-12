@@ -10,12 +10,35 @@ import { Router } from '@angular/router';
   imports: [CommonModule, FormsModule],
   template: `
     <section class="login">
-      <h2>Iniciar sesión</h2>
+      <h2>Iniciar sesion</h2>
       <form (ngSubmit)="submit()">
-        <input type="text" name="username" [(ngModel)]="username" placeholder="Usuario" required />
-        <input type="password" name="password" [(ngModel)]="password" placeholder="Contraseña" required />
-        <button type="submit">Ingresar</button>
-        <p *ngIf="error">Credenciales inválidas</p>
+        <label for="username">Usuario</label>
+        <input
+          id="username"
+          type="text"
+          name="username"
+          [(ngModel)]="username"
+          placeholder="Usuario"
+          autocomplete="username"
+          required
+        />
+
+        <label for="password">Contrasena</label>
+        <input
+          id="password"
+          type="password"
+          name="password"
+          [(ngModel)]="password"
+          placeholder="Contrasena"
+          autocomplete="current-password"
+          required
+        />
+
+        <button type="submit" [disabled]="isSubmitting">
+          {{ isSubmitting ? 'Ingresando...' : 'Ingresar' }}
+        </button>
+
+        <p class="error" *ngIf="error" role="alert">Credenciales invalidas</p>
       </form>
     </section>
   `,
@@ -35,6 +58,10 @@ import { Router } from '@angular/router';
         display: grid;
         gap: 12px;
       }
+      label {
+        font-size: 12px;
+        color: #4b5563;
+      }
       input {
         padding: 10px 12px;
         border-radius: 8px;
@@ -47,8 +74,12 @@ import { Router } from '@angular/router';
         background: #4f46e5;
         color: #fff;
       }
-      p {
+      button:disabled {
+        opacity: 0.7;
+      }
+      .error {
         color: #b91c1c;
+        margin: 0;
       }
     `
   ]
@@ -57,6 +88,7 @@ export class LoginPage implements OnInit {
   username = '';
   password = '';
   error = false;
+  isSubmitting = false;
 
   constructor(private readonly auth: AuthService, private readonly router: Router) {}
 
@@ -74,14 +106,19 @@ export class LoginPage implements OnInit {
       return;
     }
 
+    this.isSubmitting = true;
     this.auth.login(username, this.password).subscribe({
       next: (response) => {
         this.auth.setToken(response.token);
         this.auth.setRefreshToken(response.refresh_token);
         this.auth.setUser(response.username, response.role);
+        this.isSubmitting = false;
         this.router.navigate(['/documents']);
       },
-      error: () => (this.error = true)
+      error: () => {
+        this.error = true;
+        this.isSubmitting = false;
+      }
     });
   }
 }

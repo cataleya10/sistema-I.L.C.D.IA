@@ -10,9 +10,16 @@ import { SystemMetrics, SystemService } from '../../../core/services/system.serv
     <section class="page">
       <header>
         <h2>Estado del sistema</h2>
-        <p>Métricas básicas de solicitudes y errores.</p>
+        <p>Metricas basicas de solicitudes y errores.</p>
       </header>
-      <div class="cards" *ngIf="metrics; else empty">
+
+      <div class="loading" *ngIf="isLoading">Cargando metricas...</div>
+      <div class="error" *ngIf="errorMessage && !isLoading" role="alert">
+        <span>{{ errorMessage }}</span>
+        <button type="button" (click)="load()">Reintentar</button>
+      </div>
+
+      <div class="cards" *ngIf="metrics && !isLoading; else empty">
         <div class="card">
           <h3>Requests</h3>
           <strong>{{ metrics.requests }}</strong>
@@ -22,12 +29,13 @@ import { SystemMetrics, SystemService } from '../../../core/services/system.serv
           <strong>{{ metrics.errors }}</strong>
         </div>
         <div class="card">
-          <h3>Última actualización</h3>
+          <h3>Ultima actualizacion</h3>
           <span>{{ metrics.timestamp | date: 'short' }}</span>
         </div>
       </div>
+
       <ng-template #empty>
-        <p>No hay métricas disponibles.</p>
+        <p *ngIf="!isLoading && !errorMessage">No hay metricas disponibles.</p>
       </ng-template>
     </section>
   `,
@@ -37,6 +45,24 @@ import { SystemMetrics, SystemService } from '../../../core/services/system.serv
         display: grid;
         gap: 20px;
         max-width: 720px;
+      }
+      .loading {
+        font-size: 13px;
+        color: #6b7280;
+      }
+      .error {
+        font-size: 13px;
+        color: #b91c1c;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .error button {
+        border: none;
+        border-radius: 999px;
+        padding: 6px 12px;
+        background: #e5e7eb;
+        color: #111827;
       }
       .cards {
         display: grid;
@@ -64,13 +90,28 @@ import { SystemMetrics, SystemService } from '../../../core/services/system.serv
 })
 export class SystemMetricsPage implements OnInit {
   metrics: SystemMetrics | null = null;
+  isLoading = false;
+  errorMessage = '';
 
   constructor(private readonly system: SystemService) {}
 
   ngOnInit(): void {
+    this.load();
+  }
+
+  load(): void {
+    this.isLoading = true;
+    this.errorMessage = '';
     this.system.getMetrics().subscribe({
-      next: (data) => (this.metrics = data),
-      error: () => (this.metrics = null)
+      next: (data) => {
+        this.metrics = data;
+        this.isLoading = false;
+      },
+      error: () => {
+        this.metrics = null;
+        this.errorMessage = 'No se pudieron cargar las metricas.';
+        this.isLoading = false;
+      }
     });
   }
 }
