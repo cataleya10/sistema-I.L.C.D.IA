@@ -34,8 +34,8 @@ backend:
   stage: test
   image: mcr.microsoft.com/dotnet/sdk:8.0
   script:
-    - dotnet build backend-dotnet/Backend.slnx -c Release
-    - dotnet test backend-dotnet/Backend.slnx -c Release --no-build --verbosity normal
+    - dotnet build backend-dotnet/src/Api/Api.csproj -c Release
+    - dotnet test backend-dotnet/tests/Infrastructure.Tests/Infrastructure.Tests.csproj -c Release --verbosity normal
 
 frontend:
   stage: test
