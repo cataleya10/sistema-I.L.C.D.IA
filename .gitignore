@@ -21,3 +21,9 @@ logs/
 **/__pycache__/
 *.pyc
 frontend-angular/web/logs/
+backups/
+restore-test/
+restore-test-2/
+restore-verify-*/
+backend-dotnet/tests/**/bin/
+backend-dotnet/tests/**/obj/
