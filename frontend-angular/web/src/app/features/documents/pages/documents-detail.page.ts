@@ -31,8 +31,8 @@ import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
       </header>
 
       <div class="actions">
-        <button type="button" (click)="process()" [disabled]="isProcessing">Procesar</button>
-        <button type="button" class="ghost" (click)="reprocess()" [disabled]="isProcessing">Reprocesar</button>
+        <button type="button" (click)="process()" [disabled]="isProcessing || document.status === 'PROCESSING'">Procesar</button>
+        <button type="button" class="ghost" (click)="reprocess()" [disabled]="isProcessing || document.status === 'PROCESSING'">Reprocesar</button>
         <button type="button" class="ghost" (click)="toggleEdit()" [disabled]="isSaving">
           {{ editMode ? 'Cancelar edicion' : 'Editar campos' }}
         </button>
@@ -358,6 +358,10 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
     if (!this.document) {
       return;
     }
+    if (this.document.status === 'PROCESSING') {
+      this.message = 'El documento ya esta en procesamiento.';
+      return;
+    }
     this.isProcessing = true;
     this.documents.process(this.document.id).subscribe({
       next: () => {
@@ -376,6 +380,10 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
 
   reprocess(): void {
     if (!this.document) {
+      return;
+    }
+    if (this.document.status === 'PROCESSING') {
+      this.message = 'El documento ya esta en procesamiento.';
       return;
     }
     this.isProcessing = true;

@@ -29,6 +29,14 @@ describe('AuthService', () => {
     expect(service.getToken()).toBeNull();
     expect(service.isAuthenticated()).toBeFalse();
   });
+
+  it('treats token near expiration as expired to avoid edge failures', () => {
+    const token = buildJwt(Math.floor(Date.now() / 1000) + 10);
+    service.setToken(token);
+
+    expect(service.getToken()).toBeNull();
+    expect(service.isAuthenticated()).toBeFalse();
+  });
 });
 
 function buildJwt(exp: number): string {

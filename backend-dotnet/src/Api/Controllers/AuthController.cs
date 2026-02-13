@@ -23,8 +23,16 @@ public class AuthController : ControllerBase
     [HttpPost("login")]
     public IActionResult Login([FromBody] LoginRequest request)
     {
+        if (request is null
+            || string.IsNullOrWhiteSpace(request.Username)
+            || string.IsNullOrWhiteSpace(request.Password))
+        {
+            return Unauthorized();
+        }
+
+        var normalizedUsername = request.Username.Trim();
         var user = _options.Users.FirstOrDefault(u =>
-            string.Equals(u.Username, request.Username, StringComparison.OrdinalIgnoreCase));
+            string.Equals(u.Username, normalizedUsername, StringComparison.OrdinalIgnoreCase));
 
         if (user is null || !VerifyPassword(user, request.Password))
         {
@@ -49,12 +57,13 @@ public class AuthController : ControllerBase
     [HttpPost("refresh")]
     public IActionResult Refresh([FromBody] RefreshRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.RefreshToken))
+        if (request is null || string.IsNullOrWhiteSpace(request.RefreshToken))
         {
             return Unauthorized();
         }
 
-        if (!_refreshTokens.TryUseToken(request.RefreshToken, out var entry))
+        var refreshToken = request.RefreshToken.Trim();
+        if (!_refreshTokens.TryUseToken(refreshToken, out var entry))
         {
             return Unauthorized();
         }
@@ -77,9 +86,9 @@ public class AuthController : ControllerBase
     [HttpPost("logout")]
     public IActionResult Logout([FromBody] RefreshRequest request)
     {
-        if (!string.IsNullOrWhiteSpace(request.RefreshToken))
+        if (!string.IsNullOrWhiteSpace(request?.RefreshToken))
         {
-            _refreshTokens.RevokeToken(request.RefreshToken);
+            _refreshTokens.RevokeToken(request.RefreshToken.Trim());
         }
 
         return NoContent();

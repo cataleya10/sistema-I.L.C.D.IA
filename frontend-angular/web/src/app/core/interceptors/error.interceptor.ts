@@ -2,9 +2,10 @@ import { HttpErrorResponse, HttpEvent, HttpHandler, HttpInterceptor, HttpRequest
 import { Injectable } from '@angular/core';
 import { Observable, Subject, throwError } from 'rxjs';
 import { catchError, switchMap, take } from 'rxjs/operators';
-import { AuthService } from '../services/auth.service';
 import { Router } from '@angular/router';
+import { AuthService } from '../services/auth.service';
 import { NotificationService } from '../services/notification.service';
+
 @Injectable()
 export class ErrorInterceptor implements HttpInterceptor {
   private isRefreshing = false;
@@ -24,10 +25,15 @@ export class ErrorInterceptor implements HttpInterceptor {
           return throwError(() => error);
         }
 
+        // Login failures should be handled by the login page, not by refresh flow.
+        if (this.isLoginRequest(req)) {
+          return throwError(() => error);
+        }
+
         if (this.isRefreshRequest(req)) {
           this.auth.logout();
           this.router.navigate(['/login']);
-          this.notifications.show('Sesión expirada. Inicia sesión nuevamente.');
+          this.notifications.show('Sesion expirada. Inicia sesion nuevamente.');
           return throwError(() => error);
         }
 
@@ -42,7 +48,7 @@ export class ErrorInterceptor implements HttpInterceptor {
         if (!refreshToken) {
           this.auth.logout();
           this.router.navigate(['/login']);
-          this.notifications.show('Sesión expirada. Inicia sesión nuevamente.');
+          this.notifications.show('Sesion expirada. Inicia sesion nuevamente.');
           return throwError(() => error);
         }
 
@@ -51,7 +57,7 @@ export class ErrorInterceptor implements HttpInterceptor {
           switchMap((response) => {
             this.isRefreshing = false;
             this.auth.setToken(response.token);
-            this.auth.setRefreshToken(response.refresh_token);
+            this.auth.setRefreshToken(response.refreshToken);
             this.refreshTokenSubject.next(response.token);
             return next.handle(this.addAuthHeader(req, response.token));
           }),
@@ -61,7 +67,7 @@ export class ErrorInterceptor implements HttpInterceptor {
             this.refreshTokenSubject = new Subject<string>();
             this.auth.logout();
             this.router.navigate(['/login']);
-            this.notifications.show('Sesión expirada. Inicia sesión nuevamente.');
+            this.notifications.show('Sesion expirada. Inicia sesion nuevamente.');
             return throwError(() => refreshError);
           })
         );
@@ -71,6 +77,10 @@ export class ErrorInterceptor implements HttpInterceptor {
 
   private isRefreshRequest(req: HttpRequest<unknown>): boolean {
     return req.url.includes('/api/auth/refresh');
+  }
+
+  private isLoginRequest(req: HttpRequest<unknown>): boolean {
+    return req.url.includes('/api/auth/login');
   }
 
   private addAuthHeader(req: HttpRequest<unknown>, token: string): HttpRequest<unknown> {
@@ -91,10 +101,10 @@ export class ErrorInterceptor implements HttpInterceptor {
       return 'No se pudo conectar al servidor.';
     }
     if (error.status === 400) {
-      return this.extractDetail(error) ?? 'Solicitud inválida.';
+      return this.extractDetail(error) ?? 'Solicitud invalida.';
     }
     if (error.status === 403) {
-      return 'No tienes permisos para esta acción.';
+      return 'No tienes permisos para esta accion.';
     }
     if (error.status === 404) {
       return 'Recurso no encontrado.';
@@ -110,6 +120,7 @@ export class ErrorInterceptor implements HttpInterceptor {
       | { detail?: string; message?: string; error?: string | { message?: string } }
       | string
       | null;
+
     if (!payload) {
       return null;
     }

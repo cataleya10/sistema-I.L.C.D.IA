@@ -1,3 +1,7 @@
+param(
+    [switch]$OpenDiagnostics
+)
+
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $logs = Join-Path $root "logs"
 New-Item -ItemType Directory -Force -Path $logs | Out-Null
@@ -117,8 +121,8 @@ $apiReady = Wait-ForUrl -url "http://localhost:5000/swagger" -timeoutSeconds 90
 $feReady = Wait-ForUrl -url "http://localhost:$frontendPort" -timeoutSeconds 120
 
 Write-Host "Frontend URL: http://localhost:$frontendPort" -ForegroundColor Green
-if ($aiReady) { Start-Process "http://localhost:8000/docs" }
-if ($apiReady) { Start-Process "http://localhost:5000/swagger" }
+if ($OpenDiagnostics -and $aiReady) { Start-Process "http://localhost:8000/docs" }
+if ($OpenDiagnostics -and $apiReady) { Start-Process "http://localhost:5000/swagger" }
 if ($feReady) { Start-Process "http://localhost:$frontendPort" }
 
 if (-not $aiReady) { Write-Host "IA Engine no responde a tiempo." -ForegroundColor Yellow }

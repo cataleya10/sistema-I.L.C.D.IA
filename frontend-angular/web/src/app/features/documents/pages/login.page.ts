@@ -110,7 +110,7 @@ export class LoginPage implements OnInit {
     this.auth.login(username, this.password).subscribe({
       next: (response) => {
         this.auth.setToken(response.token);
-        this.auth.setRefreshToken(response.refresh_token);
+        this.auth.setRefreshToken(response.refreshToken);
         this.auth.setUser(response.username, response.role);
         this.isSubmitting = false;
         this.router.navigate(['/documents']);

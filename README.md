@@ -47,6 +47,7 @@ Sistema web empresarial para carga, clasificacion y extraccion de documentos ofi
 ## Smoke test
 - Ejecutar: `powershell -File scripts/smoke.ps1`
 - Con login: `powershell -File scripts/smoke.ps1 -Username "<usuario>" -Secret "<password>"`
+- Modo protegido (auto-recupera y valida botones/endpoints): `powershell -File scripts/guard-mode.ps1 -Username "<usuario>" -Secret "<password>"`
 
 ## Verificacion local
 - Ejecutar: `powershell -File scripts/verify-all.ps1`

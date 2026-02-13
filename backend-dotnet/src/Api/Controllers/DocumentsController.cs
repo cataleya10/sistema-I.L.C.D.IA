@@ -31,7 +31,7 @@ public class DocumentsController : ControllerBase
 
     [HttpPost("upload")]
     [Consumes("multipart/form-data")]
-    [RequireRole("Admin")]
+    [RequireRole("Admin,User")]
     public async Task<ActionResult<DocumentSummaryDto>> Upload([FromForm] IFormFile file, CancellationToken cancellationToken)
     {
         if (file is null || file.Length == 0)
@@ -160,7 +160,7 @@ public class DocumentsController : ControllerBase
     }
 
     [HttpPost("{id:guid}/process")]
-    [RequireRole("Admin")]
+    [RequireRole("Admin,User")]
     public async Task<ActionResult<DocumentProcessResponse>> Process(Guid id, CancellationToken cancellationToken)
     {
         var result = await _documentService.ProcessAsync(id, cancellationToken);
@@ -187,7 +187,7 @@ public class DocumentsController : ControllerBase
     }
 
     [HttpPost("{id:guid}/reprocess")]
-    [RequireRole("Admin")]
+    [RequireRole("Admin,User")]
     public async Task<ActionResult<DocumentProcessResponse>> Reprocess(Guid id, CancellationToken cancellationToken)
     {
         var result = await _documentService.ReprocessAsync(id, cancellationToken);
@@ -218,7 +218,7 @@ public class DocumentsController : ControllerBase
     }
 
     [HttpPost("{id:guid}/mark-failed")]
-    [RequireRole("Admin")]
+    [RequireRole("Admin,User")]
     public async Task<IActionResult> MarkFailed(
         Guid id,
         [FromBody] DocumentFailRequest? request,
@@ -232,11 +232,22 @@ public class DocumentsController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
-    [RequireRole("Admin")]
+    [RequireRole("Admin,User")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
-        await _documentService.DeleteAsync(id, cancellationToken);
-        return NoContent();
+        try
+        {
+            await _documentService.DeleteAsync(id, cancellationToken);
+            return NoContent();
+        }
+        catch (IOException)
+        {
+            return Conflict("No se puede eliminar el documento mientras esta en procesamiento.");
+        }
+        catch (InvalidOperationException)
+        {
+            return NotFound("Documento no encontrado.");
+        }
     }
 
     private static string BuildRtf(DocumentDetailDto detail)

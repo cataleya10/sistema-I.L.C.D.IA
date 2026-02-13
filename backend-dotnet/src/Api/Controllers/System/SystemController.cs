@@ -33,7 +33,7 @@ public class SystemController : ControllerBase
     }
 
     [HttpGet("metrics")]
-    [RequireRole("Admin")]
+    [RequireRole("Admin,User")]
     public IActionResult Metrics()
     {
         var snapshot = _metrics.Snapshot();

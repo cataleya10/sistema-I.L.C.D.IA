@@ -46,7 +46,7 @@ import { DocumentSummary, DocumentStatus, DocumentType } from '../../../shared/m
             type="button"
             class="danger"
             (click)="confirmDelete(doc, $event)"
-            [disabled]="isLoading"
+            [disabled]="isLoading || doc.status === 'PROCESSING'"
           >
             Eliminar
           </button>
@@ -264,6 +264,12 @@ export class DocumentsListPage implements OnInit {
   confirmDelete(doc: DocumentSummary, event: Event): void {
     event.preventDefault();
     event.stopPropagation();
+
+    if (doc.status === 'PROCESSING') {
+      this.errorMessage = 'No se puede eliminar un documento mientras esta en procesamiento.';
+      return;
+    }
+
     const ok = window.confirm(`Eliminar "${doc.original_filename}"? Esta accion no se puede deshacer.`);
     if (!ok) {
       return;
