@@ -244,6 +244,112 @@ class ExtractPipelineTests(unittest.TestCase):
 
         self.assertEqual(data.get("identificador_electronico"), "AB12CD34")
 
+    def test_extract_acta_folio_numero_from_compact_table_text(self):
+        ocr_text = "\n".join(
+            [
+                "ACTA DE NACIMIENTO",
+                "FECHA DE REGISTRO LIBRA NUMERA DE ACTE",
+                "0001 20/08/2001 3 437",
+            ]
+        )
+        fields = asyncio.run(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("numero_acta"), "3")
+        self.assertEqual(data.get("folio"), "437")
+
+    def test_extract_acta_lugar_nacimiento_cleans_label_noise(self):
+        ocr_text = "ACTA DE NACIMIENTO\nHOMBRE 25/04/2001 JONUTA SEXO: FECHA DE NACIMIENTO: LUGAR DE NACIMIENTO:"
+        ocr_boxes = [
+            _box("ACTA DE NACIMIENTO", 10),
+            _box("HOMBRE 25/04/2001 JONUTA SEXO: FECHA DE NACIMIENTO: LUGAR DE NACIMIENTO:", 40),
+        ]
+        fields = asyncio.run(extract_fields("ACTA_NACIMIENTO", ocr_text, ocr_boxes))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("lugar_nacimiento"), "JONUTA")
+
+    def test_extract_nss_nombre_beneficiario_from_text(self):
+        ocr_text = "\n".join(
+            [
+                "INSTITUTO MEXICANO DEL SEGURO SOCIAL",
+                "NUMERO DE SEGURIDAD SOCIAL 60160194696",
+                "NOMBRE DEL BENEFICIARIO: JUAN PEREZ LOPEZ",
+            ]
+        )
+        fields = asyncio.run(extract_fields("NSS", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("nss"), "60160194696")
+        self.assertEqual(data.get("nombre"), "JUAN PEREZ LOPEZ")
+
+    def test_extract_nss_ignores_legal_text_as_name(self):
+        ocr_text = "\n".join(
+            [
+                "NUMERO DE SEGURIDAD SOCIAL 60160194696",
+                "NOMBRE DEL BENEFICIARIO: S LAS PRESTACIONES EN ESPECIE Y EN DINERO",
+                "NOMBRE DEL BENEFICIARIO: MARIA GUADALUPE LOPEZ HERNANDEZ",
+            ]
+        )
+        fields = asyncio.run(extract_fields("NSS", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("nss"), "60160194696")
+        self.assertEqual(data.get("nombre"), "MARIA GUADALUPE LOPEZ HERNANDEZ")
+
+    def test_extract_nss_noisy_label_and_name_below(self):
+        ocr_text = "\n".join(
+            [
+                "NUMERO DE SEGURIDAD SOCIAL 60160194696",
+                "N0MBRE DEL BENEFICIARI0",
+                "S LAS PRESTACIONES EN ESPECIE Y EN DINERO",
+                "JORGE ALBERTO MENDEZ CRUZ",
+            ]
+        )
+        fields = asyncio.run(extract_fields("NSS", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("nss"), "60160194696")
+        self.assertEqual(data.get("nombre"), "JORGE ALBERTO MENDEZ CRUZ")
+
+    def test_extract_nss_compact_name_pattern(self):
+        ocr_text = "\n".join(
+            [
+                "NUMERO DE SEGURIDAD SOCIAL ES: 60160194696",
+                "ASOCIADO A LA CURP: GACE010425HTCRMRA8",
+                "TU NUMERO DE SEGURIDAD! CAMPOS! ERWINGUSTAVOGARCIA",
+            ]
+        )
+        fields = asyncio.run(extract_fields("NSS", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("nss"), "60160194696")
+        self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
+
+    def test_field_contract_drops_invalid_legacy_curp(self):
+        with patch("app.pipelines.extract.legacy_extract_fields", return_value={"curp": "ABCD123"}):
+            fields = asyncio.run(extract_fields("INE", "CREDENCIAL PARA VOTAR", None))
+        data = _field_map(fields)
+
+        self.assertIsNone(data.get("curp"))
+
+    def test_field_contract_drops_invalid_legacy_referencia(self):
+        with patch("app.pipelines.extract.legacy_extract_fields", return_value={"referencia": "12345"}):
+            fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", "COMPROBANTE", None))
+        data = _field_map(fields)
+
+        self.assertIsNone(data.get("referencia"))
+
+    def test_field_contract_drops_noisy_lugar_nacimiento(self):
+        with patch(
+            "app.pipelines.extract.legacy_extract_fields",
+            return_value={"lugar_nacimiento": "ACTA DE NACIMIENTO SEXO FECHA DE NACIMIENTO"},
+        ):
+            fields = asyncio.run(extract_fields("ACTA_NACIMIENTO", "ACTA DE NACIMIENTO", None))
+        data = _field_map(fields)
+
+        self.assertIsNone(data.get("lugar_nacimiento"))
+
 
 if __name__ == "__main__":
     unittest.main()

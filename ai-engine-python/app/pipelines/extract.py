@@ -140,9 +140,23 @@ def _load_alias_model():
 ALIASES_FROM_MODEL = _load_alias_model()
 
 
+def _is_reasonable_alias(alias: str) -> bool:
+    if not alias:
+        return False
+    token = _normalize_keyword(alias)
+    if len(token) < 4:
+        return False
+    letters = sum(1 for ch in token if ch.isalpha())
+    if letters < 3:
+        return False
+    banned = {"ES", "PAGO", "P", "CP", "NSS"}
+    return token not in banned
+
+
 def _merge_aliases(label: str) -> list[str]:
     base = LABEL_ALIASES.get(label, [label])
-    extra = ALIASES_FROM_MODEL.get(LABEL_MAP.get(label, label), [])
+    raw_extra = ALIASES_FROM_MODEL.get(LABEL_MAP.get(label, label), [])
+    extra = [alias for alias in raw_extra if _is_reasonable_alias(str(alias))]
     return list(dict.fromkeys([*base, *extra]))
 
 STATE_CODE_TO_NAME = {
@@ -602,6 +616,7 @@ def _extract_acta_from_boxes(ocr_boxes):
 
     lugar_nacimiento = _extract_label_value(lines, "LUGAR DE NACIMIENTO", stop_labels=["MUNICIPIO", "ENTIDAD", "FECHA"])
     if lugar_nacimiento:
+        lugar_nacimiento = _clean_acta_lugar_nacimiento(lugar_nacimiento)
         upper_lugar = lugar_nacimiento.upper()
         if "DATOS DE FILIACION" not in upper_lugar and "PERSONA REGISTRADA" not in upper_lugar:
             result["lugar_nacimiento"] = {"value": lugar_nacimiento}
@@ -613,7 +628,7 @@ def _extract_acta_from_boxes(ocr_boxes):
             full_text,
         )
         if match:
-            candidate = match.group(1).strip()
+            candidate = _clean_acta_lugar_nacimiento(match.group(1).strip())
             upper_candidate = candidate.upper()
             if "DATOS" not in upper_candidate and "PERSONA REGISTRADA" not in upper_candidate:
                 result["lugar_nacimiento"] = {"value": candidate}
@@ -645,7 +660,9 @@ def _extract_acta_from_boxes(ocr_boxes):
                     if candidate and not re.search(r"\d", candidate) and "DATOS" not in candidate and "PERSONA" not in candidate:
                         place_parts.append(candidate)
                 if place_parts:
-                    result["lugar_nacimiento"] = {"value": " ".join(place_parts)}
+                    cleaned_place = _clean_acta_lugar_nacimiento(" ".join(place_parts))
+                    if cleaned_place:
+                        result["lugar_nacimiento"] = {"value": cleaned_place}
         sexo_label = _find_label_line(lines, "SEXO")
         if not sexo_label:
             sexo_label = next((line for line in lines if "SEXO" in line.get("text", "").upper()), None)
@@ -685,7 +702,9 @@ def _extract_acta_from_boxes(ocr_boxes):
                         if len(place_parts) >= 2:
                             break
                     if place_parts:
-                        result["lugar_nacimiento"] = {"value": " ".join(reversed(place_parts))}
+                        cleaned_place = _clean_acta_lugar_nacimiento(" ".join(reversed(place_parts)))
+                        if cleaned_place:
+                            result["lugar_nacimiento"] = {"value": cleaned_place}
         if "lugar_nacimiento" not in result:
             lugar_label = _find_label_line(lines, "LUGAR DE NACIMIENTO")
             if lugar_label:
@@ -711,7 +730,9 @@ def _extract_acta_from_boxes(ocr_boxes):
                         if len(place_parts) >= 2:
                             break
                     if place_parts:
-                        result["lugar_nacimiento"] = {"value": " ".join(reversed(place_parts))}
+                        cleaned_place = _clean_acta_lugar_nacimiento(" ".join(reversed(place_parts)))
+                        if cleaned_place:
+                            result["lugar_nacimiento"] = {"value": cleaned_place}
         if "sexo" not in result and "HOMBRE" in full_text:
             result["sexo"] = {"value": "H"}
         if "sexo" not in result and "MUJER" in full_text:
@@ -780,7 +801,7 @@ def _extract_acta_from_boxes(ocr_boxes):
 
     if "sexo" not in result or "fecha_nacimiento" not in result or "lugar_nacimiento" not in result:
         match = re.search(
-            r"(HOMBRE|MUJER|H|M)\s+(\d{2}[/-]\d{2}[/-]\d{4})\s+([A-Z ]{3,}?)\s+SEXO\s+FECHA DE NACIMIENTO\s+LUGAR DE NACIMIENTO",
+            r"(HOMBRE|MUJER|H|M)\s+(\d{2}[/-]\d{2}[/-]\d{4})\s+([A-Z ]{3,}?)\s+SEXO[:\s]+\s*FECHA\s+DE\s+NACIMIENTO[:\s]+\s*LUGAR\s+DE\s+NACIMIENTO[:\s]*",
             full_text,
         )
         if match:
@@ -789,7 +810,9 @@ def _extract_acta_from_boxes(ocr_boxes):
             if "fecha_nacimiento" not in result:
                 result["fecha_nacimiento"] = {"value": match.group(2)}
             if "lugar_nacimiento" not in result:
-                result["lugar_nacimiento"] = {"value": match.group(3).strip()}
+                cleaned_place = _clean_acta_lugar_nacimiento(match.group(3).strip())
+                if cleaned_place:
+                    result["lugar_nacimiento"] = {"value": cleaned_place}
 
     if "entidad_registro" not in result:
         match = re.search(
@@ -1047,7 +1070,9 @@ def _extract_nss_from_boxes(ocr_boxes):
                 nombre = f"{nombre} {candidate}".strip()
                 break
     if nombre:
-        result["nombre"] = {"value": nombre}
+        normalized_name = _clean_nss_name(nombre)
+        if normalized_name and _is_nss_person_name(normalized_name):
+            result["nombre"] = {"value": normalized_name}
 
     return result
 
@@ -1532,6 +1557,7 @@ def _split_compact_given_names(value: str) -> str:
         "JUANCARLOS": "JUAN CARLOS",
         "MIGUELANGEL": "MIGUEL ANGEL",
         "LUISFERNANDO": "LUIS FERNANDO",
+        "ERWINGUSTAVO": "ERWIN GUSTAVO",
     }
     for key, spaced in known_pairs.items():
         if compact == key:
@@ -2105,7 +2131,7 @@ def _normalize_numero_acta_value(value: str) -> str:
         return ""
     if re.search(r"\d", text) or re.fullmatch(r"[0-9OIL\s-]+", text):
         raw = _normalize_numeric_field(text)
-        if re.fullmatch(r"\d{3,12}", raw):
+        if re.fullmatch(r"\d{1,12}", raw):
             return raw
     normalized = _normalize_alnum(text)
     return normalized if len(normalized) >= 3 else ""
@@ -2171,6 +2197,134 @@ def _normalize_value_for_key(key: str, value: str) -> str:
     if normalizer is None:
         return str(value or "")
     return normalizer(str(value or ""))
+
+
+def _normalize_field_value_for_contract(key: str, value: str) -> str:
+    raw = str(value or "")
+    if not raw:
+        return ""
+    if key in FIELD_VALUE_NORMALIZERS:
+        return _normalize_value_for_key(key, raw)
+    if key in {"curp", "rfc", "clave_elector", "id_cif"}:
+        return _normalize_alnum(raw)
+    if key in {"nss", "clabe", "cp", "seccion", "numero_servicio", "cuenta"}:
+        return _normalize_numeric_field(raw)
+    if key in {"fecha", "fecha_nacimiento", "fecha_registro", "fecha_limite", "fecha_corte", "fecha_emision", "fecha_documento"}:
+        return _normalize_date_value(raw)
+    if key in {"nombre", "titular", "nombres", "apellido_paterno", "apellido_materno", "primer_apellido", "segundo_apellido"}:
+        return _normalize_name(raw)
+    if key == "sexo":
+        return _normalize_sex(raw)
+    if key == "lugar_nacimiento":
+        return _clean_acta_lugar_nacimiento(raw)
+    if key in {"domicilio", "entidad_registro", "municipio_registro", "banco", "estado", "ciudad", "proveedor"}:
+        return _normalize_address(raw)
+    return _normalize_text(raw)
+
+
+def _looks_like_person_name(value: str) -> bool:
+    text = _normalize_name(value).upper()
+    if not text:
+        return False
+    if len(text) < 5 or len(text) > 90:
+        return False
+    tokens = [t for t in text.split() if t]
+    if len(tokens) < 2:
+        return False
+    banned = {
+        "PRESTACIONES",
+        "ESPECIE",
+        "DINERO",
+        "REQUISITOS",
+        "OTORGARAN",
+        "CUMPLIDO",
+        "LUGAR",
+        "NACIMIENTO",
+        "ACTA",
+        "SEXO",
+        "FECHA",
+    }
+    if any(tok in banned for tok in tokens):
+        return False
+    return True
+
+
+def _is_valid_by_contract(document_type: str, key: str, value: str) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    upper = text.upper()
+
+    if key == "curp":
+        return bool(CURP_PATTERN.fullmatch(_normalize_alnum(upper)))
+    if key == "rfc":
+        return bool(RFC_WITH_HOMOCLAVE.fullmatch(_normalize_alnum(upper)))
+    if key == "nss":
+        return bool(re.fullmatch(r"\d{11}", _normalize_numeric_field(upper)))
+    if key == "clabe":
+        return bool(re.fullmatch(r"\d{18}", _normalize_numeric_field(upper)))
+    if key == "cp":
+        return bool(re.fullmatch(r"\d{5}", _normalize_numeric_field(upper)))
+    if key == "seccion":
+        return bool(re.fullmatch(r"\d{3,6}", _normalize_numeric_field(upper)))
+    if key == "numero_servicio":
+        return bool(re.fullmatch(r"\d{10,13}", _normalize_numeric_field(upper)))
+    if key == "cuenta":
+        return bool(re.fullmatch(r"\d{8,22}", _normalize_numeric_field(upper)))
+    if key == "referencia":
+        normalized = _normalize_value_for_key("referencia", upper)
+        digits = sum(1 for ch in normalized if ch.isdigit())
+        return bool(normalized) and 10 <= len(normalized) <= 30 and digits >= 8
+    if key == "sexo":
+        return upper in {"H", "M"}
+    if key in {"fecha", "fecha_nacimiento", "fecha_registro", "fecha_limite", "fecha_corte", "fecha_emision", "fecha_documento"}:
+        return bool(re.fullmatch(r"\d{2}[/-]\d{2}[/-]\d{4}", text))
+    if key == "vigencia":
+        return bool(re.fullmatch(r"\d{4}(?:/\d{4})?", text))
+    if key in {"folio", "numero_acta"}:
+        return bool(re.fullmatch(r"[A-Z0-9]{1,12}", _normalize_alnum(upper)))
+    if key == "numero_certificado":
+        return bool(re.fullmatch(r"[A-Z0-9]{6,24}", _normalize_alnum(upper)))
+    if key == "identificador_electronico":
+        return bool(re.fullmatch(r"[A-Z0-9]{6,30}", _normalize_alnum(upper)))
+    if key in {"nombre", "titular"}:
+        if key == "titular" and document_type == "COMPROBANTE_DOMICILIO" and upper == "PUBLICO EN GENERAL":
+            return True
+        return _looks_like_person_name(text)
+    if key == "lugar_nacimiento":
+        if any(token in upper for token in {"ACTA DE NACIMIENTO", "SEXO", "FECHA DE NACIMIENTO", "LUGAR DE NACIMIENTO"}):
+            return False
+        return 2 <= len(upper) <= 80
+    if key == "domicilio":
+        if any(token in upper for token in {"LINEA DE CAPTURA", "TOTAL A PAGAR", "REFERENCIA"}):
+            return False
+        return len(upper) >= 10
+    if key in {"entidad_registro", "municipio_registro", "banco", "estado", "ciudad", "proveedor"}:
+        return len(upper) >= 3
+
+    return len(text) >= 2
+
+
+def _apply_field_contracts(document_type: str, fields: list[dict]) -> list[dict]:
+    contracted: list[dict] = []
+    for field in fields:
+        key = str(field.get("key", "") or "")
+        if not key:
+            continue
+        if key == "texto_detectado":
+            contracted.append(field)
+            continue
+
+        normalized_value = _normalize_field_value_for_contract(key, str(field.get("value", "") or ""))
+        if not normalized_value:
+            continue
+        if not _is_valid_by_contract(document_type, key, normalized_value):
+            continue
+
+        updated = dict(field)
+        updated["value"] = normalized_value
+        contracted.append(updated)
+    return contracted
 
 
 def _extract_city_state(lines: list[str]) -> tuple[str | None, str | None]:
@@ -2274,6 +2428,246 @@ def _find_value_after_keyword(lines: list[str], keywords: list[str]) -> str | No
             if idx + 1 < len(lines):
                 return lines[idx + 1].strip(" :.-")
     return None
+
+
+def _clean_nss_name(value: str) -> str | None:
+    if not value:
+        return None
+    cleaned = _normalize_text(value).upper()
+    cleaned = re.sub(
+        r"^(?:NOMBRE(?:\s+DEL|\s+DE LA)?(?:\s+ASEGURADO|\s+BENEFICIARIO|\s+TRABAJADOR|\s+TITULAR)?|"
+        r"ASEGURADO|BENEFICIARIO|TITULAR|NOMBRE\s+O\s+RAZON\s+SOCIAL)\s*[:\-]?\s*",
+        "",
+        cleaned,
+    )
+    cleaned = re.split(r"\b(?:CURP|RFC|NSS|IMSS|FOLIO|FECHA|VIGENCIA|UNIDAD|CLINICA)\b", cleaned)[0].strip(" :.-,")
+    cleaned = re.sub(r"[^A-ZÑÁÉÍÓÚÜ ]", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if len(cleaned) < 5:
+        return None
+    tokens = cleaned.split()
+    if len(tokens) < 2:
+        return None
+    return cleaned
+
+
+def _is_nss_person_name(value: str) -> bool:
+    cleaned = _normalize_text(value).upper()
+    if not cleaned:
+        return False
+    if len(cleaned) > 70:
+        return False
+
+    non_name_tokens = {
+        "PRESTACIONES", "ESPECIE", "DINERO", "OTORGARAN", "CUMPLIDO", "REQUISITOS", "PREVISTOS",
+        "LEY", "ARTICULO", "VIGENCIA", "FOLIO", "CLINICA", "UNIDAD", "SEGURO", "SOCIAL",
+        "IMSS", "NSS", "RFC", "CURP", "SISTEMA", "NACIONAL", "SEGURIDAD",
+    }
+    non_name_fragments = (
+        "PRESTACION",
+        "REQUISIT",
+        "OTORGAR",
+        "CUMPLID",
+        "DINERO",
+        "ESPECIE",
+        "BENEFICIARIOS",
+        "TRABAJADORES",
+        "ASEGURAMIENTO",
+    )
+    particles = {"DE", "DEL", "LA", "LAS", "LOS", "Y", "MC", "VON", "DA", "DO", "DI"}
+
+    tokens = [tok for tok in re.findall(r"[A-ZÑÁÉÍÓÚÜ]+", cleaned) if tok]
+    if len(tokens) < 2 or len(tokens) > 6:
+        return False
+    if any(tok in non_name_tokens for tok in tokens):
+        return False
+    if any(fragment in cleaned for fragment in non_name_fragments):
+        return False
+
+    core_tokens = [tok for tok in tokens if tok not in particles]
+    if len(core_tokens) < 2:
+        return False
+    if any(len(tok) > 18 for tok in core_tokens):
+        return False
+    if any(len(tok) < 2 for tok in core_tokens):
+        return False
+    if sum(1 for tok in core_tokens if len(tok) >= 3) < 2:
+        return False
+    return True
+
+
+def _split_compact_nss_token(token: str) -> str:
+    compact = _normalize_alnum(token)
+    if len(compact) <= 12:
+        return compact
+
+    common_surnames = (
+        "HERNANDEZ",
+        "GONZALEZ",
+        "MARTINEZ",
+        "RODRIGUEZ",
+        "LOPEZ",
+        "PEREZ",
+        "SANCHEZ",
+        "RAMIREZ",
+        "CRUZ",
+        "FLORES",
+        "GOMEZ",
+        "DIAZ",
+        "REYES",
+        "MORALES",
+        "ORTIZ",
+        "RUIZ",
+        "MEDINA",
+        "TORRES",
+        "ROMERO",
+        "VARGAS",
+        "CASTILLO",
+        "MENDOZA",
+        "RIVERA",
+        "VASQUEZ",
+        "GARZA",
+        "AGUILAR",
+        "SILVA",
+        "NAVARRO",
+        "CASTRO",
+        "GARCIA",
+        "CAMPOS",
+    )
+    for surname in common_surnames:
+        if compact.endswith(surname) and len(compact) > len(surname) + 3:
+            left = compact[: -len(surname)]
+            left_named = _split_compact_given_names(left)
+            return f"{left_named} {surname}".strip()
+
+    best = None
+    best_score = None
+    for cut in range(max(4, len(compact) - 10), min(len(compact) - 3, len(compact) - 4) + 1):
+        left = compact[:cut]
+        right = compact[cut:]
+        if len(right) < 4 or len(right) > 10:
+            continue
+        if len(left) < 4:
+            continue
+        vowels_r = sum(1 for ch in right if ch in "AEIOU")
+        ratio_r = vowels_r / max(1, len(right))
+        if ratio_r < 0.2 or ratio_r > 0.8:
+            continue
+        score = abs(len(left) - len(right) * 1.7)
+        if right.endswith(("EZ", "ES", "OS", "AS", "ON", "AN", "IA", "ZA", "GA")):
+            score -= 0.4
+        if best_score is None or score < best_score:
+            best_score = score
+            best = (left, right)
+
+    if not best:
+        return compact
+
+    left, right = best
+    left_named = _split_compact_given_names(left)
+    return f"{left_named} {right}".strip()
+
+
+def _extract_nss_name_from_text(lines: list[str], full_text: str) -> str | None:
+    strict_keywords = [
+        "NOMBRE DEL ASEGURADO",
+        "NOMBRE DEL BENEFICIARIO",
+        "NOMBRE DEL TRABAJADOR",
+        "NOMBRE DEL TITULAR",
+        "NOMBRE O RAZON SOCIAL",
+    ]
+    for idx, line in enumerate(lines):
+        upper_line = line.upper()
+        compact_line = _label_key(upper_line)
+        for keyword in strict_keywords:
+            compact_keyword = _label_key(keyword)
+            if keyword not in upper_line and compact_keyword not in compact_line:
+                continue
+            if keyword in upper_line:
+                tail = upper_line.split(keyword, 1)[-1].strip(" :.-")
+            else:
+                tail = ""
+            if tail:
+                normalized = _clean_nss_name(tail)
+                if normalized and _is_nss_person_name(normalized):
+                    return normalized
+            for offset in (1, 2, 3):
+                if idx + offset >= len(lines):
+                    break
+                normalized = _clean_nss_name(lines[idx + offset])
+                if normalized and _is_nss_person_name(normalized):
+                    return normalized
+
+    for pattern in [
+        r"(?:NOMBRE\s+DEL\s+ASEGURADO|NOMBRE\s+DEL\s+BENEFICIARIO|NOMBRE\s+DEL\s+TRABAJADOR|NOMBRE\s+DEL\s+TITULAR|NOMBRE\s+O\s+RAZON\s+SOCIAL)\s*[:\-]?\s*([A-ZÑÁÉÍÓÚÜ ]{8,70})",
+        r"(?:ASEGURADO|BENEFICIARIO|TITULAR)\s*[:\-]?\s*([A-ZÑÁÉÍÓÚÜ ]{8,70})",
+    ]:
+        match = re.search(pattern, full_text)
+        if not match:
+            continue
+        normalized = _clean_nss_name(match.group(1))
+        if normalized and _is_nss_person_name(normalized):
+            return normalized
+
+    compact_name_match = re.search(r"\b([A-ZÑ]{3,})!\s*([A-ZÑ]{8,24})\b", full_text)
+    if compact_name_match:
+        last_name = _normalize_alnum(compact_name_match.group(1))
+        compact = _split_compact_nss_token(compact_name_match.group(2))
+        candidate = _clean_nss_name(f"{compact} {last_name}")
+        if candidate and _is_nss_person_name(candidate):
+            return candidate
+
+    return None
+
+
+def _extract_acta_folio_numero_from_text(full_text: str) -> tuple[str | None, str | None]:
+    text = _normalize_text(full_text).upper()
+
+    # Common compact table layout:
+    # "FECHA DE REGISTRO LIBRO NUMERO DE ACTA 0001 20/08/2001 3 437"
+    table_match = re.search(
+        r"FECHA\s+DE\s+REGISTRO\s+LIBR[OA]\s+NUMER[OA]\s+DE\s+ACT[AE]\s+"
+        r"([0-9OIL]{1,6})\s+\d{2}[/-]\d{2}[/-]\d{4}\s+([0-9OIL]{1,6})\s+([0-9OIL]{1,6})",
+        text,
+    )
+    if table_match:
+        numero_acta = _normalize_value_for_key("numero_acta", table_match.group(2))
+        folio = _normalize_value_for_key("folio", table_match.group(3))
+        return (folio or None, numero_acta or None)
+
+    numero_acta = None
+    folio = None
+
+    numero_match = re.search(r"NUMER[OA]\s+DE\s+ACT[AE]\s*[:\-]?\s*([0-9OIL]{1,8})", text)
+    if numero_match:
+        normalized = _normalize_value_for_key("numero_acta", numero_match.group(1))
+        if normalized:
+            numero_acta = normalized
+
+    folio_match = re.search(r"FOLI[O0]\s*[:\-]?\s*([0-9OIL]{1,8})", text)
+    if folio_match:
+        normalized = _normalize_value_for_key("folio", folio_match.group(1))
+        if normalized:
+            folio = normalized
+
+    return folio, numero_acta
+
+
+def _clean_acta_lugar_nacimiento(value: str) -> str:
+    text = _normalize_text(str(value or "")).upper()
+    if not text:
+        return ""
+
+    text = re.sub(r"^\s*ACTA\s+DE\s+NACIMIENTO\b", " ", text)
+    text = re.split(
+        r"\b(?:SEXO|FECHA\s+DE\s+NACIMIENTO|LUGAR\s+DE\s+NACIMIENTO|NOMBRE(?:\(S\))?|PRIMER\s+APELLIDO|SEGUNDO\s+APELLIDO)\b",
+        text,
+    )[0]
+    text = re.sub(r"[^A-ZÑÁÉÍÓÚÜ ]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if text in {"ACTA", "ACTA DE", "ACTA DE NACIMIENTO"}:
+        return ""
+    return text
 
 
 def _dedupe_fields(fields: list[dict]) -> list[dict]:
@@ -2526,12 +2920,17 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
             if "nss" in nss_box_values:
                 fields.append(_make_field("nss", "NSS", _normalize_numeric_field(nss_box_values["nss"]["value"]), ocr_boxes, confidence=0.9))
             if "nombre" in nss_box_values:
-                fields.append(_make_field("nombre", "Nombre", _normalize_name(nss_box_values["nombre"]["value"]), ocr_boxes, confidence=0.7))
+                cleaned_name = _clean_nss_name(nss_box_values["nombre"]["value"])
+                if cleaned_name and _is_nss_person_name(cleaned_name):
+                    fields.append(_make_field("nombre", "Nombre", _normalize_name(cleaned_name), ocr_boxes, confidence=0.85))
         for value in nss:
             fields.append(_make_field("nss", "NSS", _normalize_alnum(value), ocr_boxes))
         afiliacion = _find_value_after_keyword(lines, ["NUMERO DE SEGURIDAD SOCIAL", "SEGURIDAD SOCIAL"])
         if afiliacion:
             fields.append(_make_field("nss", "NSS", _normalize_numeric_field(afiliacion), ocr_boxes, confidence=0.7))
+        nss_name = _extract_nss_name_from_text(lines, text)
+        if nss_name:
+            fields.append(_make_field("nombre", "Nombre", _normalize_name(nss_name), ocr_boxes, confidence=0.82))
 
     if document_type == "DATOS_BANCARIOS":
         if ocr_boxes:
@@ -2594,7 +2993,9 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                         value = _normalize_date_value(value)
                     if key in {"nombre"}:
                         value = _normalize_name(value)
-                    if key in {"lugar_nacimiento", "entidad_registro", "municipio_registro"}:
+                    if key == "lugar_nacimiento":
+                        value = _clean_acta_lugar_nacimiento(value)
+                    if key in {"entidad_registro", "municipio_registro"}:
                         value = _normalize_address(value)
                     if key == "numero_acta":
                         value = _normalize_value_for_key("numero_acta", value)
@@ -2617,6 +3018,15 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
             if folio_num:
                 fields.append(_make_field("folio", "Folio", folio_num, ocr_boxes, confidence=0.6))
         if document_type == "ACTA_NACIMIENTO":
+            extracted_keys = {str(f.get("key", "")) for f in fields}
+            if "folio" not in extracted_keys or "numero_acta" not in extracted_keys:
+                folio_text, numero_text = _extract_acta_folio_numero_from_text(text)
+                if folio_text and "folio" not in extracted_keys:
+                    fields.append(_make_field("folio", "Folio", folio_text, ocr_boxes, confidence=0.82))
+                    extracted_keys.add("folio")
+                if numero_text and "numero_acta" not in extracted_keys:
+                    fields.append(_make_field("numero_acta", "Numero de acta", numero_text, ocr_boxes, confidence=0.82))
+                    extracted_keys.add("numero_acta")
             libro = _find_value_after_keyword(lines, ["LIBRO"])
             if libro:
                 fields.append(_make_field("libro", "Libro", _normalize_alnum(libro), ocr_boxes, confidence=0.6))
@@ -3513,4 +3923,6 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
             for value in name_curps:
                 fields.append(_make_field("curp", "CURP", _normalize_alnum(value), ocr_boxes, confidence=0.9))
 
-    return _dedupe_fields(_postprocess_fields(document_type, fields))
+    cleaned = _postprocess_fields(document_type, fields)
+    contracted = _apply_field_contracts(document_type, cleaned)
+    return _dedupe_fields(contracted)
