@@ -11,7 +11,6 @@ namespace Infrastructure.Services;
 
 public class DocumentService : IDocumentService
 {
-    private const decimal ReviewThreshold = 0.80m;
     private readonly DocumentDbContext _dbContext;
     private readonly IPythonAiClient _pythonClient;
     private readonly IFileStorage _fileStorage;
@@ -371,8 +370,8 @@ public class DocumentService : IDocumentService
             _dbContext.DocumentFields.AddRange(document.Fields);
         }
 
-        var needsReview = (document.Confidence ?? 0m) < ReviewThreshold;
-        if (response.Status == DocumentStatus.NeedsReview)
+        var needsReview = response.Status == DocumentStatus.NeedsReview;
+        if (!needsReview && (response.Fields is null || response.Fields.Count == 0))
         {
             needsReview = true;
         }

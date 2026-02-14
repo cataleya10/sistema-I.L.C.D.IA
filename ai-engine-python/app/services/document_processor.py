@@ -178,7 +178,7 @@ def _normalize_fields(document_type: str, fields: list[dict]) -> list[dict]:
 FASTPATH_REQUIRED_FIELDS: dict[str, list[str]] = {
     "INE": ["curp", "nombre", "fecha_nacimiento", "seccion", "vigencia"],
     "CURP": ["curp", "nombre", "fecha_nacimiento"],
-    "ACTA_NACIMIENTO": ["nombre", "fecha", "folio"],
+    "ACTA_NACIMIENTO": ["nombre", "fecha_nacimiento", "folio", "numero_acta"],
     "COMPROBANTE_DOMICILIO": ["domicilio", "cp"],
     "NSS": ["nss", "nombre"],
     "DATOS_BANCARIOS": ["clabe", "banco", "titular"],
@@ -197,7 +197,7 @@ def _has_required_fields(fields: list[dict], required_keys: list[str]) -> bool:
 DEFAULT_CRITICAL_FIELDS: dict[str, list[str]] = {
     "INE": ["curp", "nombre", "fecha_nacimiento"],
     "CURP": ["curp", "nombre"],
-    "ACTA_NACIMIENTO": ["fecha", "folio"],
+    "ACTA_NACIMIENTO": ["nombre", "fecha_nacimiento", "folio", "numero_acta"],
     "COMPROBANTE_DOMICILIO": ["domicilio"],
     "NSS": ["nss"],
     "DATOS_BANCARIOS": ["clabe", "banco"],
