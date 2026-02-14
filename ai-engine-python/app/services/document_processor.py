@@ -65,6 +65,135 @@ def _maybe_override_doc_type(doc_type: str, text: str, filename: str | None) -> 
     return doc_type, None
 
 
+def _has_sufficient_text_layer(text: str) -> bool:
+    compact = " ".join((text or "").split())
+    if not compact:
+        return False
+    alnum_count = sum(1 for ch in compact if ch.isalnum())
+    word_count = len(compact.split(" "))
+    return (
+        alnum_count >= settings.min_text_layer_chars
+        and word_count >= settings.min_text_layer_words
+    )
+
+
+def _critical_coverage(doc_type: str, fields: list[dict]) -> tuple[int, int]:
+    required = CRITICAL_FIELDS.get(doc_type, [])
+    if not required:
+        return 0, 0
+    found_required = 0
+    for key in required:
+        if any(field.get("key") == key and field.get("value") for field in fields):
+            found_required += 1
+    return found_required, len(required)
+
+
+CANONICAL_FIELD_KEYS: dict[str, str] = {
+    "nss": "nss",
+    "seguridad_social": "nss",
+    "numero_seguridad_social": "nss",
+    "numero_de_seguridad_social": "nss",
+    "sistema_nacional_de_seguridad_social": "nss",
+    "sistema": "nss",
+    "nombre_beneficiario": "nombre",
+    "nombre_asegurado": "nombre",
+    "nombre_titular": "nombre",
+    "nombre_del_beneficiario": "nombre",
+    "nombre_del_asegurado": "nombre",
+    "nombre_del_titular": "nombre",
+    "beneficiario": "nombre",
+    "asegurado": "nombre",
+}
+
+CANONICAL_FIELD_LABELS: dict[str, str] = {
+    "nss": "NSS",
+    "nombre": "Nombre",
+    "titular": "Titular",
+}
+
+
+def _normalize_key_name(value: str) -> str:
+    normalized = (value or "").strip().lower()
+    normalized = normalized.replace("-", "_").replace(" ", "_")
+    return normalized
+
+
+def _resolve_canonical_key(key: str, label: str, document_type: str) -> str:
+    normalized_key = _normalize_key_name(key)
+    if normalized_key in CANONICAL_FIELD_KEYS:
+        resolved = CANONICAL_FIELD_KEYS[normalized_key]
+    else:
+        normalized_label = _normalize_key_name(label)
+        if "seguridad" in normalized_label or "nss" in normalized_label:
+            resolved = "nss"
+        elif normalized_label in CANONICAL_FIELD_KEYS:
+            resolved = CANONICAL_FIELD_KEYS[normalized_label]
+        else:
+            resolved = normalized_key
+
+    if document_type == "NSS" and resolved == "titular":
+        return "nombre"
+    if document_type == "COMPROBANTE_DOMICILIO" and resolved == "nombre":
+        return "titular"
+    return resolved
+
+
+def _normalize_fields(document_type: str, fields: list[dict]) -> list[dict]:
+    normalized: dict[str, dict] = {}
+    for field in fields:
+        raw_key = str(field.get("key", "") or "")
+        raw_label = str(field.get("label", "") or "")
+        canonical_key = _resolve_canonical_key(raw_key, raw_label, document_type)
+        if not canonical_key:
+            continue
+
+        value = field.get("value")
+        if isinstance(value, str):
+            value = value.strip()
+        if value in {"", None}:
+            continue
+
+        candidate = {
+            **field,
+            "key": canonical_key,
+            "label": CANONICAL_FIELD_LABELS.get(canonical_key, raw_label or canonical_key),
+            "value": value,
+        }
+
+        existing = normalized.get(canonical_key)
+        if not existing:
+            normalized[canonical_key] = candidate
+            continue
+
+        current_score = float(existing.get("confidence", 0) or 0)
+        new_score = float(candidate.get("confidence", 0) or 0)
+        current_valid = bool(existing.get("valid", True))
+        new_valid = bool(candidate.get("valid", True))
+        if (new_valid and not current_valid) or (new_valid == current_valid and new_score >= current_score):
+            normalized[canonical_key] = candidate
+
+    return list(normalized.values())
+
+
+FASTPATH_REQUIRED_FIELDS: dict[str, list[str]] = {
+    "INE": ["curp", "nombre", "fecha_nacimiento", "seccion", "vigencia"],
+    "CURP": ["curp", "nombre", "fecha_nacimiento"],
+    "ACTA_NACIMIENTO": ["nombre", "fecha", "folio"],
+    "COMPROBANTE_DOMICILIO": ["domicilio", "cp"],
+    "NSS": ["nss", "nombre"],
+    "DATOS_BANCARIOS": ["clabe", "banco", "titular"],
+    "CONSTANCIA_SITUACION_FISCAL": ["rfc", "nombre", "domicilio"],
+    "UNKNOWN": [],
+}
+
+
+def _has_required_fields(fields: list[dict], required_keys: list[str]) -> bool:
+    for key in required_keys:
+        if not any(field.get("key") == key and field.get("value") for field in fields):
+            return False
+    return True
+
+
 DEFAULT_CRITICAL_FIELDS: dict[str, list[str]] = {
     "INE": ["curp", "nombre", "fecha_nacimiento"],
     "CURP": ["curp", "nombre"],
@@ -152,26 +281,65 @@ async def process_document(file, document_id: str, source: str, options: str | N
             options_data = {}
 
     images, extracted_text = await preprocess(file)
-    ocr_text, ocr_boxes = await run_ocr(images)
-    ocr_engine = "paddleocr" if ocr_text else "none"
-    if extracted_text:
-        if not ocr_text:
-            ocr_text = extracted_text
-            ocr_engine = "text-layer"
-        else:
-            ocr_text = f"{ocr_text}\n{extracted_text}"
-            ocr_engine = "paddleocr+text-layer"
+    ocr_text = ""
+    ocr_boxes = []
+    ocr_engine = "none"
+    doc_type_warning = None
+    fields: list[dict] = []
 
-    if ocr_text:
-        ocr_text = ocr_text.replace("\u00a0", " ").replace("\t", " ")
-    first_image = images[0] if images else None
-    doc_type, doc_confidence = await classify_document(first_image, ocr_text, file.filename)
-    doc_type, doc_type_warning = _maybe_override_doc_type(doc_type, ocr_text, file.filename)
-    if (ocr_text or extracted_text) and doc_type != "UNKNOWN":
-        doc_confidence = max(doc_confidence, 0.85)
-    fields = await extract_fields(doc_type, ocr_text, ocr_boxes, extracted_text, file.filename)
-    fields = await validate_fields(fields)
-    fields = _postprocess_fields(doc_type, fields)
+    use_fastpath = bool(
+        extracted_text
+        and _has_sufficient_text_layer(extracted_text)
+    )
+    if use_fastpath:
+        fast_type, fast_confidence = await classify_document(None, extracted_text, file.filename)
+        fast_type, fast_warning = _maybe_override_doc_type(fast_type, extracted_text, file.filename)
+        if fast_type in settings.text_layer_fastpath_types:
+            candidate_fields = await extract_fields(
+                fast_type,
+                extracted_text,
+                None,
+                extracted_text,
+                file.filename,
+            )
+            candidate_fields = await validate_fields(candidate_fields)
+            candidate_fields = _normalize_fields(fast_type, candidate_fields)
+            candidate_fields = _postprocess_fields(fast_type, candidate_fields)
+            found_required, required_total = _critical_coverage(fast_type, candidate_fields)
+            fastpath_complete = required_total == 0 or found_required == required_total
+            extra_required = FASTPATH_REQUIRED_FIELDS.get(fast_type, [])
+            if extra_required and not _has_required_fields(candidate_fields, extra_required):
+                fastpath_complete = False
+            if fastpath_complete and candidate_fields:
+                ocr_text = extracted_text
+                ocr_engine = "text-layer-fastpath"
+                doc_type = fast_type
+                doc_confidence = max(fast_confidence, 0.85) if fast_type != "UNKNOWN" else fast_confidence
+                doc_type_warning = fast_warning
+                fields = candidate_fields
+
+    if not fields:
+        ocr_text, ocr_boxes = await run_ocr(images)
+        ocr_engine = "paddleocr" if ocr_text else "none"
+        if extracted_text:
+            if not ocr_text:
+                ocr_text = extracted_text
+                ocr_engine = "text-layer"
+            else:
+                ocr_text = f"{ocr_text}\n{extracted_text}"
+                ocr_engine = "paddleocr+text-layer"
+
+        if ocr_text:
+            ocr_text = ocr_text.replace("\u00a0", " ").replace("\t", " ")
+        first_image = images[0] if images else None
+        doc_type, doc_confidence = await classify_document(first_image, ocr_text, file.filename)
+        doc_type, doc_type_warning = _maybe_override_doc_type(doc_type, ocr_text, file.filename)
+        if (ocr_text or extracted_text) and doc_type != "UNKNOWN":
+            doc_confidence = max(doc_confidence, 0.85)
+        fields = await extract_fields(doc_type, ocr_text, ocr_boxes, extracted_text, file.filename)
+        fields = await validate_fields(fields)
+        fields = _normalize_fields(doc_type, fields)
+        fields = _postprocess_fields(doc_type, fields)
     critical_keys = set(CRITICAL_FIELDS.get(doc_type, []))
     for field in fields:
         if field.get("key") in critical_keys and field.get("valid") and field.get("confidence", 0) < 0.8:
@@ -215,10 +383,11 @@ async def process_document(file, document_id: str, source: str, options: str | N
     if missing:
         status = "NEEDS_REVIEW"
 
-    if doc_confidence < 0.8 or invalid_critical:
+    if invalid_critical:
         status = "NEEDS_REVIEW"
-        if invalid_critical:
-            warnings.append(f"Campos críticos inválidos: {', '.join(invalid_critical)}")
+        warnings.append(f"Campos críticos inválidos: {', '.join(invalid_critical)}")
+    elif doc_confidence < 0.8 and not required:
+        status = "NEEDS_REVIEW"
 
     if len(fields) == 0:
         status = "NEEDS_REVIEW"

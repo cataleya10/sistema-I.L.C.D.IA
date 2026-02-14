@@ -6,4 +6,5 @@ public sealed class ProcessingOptions
 
     public int MaxAttempts { get; set; } = 3;
     public int RetryDelaySeconds { get; set; } = 5;
+    public int MaxConcurrentWorkers { get; set; } = 2;
 }

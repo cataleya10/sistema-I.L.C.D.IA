@@ -335,7 +335,8 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
   displayFields: DocumentDetail['fields'] = [];
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private pollAttempts = 0;
-  private readonly maxPollAttempts = 60;
+  private readonly maxPollAttempts = 80;
+  private readonly pollIntervalMs = 1500;
   private pollInFlight = false;
   private previewRequestId = 0;
 
@@ -366,8 +367,7 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
     this.documents.process(this.document.id).subscribe({
       next: () => {
         this.message = 'Procesamiento en cola.';
-        this.load(this.document!.id);
-        this.loadLogs(this.document!.id);
+        this.markDocumentAsProcessing();
         this.startProcessingPoll(this.document!.id);
         this.isProcessing = false;
       },
@@ -390,8 +390,7 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
     this.documents.reprocess(this.document.id).subscribe({
       next: () => {
         this.message = 'Reprocesamiento solicitado.';
-        this.load(this.document!.id);
-        this.loadLogs(this.document!.id);
+        this.markDocumentAsProcessing();
         this.startProcessingPoll(this.document!.id);
         this.isProcessing = false;
       },
@@ -640,7 +639,18 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
           this.stopProcessingPoll();
         }
       });
-    }, 2000);
+    }, this.pollIntervalMs);
+  }
+
+  private markDocumentAsProcessing(): void {
+    if (!this.document) {
+      return;
+    }
+
+    this.document = {
+      ...this.document,
+      status: 'PROCESSING'
+    };
   }
 
   private stopProcessingPoll(): void {

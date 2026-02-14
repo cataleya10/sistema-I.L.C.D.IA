@@ -28,6 +28,18 @@ public sealed class DocumentProcessingWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        var workerCount = Math.Max(1, _options.MaxConcurrentWorkers);
+        var workers = Enumerable.Range(1, workerCount)
+            .Select(index => RunWorkerLoopAsync(index, stoppingToken))
+            .ToArray();
+
+        _logger.LogInformation("Document processing workers started: {WorkerCount}", workerCount);
+
+        await Task.WhenAll(workers);
+    }
+
+    private async Task RunWorkerLoopAsync(int workerId, CancellationToken stoppingToken)
+    {
         while (!stoppingToken.IsCancellationRequested)
         {
             DocumentProcessJob job;
@@ -40,6 +52,7 @@ public sealed class DocumentProcessingWorker : BackgroundService
                 break;
             }
 
+            _logger.LogDebug("Worker {WorkerId} picked document {DocumentId}", workerId, job.DocumentId);
             await ProcessWithRetriesAsync(job, stoppingToken);
         }
     }

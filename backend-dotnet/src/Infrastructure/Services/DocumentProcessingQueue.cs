@@ -11,7 +11,7 @@ public sealed class DocumentProcessingQueue : IProcessingQueue
     {
         _channel = Channel.CreateUnbounded<DocumentProcessJob>(new UnboundedChannelOptions
         {
-            SingleReader = true,
+            SingleReader = false,
             SingleWriter = false
         });
     }

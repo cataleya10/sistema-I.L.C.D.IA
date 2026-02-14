@@ -4,25 +4,48 @@ import io
 import fitz
 from app.core.config import settings
 
+
+def _has_sufficient_text_layer(text: str) -> bool:
+    compact = " ".join((text or "").split())
+    if not compact:
+        return False
+
+    alnum_count = sum(1 for ch in compact if ch.isalnum())
+    word_count = len(compact.split(" "))
+    return (
+        alnum_count >= settings.min_text_layer_chars
+        and word_count >= settings.min_text_layer_words
+    )
+
+
 async def preprocess(file: UploadFile):
     content = await file.read()
 
     if file.content_type == "application/pdf" or file.filename.lower().endswith(".pdf"):
-        images: list[Image.Image] = []
         extracted_parts: list[str] = []
         with fitz.open(stream=content, filetype="pdf") as doc:
             for index, page in enumerate(doc):
                 if index >= settings.max_pages:
                     break
                 extracted_parts.append(page.get_text("text") or "")
-                pix = page.get_pixmap(dpi=400)
+
+        extracted_text = "\n\n".join(part for part in extracted_parts if part)
+        if settings.enable_text_layer_short_circuit and _has_sufficient_text_layer(extracted_text):
+            return [], extracted_text
+
+        images: list[Image.Image] = []
+        with fitz.open(stream=content, filetype="pdf") as doc:
+            for index, page in enumerate(doc):
+                if index >= settings.max_pages:
+                    break
+                pix = page.get_pixmap(dpi=settings.pdf_render_dpi)
                 image = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                 image = ImageOps.autocontrast(image)
                 image = ImageEnhance.Contrast(image.convert("L")).enhance(2.0)
                 image = ImageEnhance.Sharpness(image).enhance(2.0)
                 image = image.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3)).convert("RGB")
                 images.append(image)
-        extracted_text = "\n\n".join(part for part in extracted_parts if part)
+
         return images, extracted_text
 
     image = Image.open(io.BytesIO(content)).convert("RGB")

@@ -59,11 +59,23 @@ class ProcesadorNSS:
         if match_folio:
             self.datos["folio_solicitud"] = match_folio.group(1).strip()
 
-        match_nombre = re.search(r"Nombre o Razon Social[\s\.:]*((?:(?!(?:Curp|RFC)).)+)", texto_limpio, re.IGNORECASE)
+        match_nombre = re.search(
+            r"(?:Nombre(?:\s+del|\s+de la)?\s+(?:Asegurado|Beneficiario|Trabajador|Titular)|Nombre\s+o\s+Razon\s+Social|Nombre)"
+            r"[\s\.:-]*((?:(?!(?:Curp|RFC|NSS|IMSS|Folio|Fecha)).)+)",
+            texto_limpio,
+            re.IGNORECASE,
+        )
 
         if match_nombre:
             nombre_raw = match_nombre.group(1).strip().upper()
-            nombre_raw = nombre_raw.replace("RFC", "").replace("CURP", "").strip()
+            nombre_raw = (
+                nombre_raw
+                .replace("RFC", "")
+                .replace("CURP", "")
+                .replace("NSS", "")
+                .replace("IMSS", "")
+                .strip()
+            )
             nombre_raw = nombre_raw.rstrip(".:,")
             self.datos["nombre"] = nombre_raw
 
