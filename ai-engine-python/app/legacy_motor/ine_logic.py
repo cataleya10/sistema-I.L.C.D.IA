@@ -1,5 +1,5 @@
 import re
-from thefuzz import process, fuzz
+from app.legacy_motor.fuzzy import process, fuzz
 from names_dataset import NameDataset
 
 try:

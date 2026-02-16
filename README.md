@@ -43,6 +43,8 @@ Sistema web empresarial para carga, clasificacion y extraccion de documentos ofi
 - Build staging: `npm run build:staging`
 - Build produccion: `npm run build:prod`
 - Configurar API runtime: editar `frontend-angular/web/public/app-config.js` o usar `powershell -File scripts/set-frontend-api-url.ps1 -ApiUrl "https://tu-api"`
+- Configuracion productiva unificada (frontend + backend): `powershell -File scripts/set-production-config.ps1 -FrontendApiUrl "https://tu-api" -AiBaseUrl "https://tu-ai" -FrontendOrigin "https://tu-frontend" -DbHost "<host>" -DbName "<db>" -DbUser "<user>" -DbPassword "<pass>"`
+- Configuracion productiva sin DB (temporal): `powershell -File scripts/set-production-config.ps1 -FrontendApiUrl "https://tu-api" -AiBaseUrl "https://tu-ai" -FrontendOrigin "https://tu-frontend" -SkipDatabase`
 
 ## Smoke test
 - Ejecutar: `powershell -File scripts/smoke.ps1`
@@ -73,6 +75,12 @@ Ver [docs/contracts.md](docs/contracts.md).
 
 ## Reglas OCR
 Ver [docs/ocr-field-normalization.md](docs/ocr-field-normalization.md).
+
+## Despliegue portable
+- Plantilla de entorno portable: `.env.deploy.example`
+- Checklist local/u otro equipo: [docs/portable-deploy-checklist.md](docs/portable-deploy-checklist.md)
+- Roadmap de mejoras: [docs/improvement-roadmap.md](docs/improvement-roadmap.md)
+- Runbook operativo diario: [docs/operations-runbook.md](docs/operations-runbook.md)
 
 ## Release Checklist
 Ver [docs/release-checklist.md](docs/release-checklist.md).

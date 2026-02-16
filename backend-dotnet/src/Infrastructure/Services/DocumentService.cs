@@ -6,11 +6,13 @@ using Domain.Enums;
 using Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using System.Text.RegularExpressions;
 
 namespace Infrastructure.Services;
 
 public class DocumentService : IDocumentService
 {
+    private static readonly Regex ActaCodeRegex = new("^[A-Z0-9-]{1,12}$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private readonly DocumentDbContext _dbContext;
     private readonly IPythonAiClient _pythonClient;
     private readonly IFileStorage _fileStorage;
@@ -371,6 +373,11 @@ public class DocumentService : IDocumentService
         }
 
         var needsReview = response.Status == DocumentStatus.NeedsReview;
+        if (needsReview && ShouldForceReadyForActa(document.DocumentType, document.Fields))
+        {
+            NormalizeActaCriticalFlags(document.Fields);
+            needsReview = false;
+        }
         if (!needsReview && (response.Fields is null || response.Fields.Count == 0))
         {
             needsReview = true;
@@ -594,5 +601,85 @@ public class DocumentService : IDocumentService
             Array.Empty<string>(),
             new DocumentProcessMeta(0, "pending", "", "", 0)
         );
+    }
+
+    private static bool ShouldForceReadyForActa(DocumentType documentType, IReadOnlyList<DocumentField> fields)
+    {
+        if (documentType != DocumentType.ActaNacimiento)
+        {
+            return false;
+        }
+
+        var hasNombre = HasEffectivelyValidField(fields, "nombre", null);
+        var hasFechaNac = HasEffectivelyValidField(fields, "fecha_nacimiento", static value =>
+            Regex.IsMatch(value, @"^\d{2}[/-]\d{2}[/-]\d{4}$"));
+        var hasFolio = HasEffectivelyValidField(fields, "folio", static value =>
+            ActaCodeRegex.IsMatch(value));
+        var hasNumeroActa = HasEffectivelyValidField(fields, "numero_acta", static value =>
+            ActaCodeRegex.IsMatch(value));
+
+        return hasNombre && hasFechaNac && hasFolio && hasNumeroActa;
+    }
+
+    private static bool HasEffectivelyValidField(
+        IReadOnlyList<DocumentField> fields,
+        string key,
+        Func<string, bool>? semanticValidator)
+    {
+        foreach (var field in fields)
+        {
+            if (!string.Equals(field.FieldKey, key, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var value = string.IsNullOrWhiteSpace(field.CorrectedValue)
+                ? field.FieldValue
+                : field.CorrectedValue;
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            if (field.IsValid)
+            {
+                return true;
+            }
+
+            if (semanticValidator is not null && semanticValidator(value.Trim()))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void NormalizeActaCriticalFlags(IReadOnlyList<DocumentField> fields)
+    {
+        foreach (var field in fields)
+        {
+            if (!string.Equals(field.FieldKey, "folio", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(field.FieldKey, "numero_acta", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var value = string.IsNullOrWhiteSpace(field.CorrectedValue)
+                ? field.FieldValue
+                : field.CorrectedValue;
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            if (!ActaCodeRegex.IsMatch(value.Trim()))
+            {
+                continue;
+            }
+
+            field.IsValid = true;
+            field.ValidationErrors = Array.Empty<string>();
+        }
     }
 }

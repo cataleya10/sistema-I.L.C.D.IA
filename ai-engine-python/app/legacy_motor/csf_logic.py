@@ -1,4 +1,4 @@
-from thefuzz import fuzz
+from app.legacy_motor.fuzzy import fuzz
 import re
 
 

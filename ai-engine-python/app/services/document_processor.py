@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 import time
 from app.schemas.process import ProcessResponse, DocumentField, ProcessMeta
@@ -83,7 +84,7 @@ def _critical_coverage(doc_type: str, fields: list[dict]) -> tuple[int, int]:
         return 0, 0
     found_required = 0
     for key in required:
-        if any(field.get("key") == key and field.get("value") for field in fields):
+        if _select_required_field(doc_type, key, fields):
             found_required += 1
     return found_required, len(required)
 
@@ -212,6 +213,82 @@ if _critical_path.exists():
             CRITICAL_FIELDS = loaded
     except Exception:
         CRITICAL_FIELDS = DEFAULT_CRITICAL_FIELDS.copy()
+
+CRITICAL_KEY_ALIASES: dict[str, dict[str, list[str]]] = {
+    "ACTA_NACIMIENTO": {
+        "fecha_nacimiento": ["fecha_nacimiento", "fecha"],
+    },
+    "CURP": {
+        "nombre": ["nombre", "nombres", "nombre_completo"],
+    },
+    "NSS": {
+        "nombre": ["nombre", "nombres", "nombre_beneficiario", "nombre_asegurado", "titular"],
+    },
+    "DATOS_BANCARIOS": {
+        "titular": ["titular", "nombre", "nombre_completo"],
+    },
+    "CONSTANCIA_SITUACION_FISCAL": {
+        "nombre": ["nombre", "nombre_completo", "razon_social", "denominacion_razon_social"],
+    },
+}
+
+
+def _critical_aliases(doc_type: str, key: str) -> list[str]:
+    aliases_by_type = CRITICAL_KEY_ALIASES.get(doc_type, {})
+    aliases = aliases_by_type.get(key, [key])
+    return [_normalize_key_name(alias) for alias in aliases if alias]
+
+
+def _has_field_value(field: dict) -> bool:
+    value = field.get("corrected_value")
+    if value in {None, ""}:
+        value = field.get("value")
+    if isinstance(value, str):
+        value = value.strip()
+    return value not in {None, ""}
+
+
+def _field_value(field: dict):
+    value = field.get("corrected_value")
+    if value in {None, ""}:
+        value = field.get("value")
+    if isinstance(value, str):
+        return value.strip()
+    return value
+
+
+def _is_effectively_valid(doc_type: str, required_key: str, field: dict) -> bool:
+    if bool(field.get("valid", True)):
+        return True
+
+    value = _field_value(field)
+    if value in {None, ""}:
+        return False
+
+    text = str(value).upper()
+    if doc_type == "ACTA_NACIMIENTO" and required_key in {"folio", "numero_acta"}:
+        return bool(re.fullmatch(r"[A-Z0-9-]{1,12}", text))
+
+    return False
+
+
+def _select_required_field(doc_type: str, required_key: str, fields: list[dict]) -> dict | None:
+    aliases = set(_critical_aliases(doc_type, required_key))
+    candidates = []
+    for field in fields:
+        normalized = _normalize_key_name(str(field.get("key", "") or ""))
+        if normalized not in aliases:
+            continue
+        if not _has_field_value(field):
+            continue
+        confidence = float(field.get("confidence", 0) or 0)
+        candidates.append((_is_effectively_valid(doc_type, required_key, field), confidence, field))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return candidates[0][2]
 
 _LOW_CONF_DROP_BY_TYPE = {
     "INE": {
@@ -348,8 +425,8 @@ async def process_document(file, document_id: str, source: str, options: str | N
     required = CRITICAL_FIELDS.get(doc_type, [])
     invalid_critical = []
     for key in required:
-        field = next((f for f in fields if f["key"] == key), None)
-        if not field or not field.get("valid", True):
+        field = _select_required_field(doc_type, key, fields)
+        if not field or not _is_effectively_valid(doc_type, key, field):
             invalid_critical.append(key)
 
     processing_ms = int((time.time() - start) * 1000)
@@ -366,7 +443,7 @@ async def process_document(file, document_id: str, source: str, options: str | N
     required = CRITICAL_FIELDS.get(doc_type, [])
     found_required = 0
     for key in required:
-        if any(field.get("key") == key and field.get("value") for field in fields):
+        if _select_required_field(doc_type, key, fields):
             found_required += 1
 
     missing: list[str] = []
@@ -374,7 +451,7 @@ async def process_document(file, document_id: str, source: str, options: str | N
         coverage = found_required / max(1, len(required))
         if coverage < 1:
             doc_confidence = min(doc_confidence, 0.75)
-            missing = [key for key in required if not any(field.get("key") == key and field.get("value") for field in fields)]
+            missing = [key for key in required if not _select_required_field(doc_type, key, fields)]
             if missing:
                 warnings.append(f"Campos críticos faltantes: {', '.join(missing)}")
             else:

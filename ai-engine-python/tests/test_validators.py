@@ -57,6 +57,8 @@ class ValidatorsTests(unittest.TestCase):
     def test_validate_folio(self):
         ok, _ = validators.validate_folio("ABCD-1234")
         self.assertTrue(ok)
+        short_ok, _ = validators.validate_folio("437")
+        self.assertTrue(short_ok)
         bad, _ = validators.validate_folio("A1")
         self.assertFalse(bad)
 
