@@ -1,5 +1,10 @@
 param(
-    [switch]$OpenDiagnostics
+    [switch]$OpenDiagnostics,
+    [ValidateSet("static", "dev")]
+    [string]$FrontendMode = "static",
+    [int]$AiTimeoutSeconds = 30,
+    [int]$ApiTimeoutSeconds = 30,
+    [int]$FrontendTimeoutSeconds = 15
 )
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -62,7 +67,7 @@ function Invoke-AiPreflight {
     Write-Host "Running AI preflight checks..." -ForegroundColor Cyan
     Push-Location (Join-Path $rootPath "ai-engine-python")
     try {
-        & py -3 -m py_compile "app/pipelines/extract.py"
+        & py -3 -c "import ast, pathlib; ast.parse(pathlib.Path('app/pipelines/extract.py').read_text(encoding='utf-8-sig')); print('extract.py syntax ok')"
         if ($LASTEXITCODE -ne 0) {
             throw "Python compile check failed."
         }
@@ -88,7 +93,9 @@ Write-Host "Starting IA Engine..." -ForegroundColor Cyan
 $aiLog = Join-Path $logs "ai-engine.log"
 $aiErr = Join-Path $logs "ai-engine.err.log"
 $ai = Start-Process powershell -PassThru -ArgumentList @(
-    '-NoExit',
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
     '-Command',
     "Set-Location -LiteralPath '$root\ai-engine-python'; . '$root\\load-env.ps1'; uvicorn app.main:app --host 0.0.0.0 --port 8000"
 ) -RedirectStandardOutput $aiLog -RedirectStandardError $aiErr
@@ -97,7 +104,9 @@ Write-Host "Starting Backend API..." -ForegroundColor Cyan
 $apiLog = Join-Path $logs "backend-api.log"
 $apiErr = Join-Path $logs "backend-api.err.log"
 $api = Start-Process powershell -PassThru -ArgumentList @(
-    '-NoExit',
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
     '-Command',
     "Set-Location -LiteralPath '$root\backend-dotnet\src\Api'; `$env:ASPNETCORE_ENVIRONMENT='Development'; . '$root\\load-env.ps1'; dotnet run --launch-profile http"
 ) -RedirectStandardOutput $apiLog -RedirectStandardError $apiErr
@@ -105,20 +114,58 @@ $api = Start-Process powershell -PassThru -ArgumentList @(
 Write-Host "Starting Frontend (port $frontendPort)..." -ForegroundColor Cyan
 $feLog = Join-Path $logs "frontend.log"
 $feErr = Join-Path $logs "frontend.err.log"
-$fe = Start-Process powershell -PassThru -ArgumentList @('-NoExit', '-Command', "Set-Location -LiteralPath '$root\frontend-angular\web'; npm start -- --port $frontendPort") -RedirectStandardOutput $feLog -RedirectStandardError $feErr
+$fe = $null
+$frontendRuntimeMode = "none"
+if ($FrontendMode -eq "dev") {
+    $fe = Start-Process powershell -PassThru -ArgumentList @(
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+        "Set-Location -LiteralPath '$root\frontend-angular\web'; npm start -- --port $frontendPort"
+    ) -RedirectStandardOutput $feLog -RedirectStandardError $feErr
+    $frontendRuntimeMode = "dev-server"
+} else {
+    $distPath = Join-Path $root "frontend-angular\web\dist\web\browser"
+    if (Test-Path $distPath) {
+        Write-Host "Using static frontend from dist." -ForegroundColor Yellow
+        $fe = Start-Process powershell -PassThru -ArgumentList @(
+            '-NoProfile',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-Command',
+            "py -3 -m http.server $frontendPort --bind 127.0.0.1 --directory '$distPath'"
+        ) -RedirectStandardOutput $feLog -RedirectStandardError $feErr
+        $frontendRuntimeMode = "static-fallback"
+    } else {
+        Write-Host "Frontend skipped: static mode selected but dist build was not found." -ForegroundColor Yellow
+    }
+}
 
 $pidFile = Join-Path $root "start-all.pids.json"
 @{
     ai = $ai.Id
     api = $api.Id
-    frontend = $fe.Id
+    frontend = if ($fe) { $fe.Id } else { $null }
     frontendPort = $frontendPort
+    frontendMode = $frontendRuntimeMode
 } | ConvertTo-Json | Set-Content $pidFile
 
 Write-Host "Waiting for services..." -ForegroundColor Cyan
-$aiReady = Wait-ForUrl -url "http://localhost:8000/docs" -timeoutSeconds 90
-$apiReady = Wait-ForUrl -url "http://localhost:5000/swagger" -timeoutSeconds 90
-$feReady = Wait-ForUrl -url "http://localhost:$frontendPort" -timeoutSeconds 120
+$aiReady = Wait-ForUrl -url "http://localhost:8000/docs" -timeoutSeconds $AiTimeoutSeconds
+$apiReady = Wait-ForUrl -url "http://localhost:5000/swagger" -timeoutSeconds $ApiTimeoutSeconds
+$feReady = $false
+$frontendExitedEarly = $false
+if ($fe) {
+    Start-Sleep -Milliseconds 800
+    $frontendRunning = $null -ne (Get-Process -Id $fe.Id -ErrorAction SilentlyContinue)
+    if ($frontendRunning) {
+        $feReady = Wait-ForUrl -url "http://localhost:$frontendPort" -timeoutSeconds $FrontendTimeoutSeconds
+    } else {
+        $frontendExitedEarly = $true
+        Write-Host "Frontend process exited immediately. Review logs/frontend.err.log." -ForegroundColor Yellow
+    }
+}
 
 Write-Host "Frontend URL: http://localhost:$frontendPort" -ForegroundColor Green
 if ($OpenDiagnostics -and $aiReady) { Start-Process "http://localhost:8000/docs" }
@@ -127,4 +174,4 @@ if ($feReady) { Start-Process "http://localhost:$frontendPort" }
 
 if (-not $aiReady) { Write-Host "IA Engine no responde a tiempo." -ForegroundColor Yellow }
 if (-not $apiReady) { Write-Host "Backend API no responde a tiempo." -ForegroundColor Yellow }
-if (-not $feReady) { Write-Host "Frontend no responde a tiempo." -ForegroundColor Yellow }
+if ($fe -and -not $feReady -and -not $frontendExitedEarly) { Write-Host "Frontend no responde a tiempo." -ForegroundColor Yellow }

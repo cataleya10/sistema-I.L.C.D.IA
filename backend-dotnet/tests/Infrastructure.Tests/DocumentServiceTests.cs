@@ -66,7 +66,7 @@ public class DocumentServiceTests
     public async Task ProcessNowAsync_WhenReadyResponse_PersistsFieldsAndMarksReady()
     {
         using var db = CreateDbContext();
-        var pythonClient = new FakePythonAiClient((documentId, _, _) =>
+        var pythonClient = new FakePythonAiClient((documentId, _, _, _) =>
             Task.FromResult(new DocumentProcessResponse(
                 documentId,
                 DocumentStatus.Ready,
@@ -177,7 +177,7 @@ public class DocumentServiceTests
     {
         return new DocumentService(
             dbContext,
-            pythonClient ?? new FakePythonAiClient((_, _, _) => throw new NotImplementedException()),
+            pythonClient ?? new FakePythonAiClient((_, _, _, _) => throw new NotImplementedException()),
             fileStorage ?? new FakeFileStorage(),
             queue ?? new FakeProcessingQueue(),
             tracker ?? new FakeProcessingTracker(),
@@ -186,15 +186,19 @@ public class DocumentServiceTests
 
     private sealed class FakePythonAiClient : IPythonAiClient
     {
-        private readonly Func<Guid, string, CancellationToken, Task<DocumentProcessResponse>> _handler;
+        private readonly Func<Guid, string, string?, CancellationToken, Task<DocumentProcessResponse>> _handler;
 
-        public FakePythonAiClient(Func<Guid, string, CancellationToken, Task<DocumentProcessResponse>> handler)
+        public FakePythonAiClient(Func<Guid, string, string?, CancellationToken, Task<DocumentProcessResponse>> handler)
         {
             _handler = handler;
         }
 
-        public Task<DocumentProcessResponse> ProcessDocumentAsync(Guid documentId, string filePath, CancellationToken cancellationToken)
-            => _handler(documentId, filePath, cancellationToken);
+        public Task<DocumentProcessResponse> ProcessDocumentAsync(
+            Guid documentId,
+            string filePath,
+            string? originalFilename,
+            CancellationToken cancellationToken)
+            => _handler(documentId, filePath, originalFilename, cancellationToken);
     }
 
     private sealed class FakeProcessingQueue : IProcessingQueue

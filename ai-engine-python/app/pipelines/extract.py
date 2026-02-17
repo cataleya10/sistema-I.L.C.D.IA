@@ -14,6 +14,9 @@ CLABE_PATTERN = re.compile(r"\b\d{18}\b")
 ACCOUNT_PATTERN = re.compile(r"\b\d{10,16}\b")
 AMOUNT_PATTERN = re.compile(r"\b\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})\b")
 DATE_PATTERN = re.compile(r"\b\d{2}[/-]\d{2}[/-]\d{4}\b")
+DATE_FLEX_PATTERN = re.compile(
+    r"\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}(?:\s+|[-/])[A-Z]{3,9}(?:\s+|[-/])\d{2,4})\b"
+)
 NAME_PATTERN = re.compile(r"\b[A-Z]{2,}(?:\s+[A-Z]{2,}){1,4}\b")
 RFC_WITH_HOMOCLAVE = re.compile(r"\b[A-Z&]{3,4}\d{6}[A-Z0-9]{3}\b")
 CP_PATTERN = re.compile(r"\b\d{5}\b")
@@ -102,7 +105,9 @@ def _normalize_legacy_value(key: str, value: str) -> str:
         return _normalize_numeric_field(value)
     if key in {"fecha_nacimiento", "fecha_emision", "fecha_documento"}:
         return _normalize_date_value(value)
-    if key in {"domicilio", "lugar_nacimiento", "entidad_registro", "municipio_registro", "banco"}:
+    if key == "domicilio":
+        return _clean_address_value(value)
+    if key in {"lugar_nacimiento", "entidad_registro", "municipio_registro", "banco"}:
         return _normalize_address(value)
     if key in {"nombre", "nombres", "apellido_paterno", "apellido_materno", "primer_apellido", "segundo_apellido", "titular"}:
         return _normalize_name(value)
@@ -1262,7 +1267,7 @@ def _extract_service_from_boxes(ocr_boxes):
         label_map.update(provider_labels[provider])
 
     value_regex_map = {
-        "fecha_limite": DATE_PATTERN,
+        "fecha_limite": DATE_FLEX_PATTERN,
         "fecha_corte": DATE_PATTERN,
         "total": AMOUNT_PATTERN,
     }
@@ -1531,10 +1536,93 @@ def _normalize_sex(value: str) -> str:
 
 
 def _normalize_date_value(value: str) -> str:
-    value = value.strip()
-    value = value.replace("-", "/")
-    match = re.search(r"(\d{2}[/-]\d{2}[/-]\d{4})", value)
-    return match.group(1).replace("-", "/") if match else value
+    raw = _normalize_text(str(value or ""))
+    if not raw:
+        return ""
+    upper = (
+        raw.upper()
+        .replace(".", " ")
+        .replace(",", " ")
+        .replace("–", "-")
+        .replace("—", "-")
+        .replace("−", "-")
+    )
+
+    def _fix_ocr_digits(token: str) -> str:
+        return token.upper().replace("O", "0").replace("I", "1").replace("L", "1")
+
+    numeric = re.search(
+        r"([0-9OIL]{1,2})\s*(?:[/-]|[^0-9A-Z]+)\s*([0-9OIL]{1,2})\s*(?:[/-]|[^0-9A-Z]+)\s*([0-9OIL]{2,4})",
+        upper,
+    )
+    if numeric:
+        day, month, year = numeric.groups()
+        day_i = int(_fix_ocr_digits(day))
+        month_i = int(_fix_ocr_digits(month))
+        year_i = int(_fix_ocr_digits(year))
+        if len(year) == 2:
+            year_i = 2000 + year_i
+        if 1 <= day_i <= 31 and 1 <= month_i <= 12:
+            return f"{day_i:02d}/{month_i:02d}/{year_i:04d}"
+
+    month_map = {
+        "ENE": "01",
+        "FEB": "02",
+        "MAR": "03",
+        "ABR": "04",
+        "MAY": "05",
+        "JUN": "06",
+        "JUL": "07",
+        "AGO": "08",
+        "SEP": "09",
+        "SET": "09",
+        "OCT": "10",
+        "NOV": "11",
+        "DIC": "12",
+        "JAN": "01",
+        "APR": "04",
+        "AUG": "08",
+        "DEC": "12",
+    }
+    textual = re.search(
+        r"([0-9OIL]{1,2})\s*(?:[-/]|[^0-9A-Z]+)\s*([A-Z]{3,9})\s*(?:[-/]|[^0-9A-Z]+)\s*([0-9OIL]{2,4})",
+        upper,
+    )
+    if textual:
+        day, month_token, year = textual.groups()
+        month = month_map.get(month_token[:3])
+        if month:
+            day_i = int(_fix_ocr_digits(day))
+            year_i = int(_fix_ocr_digits(year))
+            if len(year) == 2:
+                year_i = 2000 + year_i
+            if 1 <= day_i <= 31:
+                return f"{day_i:02d}/{month}/{year_i:04d}"
+
+    return raw
+
+
+def _extract_due_date_from_text(value: str) -> str | None:
+    text = _normalize_text(str(value or ""))
+    if not text:
+        return None
+    upper = text.upper()
+    due_markers = ("PAGAR ANTES DE", "FECHA LIMITE", "LIMITE DE PAGO", "VENCIMIENTO", "VENCE")
+    compact = re.sub(r"\s+", "", upper)
+    marker_hit = any(marker in upper for marker in due_markers) or any(
+        marker.replace(" ", "") in compact for marker in due_markers
+    )
+    if not marker_hit:
+        return None
+    date_match = re.search(
+        r"([0-9OIL]{1,2}\s*(?:[-/]|[^0-9A-Z]+)\s*[A-Z]{3,9}\s*(?:[-/]|[^0-9A-Z]+)\s*[0-9OIL]{2,4}|[0-9OIL]{1,2}\s*(?:[/-]|[^0-9A-Z]+)\s*[0-9OIL]{1,2}\s*(?:[/-]|[^0-9A-Z]+)\s*[0-9OIL]{2,4})",
+        upper.replace("–", "-").replace("—", "-").replace("−", "-"),
+    )
+    candidate = date_match.group(1) if date_match else upper
+    normalized = _normalize_date_value(candidate)
+    if re.fullmatch(r"\d{2}/\d{2}/\d{4}", normalized):
+        return normalized
+    return None
 
 
 def _normalize_alnum(value: str) -> str:
@@ -2009,6 +2097,16 @@ def _clean_address_value(value: str) -> str:
     if not value:
         return value
     upper = _normalize_address(value)
+    upper = re.sub(r"\bCFE\s+COMISION\s+FEDERAL\s+DE\s+ELECTRICIDAD\b", " ", upper)
+    upper = re.sub(r"\bCOMISION\s+FEDERAL\s+DE\s+ELECTRICIDAD\b", " ", upper)
+    upper = re.sub(r"\$\s*\d{1,5}(?:[.,]\d{2})?(?:\s+\d{1,3})*", " ", upper)
+    # Remove leading payment/amount fragments that OCR sometimes merges into CFE address lines.
+    upper = re.sub(r"^\s*\$\s*\d{1,5}(?:[.,]\d{2})?(?:\s+\d{1,3})*\s+", "", upper)
+    upper = re.sub(
+        r"^\s*\d{2,5}\s+\d{1,3}\s+(?=(?:DN\.?|DEPTO|DEPARTAMENTO|CALLE|CLL|AV|COL|BENITO|MZ|LT|NO\.?|NUM|KM)\b)",
+        "",
+        upper,
+    )
     upper = upper.replace("DOMICILIO", " ")
     upper = re.sub(r"\bAV(?=[A-Z])", "AV ", upper)
     upper = re.sub(r"\bFCP\b", "CP", upper)
@@ -2053,6 +2151,10 @@ def _clean_address_value(value: str) -> str:
     vowels = set("AEIOU")
     tokens = []
     for tok in upper.split():
+        if tok in {"$", "MXN", "M.N.", "M.N", "MN"}:
+            continue
+        if not re.search(r"[A-Z0-9/]", tok):
+            continue
         if tok in noise:
             continue
         if tok in allowed_keywords:
@@ -2217,7 +2319,9 @@ def _normalize_field_value_for_contract(key: str, value: str) -> str:
         return _normalize_sex(raw)
     if key == "lugar_nacimiento":
         return _clean_acta_lugar_nacimiento(raw)
-    if key in {"domicilio", "entidad_registro", "municipio_registro", "banco", "estado", "ciudad", "proveedor"}:
+    if key == "domicilio":
+        return _clean_address_value(raw)
+    if key in {"entidad_registro", "municipio_registro", "banco", "estado", "ciudad", "proveedor"}:
         return _normalize_address(raw)
     return _normalize_text(raw)
 
@@ -3094,7 +3198,13 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
             if "medidor" in svc_values:
                 fields.append(_make_field("medidor", "Medidor", _normalize_alnum(svc_values["medidor"]["value"]), ocr_boxes, confidence=0.7))
             if "cliente" in svc_values:
-                fields.append(_make_field("cliente", "Cliente", _normalize_name(svc_values["cliente"]["value"]), ocr_boxes, confidence=0.7))
+                cliente_raw = str(svc_values["cliente"]["value"])
+                due_date = _extract_due_date_from_text(cliente_raw)
+                if due_date:
+                    if not any(f.get("key") == "fecha_limite" and f.get("value") for f in fields):
+                        fields.append(_make_field("fecha_limite", "Fecha limite", due_date, ocr_boxes, confidence=0.84))
+                else:
+                    fields.append(_make_field("cliente", "Cliente", _normalize_name(cliente_raw), ocr_boxes, confidence=0.7))
             if "titular" in svc_values:
                 candidate = _normalize_name(svc_values["titular"]["value"])
                 provider_noise = [
@@ -3902,6 +4012,40 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                 if not CLABE_PATTERN.fullmatch(normalized):
                     continue
             fields.append(_make_field(key, label, normalized, ocr_boxes, confidence=0.85))
+
+    if document_type == "COMPROBANTE_DOMICILIO":
+        if telmex_in_text and not any(f.get("key") == "fecha_limite" and f.get("value") for f in fields):
+            limit_match = re.search(
+                r"(?:PAGAR\s*ANTES\s*DE|FECHA\s*LIMITE(?:\s*DE\s*PAGO)?|VENCIMIENTO|VENCE)\D*([0-9OIL]{1,2}\s*(?:[-/]|[^0-9A-Z]+)\s*[A-Z]{3,9}\s*(?:[-/]|[^0-9A-Z]+)\s*[0-9OIL]{2,4}|[0-9OIL]{1,2}\s*(?:[/-]|[^0-9A-Z]+)\s*[0-9OIL]{1,2}\s*(?:[/-]|[^0-9A-Z]+)\s*[0-9OIL]{2,4})",
+                full_text.replace("–", "-").replace("—", "-").replace("−", "-"),
+            )
+            if limit_match:
+                normalized_limit = _normalize_date_value(limit_match.group(1))
+                if re.fullmatch(r"\d{2}/\d{2}/\d{4}", normalized_limit):
+                    fields.append(_make_field("fecha_limite", "Fecha limite", normalized_limit, ocr_boxes, confidence=0.88))
+
+        normalized_fields = []
+        recovered_due_date = None
+        for field in fields:
+            if str(field.get("key", "")) != "cliente":
+                normalized_fields.append(field)
+                continue
+            cliente_value = str(field.get("value", ""))
+            due_date = _extract_due_date_from_text(cliente_value)
+            if not due_date:
+                cliente_norm = _normalize_text(cliente_value).upper()
+                if (
+                    any(token in cliente_norm for token in ("NUMERO TELEFONICO", "TELEFONO", "REFERENCIA", "NO DE CUENTA", "CUENTA"))
+                    or sum(1 for ch in cliente_norm if ch.isdigit()) >= 8
+                ):
+                    continue
+                normalized_fields.append(field)
+                continue
+            if not recovered_due_date:
+                recovered_due_date = due_date
+        fields = normalized_fields
+        if recovered_due_date and not any(f.get("key") == "fecha_limite" and f.get("value") for f in fields):
+            fields.append(_make_field("fecha_limite", "Fecha limite", recovered_due_date, ocr_boxes, confidence=0.84))
 
     if base_text:
         snippet = base_text.strip()

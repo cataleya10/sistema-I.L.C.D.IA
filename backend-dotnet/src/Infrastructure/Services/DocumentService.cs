@@ -301,12 +301,16 @@ public class DocumentService : IDocumentService
             {
                 Id = Guid.NewGuid(),
                 DocumentId = document.Id,
-                Stage = "PYTHON",
+                Stage = "ENGINE",
                 Level = "INFO",
-                Message = "Enviando a motor IA."
+                Message = "Enviando a motor de extraccion."
             });
             await _dbContext.SaveChangesAsync(cancellationToken);
-            response = await _pythonClient.ProcessDocumentAsync(document.Id, document.FilePath, cancellationToken);
+            response = await _pythonClient.ProcessDocumentAsync(
+                document.Id,
+                document.FilePath,
+                document.OriginalFilename,
+                cancellationToken);
         }
         catch (Exception ex)
         {
@@ -315,7 +319,7 @@ public class DocumentService : IDocumentService
             {
                 Id = Guid.NewGuid(),
                 DocumentId = document.Id,
-                Stage = "PYTHON",
+                Stage = "ENGINE",
                 Level = "ERROR",
                 Message = ex.Message
             });
@@ -338,7 +342,7 @@ public class DocumentService : IDocumentService
                 {
                     Id = Guid.NewGuid(),
                     DocumentId = document.Id,
-                    Stage = "PYTHON",
+                    Stage = "ENGINE",
                     Level = "WARN",
                     Message = warning
                 });
@@ -373,9 +377,9 @@ public class DocumentService : IDocumentService
         }
 
         var needsReview = response.Status == DocumentStatus.NeedsReview;
-        if (needsReview && ShouldForceReadyForActa(document.DocumentType, document.Fields))
+        if (needsReview && ShouldForceReadyForActa(document.DocumentType, document.Fields.ToList()))
         {
-            NormalizeActaCriticalFlags(document.Fields);
+            NormalizeActaCriticalFlags(document.Fields.ToList());
             needsReview = false;
         }
         if (!needsReview && (response.Fields is null || response.Fields.Count == 0))
@@ -419,8 +423,16 @@ public class DocumentService : IDocumentService
                 continue;
             }
 
+            var sanitized = (update.Value ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(sanitized))
+            {
+                continue;
+            }
+
             field.Corrected = true;
-            field.CorrectedValue = update.Value;
+            field.CorrectedValue = sanitized;
+            // Keep the base value aligned so every consumer (UI/export/integration) sees the corrected data.
+            field.FieldValue = sanitized;
             field.CorrectedBy = request.ReviewedBy;
             field.CorrectedAt = DateTime.UtcNow;
         }

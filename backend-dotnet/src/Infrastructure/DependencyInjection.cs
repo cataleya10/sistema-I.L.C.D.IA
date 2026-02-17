@@ -36,7 +36,23 @@ public static class DependencyInjection
         services.AddSingleton<IProcessingQueue, DocumentProcessingQueue>();
         services.AddSingleton<IProcessingTracker, ProcessingTracker>();
         services.AddScoped<IDocumentService, DocumentService>();
-        services.AddHttpClient<IPythonAiClient, PythonAiClient>();
+        services.AddScoped<CSharpAiClient>();
+        services.AddHttpClient<PythonAiClient>();
+
+        var aiProvider = configuration.GetValue<string>("AiEngine:Provider") ?? "Python";
+        if (string.Equals(aiProvider, "CSharp", StringComparison.OrdinalIgnoreCase))
+        {
+            services.AddScoped<IPythonAiClient>(sp => sp.GetRequiredService<CSharpAiClient>());
+        }
+        else if (string.Equals(aiProvider, "Hybrid", StringComparison.OrdinalIgnoreCase))
+        {
+            services.AddScoped<IPythonAiClient, HybridAiClient>();
+        }
+        else
+        {
+            services.AddScoped<IPythonAiClient>(sp => sp.GetRequiredService<PythonAiClient>());
+        }
+
         services.AddSingleton<IFileStorage, LocalFileStorage>();
 
         return services;

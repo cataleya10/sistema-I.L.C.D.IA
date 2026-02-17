@@ -1,5 +1,5 @@
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
+﻿using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Application.DTOs;
@@ -11,6 +11,8 @@ namespace Infrastructure.Clients;
 
 public class PythonAiClient : IPythonAiClient
 {
+    private const string OcrOnlyOptionsJson = "{\"return_ocr_text\": true}";
+
     private readonly HttpClient _httpClient;
     private readonly JsonSerializerOptions _jsonOptions;
     private readonly string? _apiKey;
@@ -34,7 +36,48 @@ public class PythonAiClient : IPythonAiClient
         _jsonOptions.Converters.Add(new JsonStringEnumConverter(new UpperSnakeCaseNamingPolicy()));
     }
 
-    public async Task<DocumentProcessResponse> ProcessDocumentAsync(Guid documentId, string filePath, CancellationToken cancellationToken)
+    public async Task<DocumentProcessResponse> ProcessDocumentAsync(
+        Guid documentId,
+        string filePath,
+        string? originalFilename,
+        CancellationToken cancellationToken)
+    {
+        var payload = await SendProcessRequestAsync(
+            documentId,
+            filePath,
+            originalFilename,
+            null,
+            cancellationToken);
+
+        return payload.Response;
+    }
+
+    public async Task<PythonOcrResult> ExtractOcrAsync(
+        Guid documentId,
+        string filePath,
+        string? originalFilename,
+        CancellationToken cancellationToken)
+    {
+        var payload = await SendProcessRequestAsync(
+            documentId,
+            filePath,
+            originalFilename,
+            OcrOnlyOptionsJson,
+            cancellationToken);
+
+        return new PythonOcrResult(
+            payload.OcrText,
+            payload.Response.Meta.PagesProcessed,
+            payload.Response.Meta.ProcessingMs,
+            payload.Response.Meta.OcrEngine);
+    }
+
+    private async Task<PythonProcessPayload> SendProcessRequestAsync(
+        Guid documentId,
+        string filePath,
+        string? originalFilename,
+        string? optionsJson,
+        CancellationToken cancellationToken)
     {
         await using var fileStream = File.OpenRead(filePath);
         using var content = new MultipartFormDataContent();
@@ -43,6 +86,15 @@ public class PythonAiClient : IPythonAiClient
         content.Add(fileContent, "file", Path.GetFileName(filePath));
         content.Add(new StringContent(documentId.ToString()), "document_id");
         content.Add(new StringContent("web"), "source");
+        if (!string.IsNullOrWhiteSpace(originalFilename))
+        {
+            content.Add(new StringContent(originalFilename), "original_filename");
+        }
+
+        if (!string.IsNullOrWhiteSpace(optionsJson))
+        {
+            content.Add(new StringContent(optionsJson, Encoding.UTF8, "application/json"), "options");
+        }
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/process-document")
         {
@@ -57,12 +109,28 @@ public class PythonAiClient : IPythonAiClient
         using var response = await _httpClient.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
 
-        var result = await response.Content.ReadFromJsonAsync<DocumentProcessResponse>(_jsonOptions, cancellationToken);
+        var raw = await response.Content.ReadAsStringAsync(cancellationToken);
+        var result = JsonSerializer.Deserialize<DocumentProcessResponse>(raw, _jsonOptions);
         if (result is null)
         {
-            throw new InvalidOperationException("La respuesta del motor IA es inválida.");
+            throw new InvalidOperationException("La respuesta del motor IA es invalida.");
         }
 
-        return result;
+        string? ocrText = null;
+        using var json = JsonDocument.Parse(raw);
+        if (json.RootElement.TryGetProperty("ocr_text", out var ocrElement) && ocrElement.ValueKind == JsonValueKind.String)
+        {
+            ocrText = ocrElement.GetString();
+        }
+
+        return new PythonProcessPayload(result, ocrText);
     }
+
+    private sealed record PythonProcessPayload(DocumentProcessResponse Response, string? OcrText);
 }
+
+public sealed record PythonOcrResult(
+    string? OcrText,
+    int PagesProcessed,
+    long ProcessingMs,
+    string OcrEngine);

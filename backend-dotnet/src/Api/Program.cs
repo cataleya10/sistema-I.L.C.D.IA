@@ -18,6 +18,9 @@ using System.Text.Json.Serialization;
 var builder = WebApplication.CreateBuilder(args);
 
 var logPath = builder.Configuration.GetValue<string>("Logging:FilePath") ?? "logs/api.log";
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.AddDebug();
 builder.Logging.AddProvider(new SimpleFileLoggerProvider(logPath));
 
 builder.Services
@@ -202,6 +205,8 @@ var jwtSigningKey = app.Configuration.GetValue<string>("Jwt:SigningKey") ?? stri
 var weakJwtKey = string.IsNullOrWhiteSpace(jwtSigningKey)
     || jwtSigningKey.Contains("CHANGE_ME", StringComparison.OrdinalIgnoreCase)
     || jwtSigningKey.Length < 32;
+var aiProvider = app.Configuration.GetValue<string>("AiEngine:Provider") ?? "Python";
+var usesPythonEngine = !string.Equals(aiProvider, "CSharp", StringComparison.OrdinalIgnoreCase);
 var pythonApiKey = app.Configuration.GetValue<string>("PythonAi:ApiKey") ?? string.Empty;
 var weakPythonApiKey = string.IsNullOrWhiteSpace(pythonApiKey)
     || pythonApiKey.Contains("CHANGE_ME", StringComparison.OrdinalIgnoreCase)
@@ -217,7 +222,7 @@ if (!app.Environment.IsDevelopment() && weakJwtKey)
     throw new InvalidOperationException("Jwt:SigningKey insegura. Configura una clave fuerte de al menos 32 caracteres.");
 }
 
-if (!app.Environment.IsDevelopment() && weakPythonApiKey)
+if (!app.Environment.IsDevelopment() && usesPythonEngine && weakPythonApiKey)
 {
     throw new InvalidOperationException("PythonAi:ApiKey insegura. Configura una llave compartida fuerte entre API y motor IA.");
 }
@@ -232,7 +237,7 @@ if (app.Environment.IsDevelopment() && weakJwtKey)
     app.Logger.LogWarning("Jwt:SigningKey de desarrollo es insegura. Define Jwt__SigningKey en .env antes de desplegar.");
 }
 
-if (app.Environment.IsDevelopment() && weakPythonApiKey)
+if (app.Environment.IsDevelopment() && usesPythonEngine && weakPythonApiKey)
 {
     app.Logger.LogWarning("PythonAi:ApiKey de desarrollo no definida o insegura. Define PythonAi__ApiKey y API_KEY para proteger el canal API->IA.");
 }

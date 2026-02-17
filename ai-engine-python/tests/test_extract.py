@@ -148,6 +148,52 @@ class ExtractPipelineTests(unittest.TestCase):
 
         self.assertEqual(data.get("referencia"), "023451789012345678")
 
+    def test_extract_telmex_due_date_is_not_cliente(self):
+        ocr_text = "\n".join(
+            [
+                "TELMEX",
+                "CLIENTE PAGAR ANTES DE: 23-ENE-2026",
+                "NUMERO TELEFONICO 3312345678",
+                "NO DE CUENTA 0011223344",
+                "TOTAL A PAGAR $549.00",
+            ]
+        )
+        ocr_boxes = [
+            _box("TELMEX", 10),
+            _box("CLIENTE PAGAR ANTES DE: 23-ENE-2026", 40),
+            _box("NUMERO TELEFONICO 3312345678", 70),
+            _box("NO DE CUENTA 0011223344", 100),
+            _box("TOTAL A PAGAR $549.00", 130),
+        ]
+        fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, ocr_boxes))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("fecha_limite"), "23/01/2026")
+        self.assertNotIn("PAGAR ANTES DE", data.get("cliente", ""))
+
+    def test_extract_telmex_due_date_with_ocr_noise_is_not_cliente(self):
+        ocr_text = "\n".join(
+            [
+                "TELMEX",
+                "CLIENTE PAGAR ANTES DE: 23–ENE-2O26",
+                "NUMERO TELEFONICO 3312345678",
+                "NO DE CUENTA 0011223344",
+                "TOTAL A PAGAR $549.00",
+            ]
+        )
+        ocr_boxes = [
+            _box("TELMEX", 10),
+            _box("CLIENTE PAGAR ANTES DE: 23–ENE-2O26", 40),
+            _box("NUMERO TELEFONICO 3312345678", 70),
+            _box("NO DE CUENTA 0011223344", 100),
+            _box("TOTAL A PAGAR $549.00", 130),
+        ]
+        fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, ocr_boxes))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("fecha_limite"), "23/01/2026")
+        self.assertNotIn("PAGAR ANTES DE", data.get("cliente", ""))
+
     def test_extract_telcel_comprobante_with_noisy_ocr(self):
         ocr_text = "\n".join(
             [
@@ -196,6 +242,23 @@ class ExtractPipelineTests(unittest.TestCase):
         data = _field_map(fields)
 
         self.assertEqual(data.get("referencia"), "24180130522010101002")
+
+    def test_extract_cfe_domicilio_removes_amount_prefix_noise(self):
+        ocr_text = "\n".join(
+            [
+                "CFE COMISION FEDERAL DE ELECTRICIDAD",
+                "TOTAL A PAGAR $ 548.17",
+                "$ 548 17 DN. 223 DEPTO. 1 BENITO JUAREZ",
+                "CP 24180",
+            ]
+        )
+        fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
+        data = _field_map(fields)
+        domicilio = data.get("domicilio", "")
+
+        self.assertIn("DN", domicilio)
+        self.assertNotIn("$", domicilio)
+        self.assertNotIn("548 17", domicilio)
 
     def test_extract_acta_numero_acta_with_ocr_confusions_from_boxes(self):
         ocr_boxes = [

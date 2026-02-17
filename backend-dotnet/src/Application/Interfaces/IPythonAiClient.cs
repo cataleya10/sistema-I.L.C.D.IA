@@ -4,5 +4,9 @@ namespace Application.Interfaces;
 
 public interface IPythonAiClient
 {
-    Task<DocumentProcessResponse> ProcessDocumentAsync(Guid documentId, string filePath, CancellationToken cancellationToken);
+    Task<DocumentProcessResponse> ProcessDocumentAsync(
+        Guid documentId,
+        string filePath,
+        string? originalFilename,
+        CancellationToken cancellationToken);
 }
