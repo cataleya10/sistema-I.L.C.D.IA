@@ -15,10 +15,10 @@
     "FEC"
   ],
   "seccion": [
-    "DMEX1934045026"
+    "EX1934045026"
   ],
   "vigencia": [
-    "EMSION2019VGENCIA"
+    "EMISON2019MGENCA"
   ],
   "nombre": [
     "NOMBRE"
@@ -38,7 +38,7 @@
   ],
   "municipio_registro": [
     "REGISTRO",
-    "MUNICLPIO REGISTRO"
+    "MUNICIPIO REGISTRO"
   ],
   "entidad_registro": [
     "NACIMIENTO",
@@ -49,7 +49,7 @@
     "SOCIAL ES"
   ],
   "numero_servicio": [
-    "DESERVICI0"
+    "DESERVICIO"
   ],
   "cuenta": [
     "CUENTA",
@@ -59,10 +59,6 @@
     "P",
     "BENITOJUAREZFC P",
     "SSL BENITOJUAREZFC P"
-  ],
-  "fecha_limite": [
-    "PAGO",
-    "LIMITE PAGO"
   ],
   "total": [
     "PAGAR",

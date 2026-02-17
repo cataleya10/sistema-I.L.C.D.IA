@@ -40,16 +40,54 @@ public class PythonAiClient : IPythonAiClient
         Guid documentId,
         string filePath,
         string? originalFilename,
+        string? optionsJson,
         CancellationToken cancellationToken)
     {
         var payload = await SendProcessRequestAsync(
             documentId,
             filePath,
             originalFilename,
-            null,
+            optionsJson,
             cancellationToken);
 
         return payload.Response;
+    }
+
+    public async Task<OnlineLearningStatsDto> GetOnlineLearningStatsAsync(
+        int recent,
+        CancellationToken cancellationToken)
+    {
+        var safeRecent = Math.Clamp(recent, 0, 100);
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"/online-learning/stats?recent={safeRecent}");
+
+        if (!string.IsNullOrWhiteSpace(_apiKey))
+        {
+            request.Headers.Add("X-Api-Key", _apiKey);
+        }
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        var raw = await response.Content.ReadAsStringAsync(cancellationToken);
+        var result = JsonSerializer.Deserialize<OnlineLearningStatsDto>(raw, _jsonOptions);
+        if (result is null)
+        {
+            throw new InvalidOperationException("La respuesta de estadisticas de entrenamiento es invalida.");
+        }
+
+        return result with
+        {
+            StatsPath = result.StatsPath ?? string.Empty,
+            DatasetPath = result.DatasetPath ?? string.Empty,
+            ModelPath = result.ModelPath ?? string.Empty,
+            AliasPath = result.AliasPath ?? string.Empty,
+            Totals = result.Totals ?? new OnlineLearningTotalsDto(0, 0, 0),
+            ByReason = result.ByReason ?? new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+            ByDocumentType = result.ByDocumentType ?? new Dictionary<string, OnlineLearningByTypeDto>(StringComparer.OrdinalIgnoreCase),
+            RecentEvents = result.RecentEvents ?? Array.Empty<OnlineLearningEventDto>()
+        };
     }
 
     public async Task<PythonOcrResult> ExtractOcrAsync(

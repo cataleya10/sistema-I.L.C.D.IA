@@ -3,36 +3,61 @@
     "nombre",
     "curp",
     "fecha_nacimiento",
+    "sexo",
+    "domicilio",
+    "clave_elector",
     "seccion",
     "vigencia"
   ],
   "CURP": [
     "nombre",
     "curp",
-    "fecha_nacimiento"
+    "fecha_nacimiento",
+    "sexo",
+    "entidad_nacimiento"
   ],
   "ACTA_NACIMIENTO": [
     "nombre",
     "fecha_nacimiento",
+    "sexo",
+    "lugar_nacimiento",
     "folio",
-    "numero_acta"
+    "numero_acta",
+    "fecha_registro",
+    "municipio_registro",
+    "entidad_registro"
   ],
   "NSS": [
     "nss",
     "nombre"
   ],
   "COMPROBANTE_DOMICILIO": [
+    "proveedor",
+    "numero_servicio",
+    "cuenta",
+    "referencia",
+    "titular",
     "domicilio",
-    "cp"
+    "cp",
+    "fecha_limite",
+    "total"
   ],
   "DATOS_BANCARIOS": [
     "banco",
     "clabe",
-    "titular"
+    "cuenta",
+    "titular",
+    "rfc",
+    "fecha_corte",
+    "periodo"
+  ],
+  "FACTURA": [
+    "tabla_celdas"
   ],
   "CONSTANCIA_SITUACION_FISCAL": [
     "rfc",
     "nombre",
+    "regimen",
     "domicilio"
   ]
 }

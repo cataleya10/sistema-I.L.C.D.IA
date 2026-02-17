@@ -18,8 +18,10 @@ backend-dotnet/src/Shared/obj/
 .env
 start-all.pids.json
 logs/
+reports/
 **/__pycache__/
 *.pyc
+*.pyo
 frontend-angular/web/logs/
 backups/
 restore-test/
@@ -27,3 +29,7 @@ restore-test-2/
 restore-verify-*/
 backend-dotnet/tests/**/bin/
 backend-dotnet/tests/**/obj/
+backend-dotnet/tests/**/.dotnet-cli-home/
+backend-dotnet/tests/**/.nuget-packages/
+ai-engine-python/app/models/online_training_dataset.jsonl
+ai-engine-python/app/models/online_training_stats.json

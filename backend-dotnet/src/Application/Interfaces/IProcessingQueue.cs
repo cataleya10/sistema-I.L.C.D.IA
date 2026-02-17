@@ -17,4 +17,4 @@ public interface IProcessingTracker
     void Cancel(Guid documentId);
 }
 
-public sealed record DocumentProcessJob(Guid DocumentId);
+public sealed record DocumentProcessJob(Guid DocumentId, string? OptionsJson = null);

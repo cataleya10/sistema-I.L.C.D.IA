@@ -14,7 +14,10 @@ def normalize_value(value: str, key: str) -> str:
         return ""
     text = str(value).strip().upper()
     if key in {"curp", "rfc", "nss", "clabe", "cuenta", "seccion"}:
-        return re.sub(r"[^A-Z0-9]", "", text)
+        normalized = re.sub(r"[^A-Z0-9]", "", text)
+        if key == "seccion":
+            return normalized.lstrip("0") or "0"
+        return normalized
     if key in {"cp"}:
         return re.sub(r"\D", "", text)
     if key in {"sexo"}:
@@ -26,6 +29,10 @@ def normalize_value(value: str, key: str) -> str:
     if key in {"fecha_nacimiento", "fecha_registro", "fecha_corte", "fecha_limite"}:
         text = text.replace("-", "/")
         return re.sub(r"\s+", " ", text)
+    if key in {"total"}:
+        numeric = re.sub(r"[^0-9.,]", "", text)
+        numeric = numeric.replace(",", "")
+        return numeric
     if key in {"nombre", "titular", "domicilio", "referencia"}:
         return re.sub(r"[^A-Z0-9]", "", text)
     if key in {"proveedor", "banco", "regimen", "entidad_nacimiento", "entidad_registro", "municipio_registro", "lugar_nacimiento"}:

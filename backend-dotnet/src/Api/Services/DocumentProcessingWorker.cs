@@ -67,7 +67,7 @@ public sealed class DocumentProcessingWorker : BackgroundService
             {
                 using var scope = _scopeFactory.CreateScope();
                 var service = scope.ServiceProvider.GetRequiredService<IDocumentService>();
-                var response = await service.ProcessNowAsync(job.DocumentId, stoppingToken);
+                var response = await service.ProcessNowAsync(job.DocumentId, job.OptionsJson, stoppingToken);
                 _tracker.Complete(job.DocumentId, response);
                 return;
             }

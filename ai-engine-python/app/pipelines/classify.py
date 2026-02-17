@@ -90,6 +90,28 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         "TOTALAPAGAR",
         "COMISIONFEDERALDEELECTRICIDAD",
     )
+    payment_markers = (
+        "DISPERSION DE PAGO DE NOMINA",
+        "PAGO DE NOMINA",
+        "REPORTE DE OPERACIONES",
+        "COMPROBANTE DE LA OPERACION",
+        "CLAVE RASTREO",
+        "DATOS DEL BENEFICIARIO",
+        "REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS",
+        "TIPO DE MOVIMIENTO (PAGO)",
+        "ABONO NOMINA",
+    )
+    payment_markers_compact = (
+        "DISPERSIONDEPAGODENOMINA",
+        "PAGODENOMINA",
+        "REPORTEDEOPERACIONES",
+        "COMPROBANTEDELAOPERACION",
+        "CLAVERASTREO",
+        "DATOSDELBENEFICIARIO",
+        "REPORTEDETRANSMISIONDEARCHIVODEPAGOS",
+        "TIPODEMOVIMIENTOPAGO",
+        "ABONONOMINA",
+    )
 
     if (
         "INSTITUTO NACIONAL ELECTORAL" in text
@@ -159,6 +181,11 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         )
     ):
         return "CONSTANCIA_SITUACION_FISCAL", 0.86
+    if (
+        any(marker in text for marker in payment_markers)
+        or any(marker in compact_text for marker in payment_markers_compact)
+    ):
+        return "FACTURA", 0.9
     if "CLAVE UNICA DE REGISTRO DE POBLACION" in text or "CURP" in text:
         return "CURP", 0.9
     if "NSS" in text or "IMSS" in text or "SEGURIDAD SOCIAL" in text:
@@ -191,6 +218,11 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         return "NSS", 0.85
     if "CLABE" in name or "BANCO" in name:
         return "DATOS_BANCARIOS", 0.85
+    if (
+        "PAGO" in name
+        and any(token in name for token in ("NOMINA", "DISPERSION", "BMPEI", "SBK", "BNT", "SPEI", "BENEFICIARIO"))
+    ):
+        return "FACTURA", 0.9
     if "ESTADO DE CUENTA" in name or "ESTADO CUENTA" in name or "CUENTA" in name:
         return "DATOS_BANCARIOS", 0.8
     if "RFC" in name or "SITUACION" in name:

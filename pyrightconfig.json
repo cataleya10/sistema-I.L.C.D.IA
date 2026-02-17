@@ -1,0 +1,33 @@
+{
+  "include": [
+    "ai-engine-python/app",
+    "ai-engine-python/tests",
+    "ai-engine-python/tools"
+  ],
+  "exclude": [
+    ".venv",
+    "ai-engine-python/.venv312",
+    "**/__pycache__",
+    "**/node_modules",
+    "**/bin",
+    "**/obj",
+    "logs",
+    "reports",
+    "ai-engine-python/logs",
+    "ai-engine-python/reports",
+    "ai-engine-python/tests/online_learning_*"
+  ],
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "warning",
+  "reportUndefinedVariable": "none",
+  "reportGeneralTypeIssues": "none",
+  "reportInvalidTypeForm": "none",
+  "executionEnvironments": [
+    {
+      "root": "ai-engine-python",
+      "extraPaths": [
+        "ai-engine-python"
+      ]
+    }
+  ]
+}

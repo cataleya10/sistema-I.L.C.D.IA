@@ -13,6 +13,10 @@ export interface DocumentListQuery {
   pageSize?: number;
 }
 
+export interface DocumentProcessOptions {
+  forceDocumentType?: 'FACTURA';
+}
+
 @Injectable({ providedIn: 'root' })
 export class DocumentsService {
   private readonly baseUrl = `${getApiBaseUrl()}/api/documents`;
@@ -47,16 +51,16 @@ export class DocumentsService {
     return this.http.get(`${this.baseUrl}/${id}/file`, { responseType: 'blob' });
   }
 
-  process(id: string) {
-    return this.http.post<DocumentProcessResponse>(`${this.baseUrl}/${id}/process`, {});
+  process(id: string, options?: DocumentProcessOptions) {
+    return this.http.post<DocumentProcessResponse>(`${this.baseUrl}/${id}/process`, options ?? {});
   }
 
   getProcessStatus(id: string) {
     return this.http.get<DocumentProcessResponse>(`${this.baseUrl}/${id}/process/status`);
   }
 
-  reprocess(id: string) {
-    return this.http.post<DocumentProcessResponse>(`${this.baseUrl}/${id}/reprocess`, {});
+  reprocess(id: string, options?: DocumentProcessOptions) {
+    return this.http.post<DocumentProcessResponse>(`${this.baseUrl}/${id}/reprocess`, options ?? {});
   }
 
   updateFields(id: string, fields: { key: string; value: string }[]) {

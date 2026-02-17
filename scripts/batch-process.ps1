@@ -8,7 +8,9 @@ param(
     [string]$OutDir = "$env:USERPROFILE\\Documents\\IA",
     [ValidateSet("generate","compare","none")]
     [string]$BaselineMode = "none",
-    [string]$BaselinePath = ""
+    [string]$BaselinePath = "",
+    [bool]$OnlySuccessful = $true,
+    [double]$SuccessMinFieldConfidence = 0.75
 )
 
 Set-StrictMode -Version Latest
@@ -85,6 +87,21 @@ function New-FieldRows([array]$Details) {
     return $rows
 }
 
+function Test-DetailSuccess([pscustomobject]$Detail, [double]$MinFieldConfidence) {
+    if (-not $Detail) { return $false }
+    if ($Detail.status -ne "READY") { return $false }
+    if ([bool]$Detail.needs_review) { return $false }
+    $fields = @($Detail.fields | Where-Object { $_.key -ne "texto_detectado" })
+    if ($fields.Count -eq 0) { return $false }
+    foreach ($field in $fields) {
+        if ([string]::IsNullOrWhiteSpace([string]$field.value)) { return $false }
+        if ($field.valid -ne $true) { return $false }
+        $confidence = [double]($field.confidence)
+        if ($confidence -lt $MinFieldConfidence) { return $false }
+    }
+    return $true
+}
+
 function New-Baseline([array]$Details) {
     $summary = @()
     foreach ($d in $Details) {
@@ -154,7 +171,12 @@ foreach ($u in $uploads) {
     Invoke-RestMethod -Method Post -Uri "$ApiUrl/api/documents/$($u.id)/process" -Headers $headers | Out-Null
 }
 
-$details = New-Report -Token $token -Docs $uploads
+$detailsAll = New-Report -Token $token -Docs $uploads
+$details = if ($OnlySuccessful) {
+    @($detailsAll | Where-Object { Test-DetailSuccess -Detail $_ -MinFieldConfidence $SuccessMinFieldConfidence })
+} else {
+    $detailsAll
+}
 $rows = New-FieldRows -Details $details
 
 $stamp = (Get-Date).ToString("yyyyMMdd_HHmmss")
@@ -181,6 +203,9 @@ if ($BaselineMode -eq "compare") {
 
 @{
     uploaded = $uploads.Count
+    processed = $detailsAll.Count
+    exported = $details.Count
+    only_successful = $OnlySuccessful
     results_json = $jsonPath
     results_csv = $csvPath
     results_fields = $fieldsPath

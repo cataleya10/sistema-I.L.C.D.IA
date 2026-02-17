@@ -1,4 +1,5 @@
 import asyncio
+import json
 import unittest
 from unittest.mock import patch
 
@@ -95,6 +96,75 @@ class ExtractPipelineTests(unittest.TestCase):
         data = _field_map(fields)
 
         self.assertEqual(data.get("clabe"), "012345678901234561")
+
+    def test_extract_datos_bancarios_payment_table_from_boxes(self):
+        ocr_text = "REPORTE DE NOMINA"
+        ocr_boxes = [
+            {"text": "Cuenta", "page": 1, "confidence": 0.99, "bbox": [[10, 10], [90, 10], [90, 30], [10, 30]]},
+            {"text": "Referencia", "page": 1, "confidence": 0.99, "bbox": [[110, 10], [210, 10], [210, 30], [110, 30]]},
+            {"text": "Importe", "page": 1, "confidence": 0.99, "bbox": [[230, 10], [320, 10], [320, 30], [230, 30]]},
+            {"text": "Nombre", "page": 1, "confidence": 0.99, "bbox": [[340, 10], [430, 10], [430, 30], [340, 30]]},
+            {"text": "56551346133", "page": 1, "confidence": 0.99, "bbox": [[10, 40], [120, 40], [120, 60], [10, 60]]},
+            {"text": "1620260115132703271255", "page": 1, "confidence": 0.99, "bbox": [[140, 40], [290, 40], [290, 60], [140, 60]]},
+            {"text": "$1,462.58", "page": 1, "confidence": 0.99, "bbox": [[310, 40], [390, 40], [390, 60], [310, 60]]},
+            {"text": "JOSE LUIS", "page": 1, "confidence": 0.99, "bbox": [[410, 40], [510, 40], [510, 60], [410, 60]]},
+        ]
+
+        fields = asyncio.run(extract_fields("DATOS_BANCARIOS", ocr_text, ocr_boxes))
+        data = _field_map(fields)
+
+        self.assertIn("tabla_celdas", data)
+        payload = json.loads(data["tabla_celdas"])
+        self.assertEqual(payload.get("source"), "ocr_boxes")
+        self.assertGreaterEqual(len(payload.get("rows", [])), 2)
+        self.assertEqual(payload["rows"][0][0], "CUENTA")
+
+    def test_extract_datos_bancarios_payment_table_from_text_lines(self):
+        ocr_text = "\n".join(
+            [
+                "Cuenta    Referencia    Importe    Nombre",
+                "56551346133    1620260115132703271255    $1,462.58    JOSE LUIS",
+            ]
+        )
+        fields = asyncio.run(extract_fields("DATOS_BANCARIOS", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertIn("tabla_celdas", data)
+        payload = json.loads(data["tabla_celdas"])
+        self.assertEqual(payload.get("source"), "text_lines")
+        self.assertEqual(payload["rows"][0][0], "CUENTA")
+
+    def test_extract_factura_payment_table_from_text_lines(self):
+        ocr_text = "\n".join(
+            [
+                "Cuenta    Referencia    Importe    Nombre",
+                "56551346133    1620260115132703271255    $1,462.58    JOSE LUIS",
+            ]
+        )
+        fields = asyncio.run(extract_fields("FACTURA", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertIn("tabla_celdas", data)
+        payload = json.loads(data["tabla_celdas"])
+        self.assertEqual(payload.get("source"), "text_lines")
+        self.assertEqual(payload["rows"][0][0], "CUENTA")
+
+    def test_extract_factura_contract_keeps_only_table_cells(self):
+        ocr_text = "\n".join(
+            [
+                "BANCO SCOTIABANK INVERLAT",
+                "TITULAR: NOMBRE DEL ARCHIVO",
+                "Cuenta    Referencia    Importe    Nombre",
+                "56551346133    1620260115132703271255    $1,462.58    JOSE LUIS",
+            ]
+        )
+        fields = asyncio.run(extract_fields("FACTURA", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertIn("tabla_celdas", data)
+        self.assertNotIn("banco", data)
+        self.assertNotIn("titular", data)
+        self.assertNotIn("cuenta", data)
 
     def test_extract_comprobante_telmex_phone_with_symbols(self):
         ocr_text = "\n".join(
@@ -412,6 +482,32 @@ class ExtractPipelineTests(unittest.TestCase):
         data = _field_map(fields)
 
         self.assertIsNone(data.get("lugar_nacimiento"))
+
+    def test_field_contract_drops_noisy_service_extra_keys(self):
+        with patch(
+            "app.pipelines.extract.legacy_extract_fields",
+            return_value={
+                "cliente": "RMU:2418013-05-22XAXX-010101002CFE",
+                "medidor": "MULTIPLICADOR1",
+                "rfc": "CFE370814QI0",
+            },
+        ):
+            fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", "COMPROBANTE DE DOMICILIO", None))
+        data = _field_map(fields)
+
+        self.assertIsNone(data.get("cliente"))
+        self.assertIsNone(data.get("medidor"))
+        self.assertIsNone(data.get("rfc"))
+
+    def test_field_contract_drops_noisy_titular_text(self):
+        with patch(
+            "app.pipelines.extract.legacy_extract_fields",
+            return_value={"titular": "ESTE GRAFICO REFLEJA TU NIVEL DE CONSUMO"},
+        ):
+            fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", "COMPROBANTE DE DOMICILIO", None))
+        data = _field_map(fields)
+
+        self.assertIsNone(data.get("titular"))
 
 
 if __name__ == "__main__":

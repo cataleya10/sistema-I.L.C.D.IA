@@ -8,10 +8,10 @@ public interface IDocumentService
     Task<IReadOnlyList<DocumentSummaryDto>> ListAsync(DocumentListQuery query, CancellationToken cancellationToken);
     Task<DocumentDetailDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken);
     Task<Stream?> GetFileStreamAsync(Guid id, CancellationToken cancellationToken);
-    Task<DocumentProcessResponse> ProcessAsync(Guid id, CancellationToken cancellationToken);
+    Task<DocumentProcessResponse> ProcessAsync(Guid id, string? optionsJson, CancellationToken cancellationToken);
     Task<DocumentProcessResponse> GetProcessStatusAsync(Guid id, CancellationToken cancellationToken);
-    Task<DocumentProcessResponse> ReprocessAsync(Guid id, CancellationToken cancellationToken);
-    Task<DocumentProcessResponse> ProcessNowAsync(Guid id, CancellationToken cancellationToken);
+    Task<DocumentProcessResponse> ReprocessAsync(Guid id, string? optionsJson, CancellationToken cancellationToken);
+    Task<DocumentProcessResponse> ProcessNowAsync(Guid id, string? optionsJson, CancellationToken cancellationToken);
     Task UpdateFieldsAsync(Guid id, DocumentFieldsUpdateRequest request, CancellationToken cancellationToken);
     Task MarkFailedAsync(Guid id, string reason, CancellationToken cancellationToken);
     Task DeleteAsync(Guid id, CancellationToken cancellationToken);

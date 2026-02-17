@@ -2,6 +2,7 @@ import json
 import re
 from pathlib import Path
 import time
+import logging
 from app.schemas.process import ProcessResponse, DocumentField, ProcessMeta
 from app.core.config import settings
 from app.pipelines.preprocess import preprocess
@@ -9,6 +10,9 @@ from app.pipelines.ocr import run_ocr
 from app.pipelines.classify import classify_document
 from app.pipelines.extract import extract_fields
 from app.pipelines.validate import validate_fields
+from app.services.online_learning import learn_from_processed_document
+
+logger = logging.getLogger(__name__)
 
 SERVICE_TEXT_HINTS = {
     "TELMEX",
@@ -64,6 +68,19 @@ def _maybe_override_doc_type(doc_type: str, text: str, filename: str | None) -> 
         if _looks_like_service_document(text, filename) and not _looks_like_csf_document(text):
             return "COMPROBANTE_DOMICILIO", "Clasificacion ajustada por huellas de recibo/servicio."
     return doc_type, None
+
+
+ALLOWED_FORCED_DOC_TYPES = {"FACTURA"}
+
+
+def _resolve_forced_document_type(options_data: dict) -> str | None:
+    raw = options_data.get("force_document_type")
+    if not isinstance(raw, str):
+        return None
+    normalized = raw.strip().upper().replace("-", "_").replace(" ", "_")
+    if normalized in ALLOWED_FORCED_DOC_TYPES:
+        return normalized
+    return None
 
 
 def _has_sufficient_text_layer(text: str) -> bool:
@@ -134,7 +151,7 @@ def _resolve_canonical_key(key: str, label: str, document_type: str) -> str:
 
     if document_type == "NSS" and resolved == "titular":
         return "nombre"
-    if document_type == "COMPROBANTE_DOMICILIO" and resolved == "nombre":
+    if document_type in {"COMPROBANTE_DOMICILIO", "FACTURA"} and resolved == "nombre":
         return "titular"
     return resolved
 
@@ -183,6 +200,7 @@ FASTPATH_REQUIRED_FIELDS: dict[str, list[str]] = {
     "COMPROBANTE_DOMICILIO": ["domicilio", "cp"],
     "NSS": ["nss", "nombre"],
     "DATOS_BANCARIOS": ["clabe", "banco", "titular"],
+    "FACTURA": ["tabla_celdas"],
     "CONSTANCIA_SITUACION_FISCAL": ["rfc", "nombre", "domicilio"],
     "UNKNOWN": [],
 }
@@ -202,6 +220,7 @@ DEFAULT_CRITICAL_FIELDS: dict[str, list[str]] = {
     "COMPROBANTE_DOMICILIO": ["domicilio"],
     "NSS": ["nss"],
     "DATOS_BANCARIOS": ["clabe", "banco"],
+    "FACTURA": ["tabla_celdas"],
     "CONSTANCIA_SITUACION_FISCAL": ["rfc"]
 }
 CRITICAL_FIELDS: dict[str, list[str]] = DEFAULT_CRITICAL_FIELDS.copy()
@@ -226,6 +245,10 @@ CRITICAL_KEY_ALIASES: dict[str, dict[str, list[str]]] = {
     },
     "DATOS_BANCARIOS": {
         "titular": ["titular", "nombre", "nombre_completo"],
+    },
+    "FACTURA": {
+        "titular": ["titular", "nombre", "nombre_completo"],
+        "tabla_celdas": ["tabla_celdas", "tabla", "celdas"],
     },
     "CONSTANCIA_SITUACION_FISCAL": {
         "nombre": ["nombre", "nombre_completo", "razon_social", "denominacion_razon_social"],
@@ -356,6 +379,7 @@ async def process_document(file, document_id: str, source: str, options: str | N
             options_data = json.loads(options)
         except json.JSONDecodeError:
             options_data = {}
+    forced_doc_type = _resolve_forced_document_type(options_data)
 
     images, extracted_text = await preprocess(file)
     ocr_text = ""
@@ -371,6 +395,10 @@ async def process_document(file, document_id: str, source: str, options: str | N
     if use_fastpath:
         fast_type, fast_confidence = await classify_document(None, extracted_text, file.filename)
         fast_type, fast_warning = _maybe_override_doc_type(fast_type, extracted_text, file.filename)
+        if forced_doc_type:
+            fast_type = forced_doc_type
+            fast_confidence = max(fast_confidence, 0.9)
+            fast_warning = None
         if fast_type in settings.text_layer_fastpath_types:
             candidate_fields = await extract_fields(
                 fast_type,
@@ -411,6 +439,10 @@ async def process_document(file, document_id: str, source: str, options: str | N
         first_image = images[0] if images else None
         doc_type, doc_confidence = await classify_document(first_image, ocr_text, file.filename)
         doc_type, doc_type_warning = _maybe_override_doc_type(doc_type, ocr_text, file.filename)
+        if forced_doc_type:
+            doc_type = forced_doc_type
+            doc_confidence = max(doc_confidence, 0.9)
+            doc_type_warning = None
         if (ocr_text or extracted_text) and doc_type != "UNKNOWN":
             doc_confidence = max(doc_confidence, 0.85)
         fields = await extract_fields(doc_type, ocr_text, ocr_boxes, extracted_text, file.filename)
@@ -432,6 +464,8 @@ async def process_document(file, document_id: str, source: str, options: str | N
     processing_ms = int((time.time() - start) * 1000)
 
     warnings: list[str] = []
+    if forced_doc_type:
+        warnings.append(f"Tipo forzado manualmente: {forced_doc_type}.")
     if doc_type_warning:
         warnings.append(doc_type_warning)
     include_ocr_text = bool(options_data.get("return_ocr_text"))
@@ -469,6 +503,18 @@ async def process_document(file, document_id: str, source: str, options: str | N
     if len(fields) == 0:
         status = "NEEDS_REVIEW"
         warnings.append("No se detectaron campos extraídos.")
+
+    try:
+        learn_from_processed_document(
+            document_id=document_id,
+            document_type=doc_type,
+            status=status,
+            confidence=doc_confidence,
+            ocr_text=ocr_text,
+            fields=fields,
+        )
+    except Exception:
+        logger.exception("Online learning failed for document_id=%s", document_id)
 
     response = ProcessResponse(
         document_id=document_id,

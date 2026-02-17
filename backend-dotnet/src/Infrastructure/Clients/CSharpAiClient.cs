@@ -1,6 +1,7 @@
 ﻿using System.Globalization;
 using System.IO.Compression;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Application.DTOs;
 using Application.Interfaces;
@@ -21,10 +22,12 @@ public sealed class CSharpAiClient : IPythonAiClient
         Guid documentId,
         string filePath,
         string? originalFilename,
+        string? optionsJson,
         CancellationToken cancellationToken)
     {
         var started = DateTime.UtcNow;
         var rawText = await ReadDocumentTextAsync(filePath, cancellationToken);
+        var forcedType = ResolveForcedDocumentType(optionsJson);
         return BuildResponseFromRawText(
             documentId,
             rawText,
@@ -33,7 +36,33 @@ public sealed class CSharpAiClient : IPythonAiClient
             "csharp-local",
             "csharp-pipeline-v2",
             1,
-            0);
+            0,
+            forcedType);
+    }
+
+    public Task<OnlineLearningStatsDto> GetOnlineLearningStatsAsync(
+        int recent,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _ = recent;
+        return Task.FromResult(
+            new OnlineLearningStatsDto(
+                false,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                null,
+                0,
+                new OnlineLearningTotalsDto(0, 0, 0),
+                new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["not_supported_by_csharp_engine"] = 1
+                },
+                new Dictionary<string, OnlineLearningByTypeDto>(StringComparer.OrdinalIgnoreCase),
+                null,
+                Array.Empty<OnlineLearningEventDto>()));
     }
 
     public Task<DocumentProcessResponse> ProcessTextAsync(
@@ -43,10 +72,12 @@ public sealed class CSharpAiClient : IPythonAiClient
         string ocrEngine,
         int pagesProcessed,
         long upstreamProcessingMs,
+        string? optionsJson,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var started = DateTime.UtcNow;
+        var forcedType = ResolveForcedDocumentType(optionsJson);
         var response = BuildResponseFromRawText(
             documentId,
             rawText,
@@ -55,7 +86,8 @@ public sealed class CSharpAiClient : IPythonAiClient
             string.IsNullOrWhiteSpace(ocrEngine) ? "python-ocr" : ocrEngine,
             "csharp-hybrid-v1",
             pagesProcessed <= 0 ? 1 : pagesProcessed,
-            upstreamProcessingMs < 0 ? 0 : upstreamProcessingMs);
+            upstreamProcessingMs < 0 ? 0 : upstreamProcessingMs,
+            forcedType);
         return Task.FromResult(response);
     }
 
@@ -67,12 +99,13 @@ public sealed class CSharpAiClient : IPythonAiClient
         string ocrEngine,
         string pipelineVersion,
         int pagesProcessed,
-        long upstreamProcessingMs)
+        long upstreamProcessingMs,
+        DocumentType? forcedType)
     {
         var normalizedText = Normalize(rawText);
         var filenameHint = Normalize(Path.GetFileNameWithoutExtension(filenameOrPath ?? string.Empty));
 
-        var type = DetectDocumentType(filenameHint, normalizedText);
+        var type = forcedType ?? DetectDocumentType(filenameHint, normalizedText);
         var fields = ExtractFields(type, normalizedText, filenameHint);
         var warnings = BuildWarnings(type, rawText, fields);
         var status = ResolveStatus(type, fields);
@@ -148,6 +181,11 @@ public sealed class CSharpAiClient : IPythonAiClient
                     ? DocumentStatus.Ready
                     : DocumentStatus.NeedsReview,
 
+            DocumentType.Factura =>
+                Has(fields, "tabla_celdas")
+                    ? DocumentStatus.Ready
+                    : DocumentStatus.NeedsReview,
+
             DocumentType.ConstanciaSituacionFiscal =>
                 (Has(fields, "rfc") && (Has(fields, "razon_social") || Has(fields, "regimen")))
                     ? DocumentStatus.Ready
@@ -211,6 +249,7 @@ public sealed class CSharpAiClient : IPythonAiClient
             [DocumentType.ComprobanteDomicilio] = 0,
             [DocumentType.Nss] = 0,
             [DocumentType.DatosBancarios] = 0,
+            [DocumentType.Factura] = 0,
             [DocumentType.ConstanciaSituacionFiscal] = 0
         };
 
@@ -221,6 +260,7 @@ public sealed class CSharpAiClient : IPythonAiClient
         AddScore(scores, DocumentType.ComprobanteDomicilio, filename, 12, "COMPROBANTE", "RECIBO", "DOMICILIO", "TELMEX", "CFE", "LUZ", "AGUA");
         AddScore(scores, DocumentType.Nss, filename, 16, "NSS", "IMSS", "SEGURO SOCIAL");
         AddScore(scores, DocumentType.DatosBancarios, filename, 14, "BANCO", "CLABE", "CUENTA");
+        AddScore(scores, DocumentType.Factura, filename, 14, "FACTURA", "PAGO", "NOMINA", "DISPERSION", "BMPEI", "SPEI");
         AddScore(scores, DocumentType.ConstanciaSituacionFiscal, filename, 14, "CSF", "CONSTANCIA", "FISCAL", "SAT", "RFC");
 
         // Text hints
@@ -230,6 +270,7 @@ public sealed class CSharpAiClient : IPythonAiClient
         AddScore(scores, DocumentType.ComprobanteDomicilio, text, 5, "PAGAR ANTES DE", "COMPROBANTE DE DOMICILIO", "ESTADO DE CUENTA", "TOTAL A PAGAR", "TELMEX", "CFE");
         AddScore(scores, DocumentType.Nss, text, 6, "NUMERO DE SEGURIDAD SOCIAL", "IMSS", "NSS");
         AddScore(scores, DocumentType.DatosBancarios, text, 6, "CLABE", "ESTADO DE CUENTA", "BANCO", "NO. DE CUENTA");
+        AddScore(scores, DocumentType.Factura, text, 7, "DISPERSION DE PAGO DE NOMINA", "PAGO DE NOMINA", "CLAVE RASTREO", "COMPROBANTE DE LA OPERACION", "DATOS DEL BENEFICIARIO", "REPORTE DE OPERACIONES");
         AddScore(scores, DocumentType.ConstanciaSituacionFiscal, text, 6, "CONSTANCIA DE SITUACION FISCAL", "CEDULA DE IDENTIFICACION FISCAL", "RFC", "SAT");
 
         if (CurpRegex.IsMatch(text))
@@ -264,6 +305,54 @@ public sealed class CSharpAiClient : IPythonAiClient
         return ranked[0].Key;
     }
 
+    private static DocumentType? ResolveForcedDocumentType(string? optionsJson)
+    {
+        if (string.IsNullOrWhiteSpace(optionsJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var json = JsonDocument.Parse(optionsJson);
+            if (!json.RootElement.TryGetProperty("force_document_type", out var typeElement))
+            {
+                return null;
+            }
+            if (typeElement.ValueKind != JsonValueKind.String)
+            {
+                return null;
+            }
+
+            var raw = typeElement.GetString();
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return null;
+            }
+
+            var normalized = raw.Trim();
+            if (Enum.TryParse<DocumentType>(normalized, true, out var parsed))
+            {
+                return parsed;
+            }
+
+            normalized = normalized.Replace("_", string.Empty, StringComparison.OrdinalIgnoreCase);
+            foreach (var item in Enum.GetValues<DocumentType>())
+            {
+                if (string.Equals(item.ToString(), normalized, StringComparison.OrdinalIgnoreCase))
+                {
+                    return item;
+                }
+            }
+        }
+        catch
+        {
+            return null;
+        }
+
+        return null;
+    }
+
     private static IReadOnlyList<DocumentFieldResultDto> ExtractFields(DocumentType type, string text, string filename)
     {
         return type switch
@@ -274,6 +363,7 @@ public sealed class CSharpAiClient : IPythonAiClient
             DocumentType.ComprobanteDomicilio => ExtractDomicilioFields(text, filename),
             DocumentType.Nss => ExtractNssFields(text),
             DocumentType.DatosBancarios => ExtractBankFields(text, filename),
+            DocumentType.Factura => ExtractFacturaFields(text, filename),
             DocumentType.ConstanciaSituacionFiscal => ExtractFiscalFields(text),
             _ => Array.Empty<DocumentFieldResultDto>()
         };
@@ -340,7 +430,7 @@ public sealed class CSharpAiClient : IPythonAiClient
         return
         [
             Build("titular", "Titular", AfterAnyLabel(text, "TITULAR", "CLIENTE", "NOMBRE")),
-            Build("direccion", "Direccion", AfterAnyLabel(text, "DIRECCION", "DOMICILIO")),
+            Build("domicilio", "Domicilio", AfterAnyLabel(text, "DIRECCION", "DOMICILIO")),
             Build("fecha_limite", "Fecha limite", dueDate, DateRegex),
             Build("total", "Total", FirstRegex(text, AmountRegex), AmountRegex),
             Build("proveedor", "Proveedor", provider),
@@ -363,14 +453,112 @@ public sealed class CSharpAiClient : IPythonAiClient
     {
         var clabeRegex = new Regex(@"\b\d{18}\b", RegexOptions.Compiled);
         var bank = AfterAnyLabel(text, "BANCO", "INSTITUCION") ?? FirstAny(filename, "BBVA", "BANORTE", "SANTANDER", "BANAMEX", "HSBC");
+        var account = AfterAnyLabel(text, "NO. CUENTA", "NO CUENTA", "NO DE CUENTA", "NUMERO DE CUENTA");
+        if (string.IsNullOrWhiteSpace(account))
+        {
+            account = AfterAnyLabel(text, "CUENTA");
+            if (!string.IsNullOrWhiteSpace(account))
+            {
+                // Avoid heading captures like "ESTADO DE CUENTA" -> "BANCO: ...".
+                var hasEnoughDigits = Regex.IsMatch(account, @"\d{6,}");
+                if (!hasEnoughDigits)
+                {
+                    var accountMatch = Regex.Match(
+                        text,
+                        @"(?:NO\.?\s*DE?\s*CUENTA|NUMERO\s+DE\s+CUENTA|CUENTA)\D{0,10}(\d{6,24})",
+                        RegexOptions.IgnoreCase);
+                    account = accountMatch.Success ? accountMatch.Groups[1].Value : null;
+                }
+            }
+        }
 
         return
         [
             Build("banco", "Banco", bank),
             Build("titular", "Titular", AfterAnyLabel(text, "TITULAR", "NOMBRE")),
             Build("clabe", "CLABE", FirstRegex(text, clabeRegex), clabeRegex),
-            Build("numero_cuenta", "Numero de cuenta", AfterAnyLabel(text, "CUENTA", "NO. CUENTA", "NUMERO DE CUENTA"))
+            Build("cuenta", "Cuenta", account)
         ];
+    }
+
+    private static IReadOnlyList<DocumentFieldResultDto> ExtractFacturaFields(string text, string filename)
+    {
+        var tableJson = BuildFacturaTableJson(text);
+        if (!string.IsNullOrWhiteSpace(tableJson))
+        {
+            return
+            [
+                new DocumentFieldResultDto(
+                "tabla_celdas",
+                "Tabla celdas",
+                tableJson,
+                0.90m,
+                true,
+                Array.Empty<string>(),
+                null)
+            ];
+        }
+        return
+        [
+            Build("tabla_celdas", "Tabla celdas", null)
+        ];
+    }
+
+    private static string? BuildFacturaTableJson(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var rows = new List<List<string>>();
+        var lines = text
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .Take(300);
+
+        foreach (var line in lines)
+        {
+            var cells = Regex
+                .Split(line.Trim(), @"\s{2,}")
+                .Select(cell => cell.Trim())
+                .Where(cell => !string.IsNullOrWhiteSpace(cell))
+                .Take(10)
+                .ToList();
+
+            if (cells.Count < 3)
+            {
+                continue;
+            }
+
+            var joined = string.Join(" ", cells).ToUpperInvariant();
+            var headerLike = joined.Contains("CUENTA")
+                && (joined.Contains("REFERENCIA") || joined.Contains("IMPORTE"));
+            var dataLike = Regex.IsMatch(joined, @"\d{8,}")
+                && (joined.Contains("$") || joined.Contains("PROCESADO") || joined.Contains("APLICADO") || joined.Contains("ACEPTADO"));
+
+            if (headerLike || dataLike)
+            {
+                rows.Add(cells);
+            }
+
+            if (rows.Count >= 20)
+            {
+                break;
+            }
+        }
+
+        if (rows.Count < 2)
+        {
+            return null;
+        }
+
+        var payload = new
+        {
+            source = "text_lines_csharp",
+            rows
+        };
+        return JsonSerializer.Serialize(payload);
     }
 
     private static IReadOnlyList<DocumentFieldResultDto> ExtractFiscalFields(string text)
@@ -380,7 +568,7 @@ public sealed class CSharpAiClient : IPythonAiClient
             Build("razon_social", "Razon social", AfterAnyLabel(text, "DENOMINACION", "RAZON SOCIAL", "NOMBRE")),
             Build("rfc", "RFC", FirstRegex(text, RfcRegex), RfcRegex),
             Build("regimen", "Regimen fiscal", AfterAnyLabel(text, "REGIMEN", "REGIMEN FISCAL")),
-            Build("codigo_postal", "Codigo postal", AfterAnyLabel(text, "CODIGO POSTAL", "CP"))
+            Build("cp", "CP", AfterAnyLabel(text, "CODIGO POSTAL", "CP"))
         ];
     }
 
@@ -836,5 +1024,6 @@ public sealed class CSharpAiClient : IPythonAiClient
         return sb.ToString();
     }
 }
+
 
 

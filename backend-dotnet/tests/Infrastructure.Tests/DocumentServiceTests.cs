@@ -53,7 +53,7 @@ public class DocumentServiceTests
         });
         await db.SaveChangesAsync();
 
-        var result = await service.ProcessAsync(documentId, CancellationToken.None);
+        var result = await service.ProcessAsync(documentId, null, CancellationToken.None);
         var persisted = await db.Documents.SingleAsync(x => x.Id == documentId);
 
         Assert.Equal(DocumentStatus.Processing, result.Status);
@@ -66,7 +66,7 @@ public class DocumentServiceTests
     public async Task ProcessNowAsync_WhenReadyResponse_PersistsFieldsAndMarksReady()
     {
         using var db = CreateDbContext();
-        var pythonClient = new FakePythonAiClient((documentId, _, _, _) =>
+        var pythonClient = new FakePythonAiClient((documentId, _, _, _, _) =>
             Task.FromResult(new DocumentProcessResponse(
                 documentId,
                 DocumentStatus.Ready,
@@ -101,7 +101,7 @@ public class DocumentServiceTests
         });
         await db.SaveChangesAsync();
 
-        var response = await service.ProcessNowAsync(documentId, CancellationToken.None);
+        var response = await service.ProcessNowAsync(documentId, null, CancellationToken.None);
         var persisted = await db.Documents.Include(x => x.Fields).SingleAsync(x => x.Id == documentId);
 
         Assert.Equal(DocumentStatus.Ready, response.Status);
@@ -177,7 +177,7 @@ public class DocumentServiceTests
     {
         return new DocumentService(
             dbContext,
-            pythonClient ?? new FakePythonAiClient((_, _, _, _) => throw new NotImplementedException()),
+            pythonClient ?? new FakePythonAiClient((_, _, _, _, _) => throw new NotImplementedException()),
             fileStorage ?? new FakeFileStorage(),
             queue ?? new FakeProcessingQueue(),
             tracker ?? new FakeProcessingTracker(),
@@ -186,9 +186,9 @@ public class DocumentServiceTests
 
     private sealed class FakePythonAiClient : IPythonAiClient
     {
-        private readonly Func<Guid, string, string?, CancellationToken, Task<DocumentProcessResponse>> _handler;
+        private readonly Func<Guid, string, string?, string?, CancellationToken, Task<DocumentProcessResponse>> _handler;
 
-        public FakePythonAiClient(Func<Guid, string, string?, CancellationToken, Task<DocumentProcessResponse>> handler)
+        public FakePythonAiClient(Func<Guid, string, string?, string?, CancellationToken, Task<DocumentProcessResponse>> handler)
         {
             _handler = handler;
         }
@@ -197,8 +197,31 @@ public class DocumentServiceTests
             Guid documentId,
             string filePath,
             string? originalFilename,
+            string? optionsJson,
             CancellationToken cancellationToken)
-            => _handler(documentId, filePath, originalFilename, cancellationToken);
+            => _handler(documentId, filePath, originalFilename, optionsJson, cancellationToken);
+
+        public Task<OnlineLearningStatsDto> GetOnlineLearningStatsAsync(
+            int recent,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _ = recent;
+            return Task.FromResult(
+                new OnlineLearningStatsDto(
+                    false,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    null,
+                    0,
+                    new OnlineLearningTotalsDto(0, 0, 0),
+                    new Dictionary<string, int>(),
+                    new Dictionary<string, OnlineLearningByTypeDto>(),
+                    null,
+                    Array.Empty<OnlineLearningEventDto>()));
+        }
     }
 
     private sealed class FakeProcessingQueue : IProcessingQueue

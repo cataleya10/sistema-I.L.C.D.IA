@@ -6,6 +6,7 @@ using Domain.Enums;
 using Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace Infrastructure.Services;
@@ -155,7 +156,7 @@ public class DocumentService : IDocumentService
         return await _fileStorage.OpenReadAsync(document.FilePath, cancellationToken);
     }
 
-    public async Task<DocumentProcessResponse> ProcessAsync(Guid id, CancellationToken cancellationToken)
+    public async Task<DocumentProcessResponse> ProcessAsync(Guid id, string? optionsJson, CancellationToken cancellationToken)
     {
         var document = await _dbContext.Documents
             .Include(x => x.Fields)
@@ -171,7 +172,7 @@ public class DocumentService : IDocumentService
             var existing = _tracker.Register(document.Id);
             if (existing.Created)
             {
-                await _queue.EnqueueAsync(new DocumentProcessJob(document.Id), cancellationToken);
+                await _queue.EnqueueAsync(new DocumentProcessJob(document.Id, SanitizeProcessOptions(optionsJson)), cancellationToken);
             }
 
             return BuildQueuedResponse(document.Id);
@@ -195,13 +196,13 @@ public class DocumentService : IDocumentService
         var registration = _tracker.Register(document.Id);
         if (registration.Created)
         {
-            await _queue.EnqueueAsync(new DocumentProcessJob(document.Id), cancellationToken);
+            await _queue.EnqueueAsync(new DocumentProcessJob(document.Id, SanitizeProcessOptions(optionsJson)), cancellationToken);
         }
 
         return BuildQueuedResponse(document.Id);
     }
 
-    public async Task<DocumentProcessResponse> ReprocessAsync(Guid id, CancellationToken cancellationToken)
+    public async Task<DocumentProcessResponse> ReprocessAsync(Guid id, string? optionsJson, CancellationToken cancellationToken)
     {
         var document = await _dbContext.Documents
             .Include(x => x.Fields)
@@ -227,7 +228,7 @@ public class DocumentService : IDocumentService
         var registration = _tracker.Register(document.Id);
         if (registration.Created)
         {
-            await _queue.EnqueueAsync(new DocumentProcessJob(document.Id), cancellationToken);
+            await _queue.EnqueueAsync(new DocumentProcessJob(document.Id, SanitizeProcessOptions(optionsJson)), cancellationToken);
         }
 
         return BuildQueuedResponse(document.Id);
@@ -271,7 +272,7 @@ public class DocumentService : IDocumentService
         return BuildQueuedResponse(document.Id);
     }
 
-    public async Task<DocumentProcessResponse> ProcessNowAsync(Guid id, CancellationToken cancellationToken)
+    public async Task<DocumentProcessResponse> ProcessNowAsync(Guid id, string? optionsJson, CancellationToken cancellationToken)
     {
         var document = await _dbContext.Documents
             .Include(x => x.Fields)
@@ -310,6 +311,7 @@ public class DocumentService : IDocumentService
                 document.Id,
                 document.FilePath,
                 document.OriginalFilename,
+                SanitizeProcessOptions(optionsJson),
                 cancellationToken);
         }
         catch (Exception ex)
@@ -665,6 +667,45 @@ public class DocumentService : IDocumentService
         }
 
         return false;
+    }
+
+    private static string? SanitizeProcessOptions(string? rawOptionsJson)
+    {
+        if (string.IsNullOrWhiteSpace(rawOptionsJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(rawOptionsJson);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            if (!root.TryGetProperty("force_document_type", out var forcedTypeElement))
+            {
+                return null;
+            }
+            if (forcedTypeElement.ValueKind != JsonValueKind.String)
+            {
+                return null;
+            }
+
+            var forcedType = (forcedTypeElement.GetString() ?? string.Empty).Trim().ToUpperInvariant();
+            if (forcedType != "FACTURA")
+            {
+                return null;
+            }
+
+            return "{\"force_document_type\":\"FACTURA\"}";
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static void NormalizeActaCriticalFlags(IReadOnlyList<DocumentField> fields)

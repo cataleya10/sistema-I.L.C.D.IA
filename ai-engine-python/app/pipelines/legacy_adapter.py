@@ -107,7 +107,7 @@ def legacy_extract_fields(document_type: str, ocr_boxes: list[dict] | None) -> d
                 "regimen": data.get("regimen_fiscal"),
             }
 
-        if document_type == "DATOS_BANCARIOS":
+        if document_type in {"DATOS_BANCARIOS", "FACTURA"}:
             from app.legacy_motor.banco_logic import extraer_datos_bancarios
 
             data = extraer_datos_bancarios(legacy_results)

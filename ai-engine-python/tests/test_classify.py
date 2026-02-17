@@ -70,6 +70,17 @@ class ClassifyPipelineTests(unittest.TestCase):
         self.assertEqual(doc_type, "COMPROBANTE_DOMICILIO")
         self.assertGreaterEqual(confidence, 0.86)
 
+    def test_classify_factura_pago_nomina_markers(self):
+        doc_type, confidence = asyncio.run(
+            classify.classify_document(
+                None,
+                "Reporte de operaciones Dispersion de Pago de Nomina Cuenta Referencia Importe",
+                "PAGO FIS BMPEI.pdf",
+            )
+        )
+        self.assertEqual(doc_type, "FACTURA")
+        self.assertGreaterEqual(confidence, 0.85)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,30 @@
+{
+  "include": [
+    "app",
+    "tests",
+    "tools"
+  ],
+  "exclude": [
+    ".venv312",
+    "**/__pycache__",
+    "logs",
+    "reports",
+    "tests/online_learning_*"
+  ],
+  "venvPath": ".",
+  "venv": ".venv312",
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "warning",
+  "reportUndefinedVariable": "none",
+  "reportGeneralTypeIssues": "none",
+  "reportInvalidTypeForm": "none",
+  "executionEnvironments": [
+    {
+      "root": ".",
+      "extraPaths": [
+        "./"
+      ]
+    }
+  ]
+}

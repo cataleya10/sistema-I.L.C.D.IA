@@ -12,6 +12,7 @@ using DocumentFormat.OpenXml.Spreadsheet;
 using System.IO;
 using System.Globalization;
 using System.Xml;
+using System.Text.Json;
 
 namespace Api.Controllers;
 
@@ -21,11 +22,16 @@ namespace Api.Controllers;
 public class DocumentsController : ControllerBase
 {
     private readonly IDocumentService _documentService;
+    private readonly IPythonAiClient _pythonAiClient;
     private readonly UploadOptions _uploadOptions;
 
-    public DocumentsController(IDocumentService documentService, IOptions<UploadOptions> uploadOptions)
+    public DocumentsController(
+        IDocumentService documentService,
+        IPythonAiClient pythonAiClient,
+        IOptions<UploadOptions> uploadOptions)
     {
         _documentService = documentService;
+        _pythonAiClient = pythonAiClient;
         _uploadOptions = uploadOptions.Value;
     }
 
@@ -92,6 +98,24 @@ public class DocumentsController : ControllerBase
         var query = new DocumentListQuery(status, type, q, from, to, page, pageSize);
         var result = await _documentService.ListAsync(query, cancellationToken);
         return Ok(result);
+    }
+
+    [HttpGet("online-learning/stats")]
+    [RequireRole("Admin,User")]
+    public async Task<ActionResult<OnlineLearningStatsDto>> GetOnlineLearningStats(
+        [FromQuery] int recent = 10,
+        CancellationToken cancellationToken = default)
+    {
+        var safeRecent = Math.Clamp(recent, 0, 100);
+        try
+        {
+            var stats = await _pythonAiClient.GetOnlineLearningStatsAsync(safeRecent, cancellationToken);
+            return Ok(stats);
+        }
+        catch (HttpRequestException)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, "No se pudo consultar el estado de entrenamiento del motor IA.");
+        }
     }
 
     [HttpGet("{id:guid}")]
@@ -161,9 +185,12 @@ public class DocumentsController : ControllerBase
 
     [HttpPost("{id:guid}/process")]
     [RequireRole("Admin,User")]
-    public async Task<ActionResult<DocumentProcessResponse>> Process(Guid id, CancellationToken cancellationToken)
+    public async Task<ActionResult<DocumentProcessResponse>> Process(
+        Guid id,
+        [FromBody] DocumentProcessOptionsRequest? request,
+        CancellationToken cancellationToken)
     {
-        var result = await _documentService.ProcessAsync(id, cancellationToken);
+        var result = await _documentService.ProcessAsync(id, BuildProcessOptionsJson(request), cancellationToken);
         if (result.Status == DocumentStatus.Processing)
         {
             return Accepted(result);
@@ -188,9 +215,12 @@ public class DocumentsController : ControllerBase
 
     [HttpPost("{id:guid}/reprocess")]
     [RequireRole("Admin,User")]
-    public async Task<ActionResult<DocumentProcessResponse>> Reprocess(Guid id, CancellationToken cancellationToken)
+    public async Task<ActionResult<DocumentProcessResponse>> Reprocess(
+        Guid id,
+        [FromBody] DocumentProcessOptionsRequest? request,
+        CancellationToken cancellationToken)
     {
-        var result = await _documentService.ReprocessAsync(id, cancellationToken);
+        var result = await _documentService.ReprocessAsync(id, BuildProcessOptionsJson(request), cancellationToken);
         return Accepted(result);
     }
 
@@ -348,7 +378,20 @@ public class DocumentsController : ControllerBase
                     ("titular", "Titular"),
                     ("rfc", "RFC"),
                     ("fecha_corte", "Fecha de corte"),
-                    ("periodo", "Periodo")
+                    ("periodo", "Periodo"),
+                    ("tabla_celdas", "Tabla celdas")
+                },
+                DocumentType.Factura => new List<(string, string)>
+                {
+                    ("banco", "Banco"),
+                    ("clabe", "CLABE"),
+                    ("cuenta", "Cuenta"),
+                    ("titular", "Titular"),
+                    ("rfc", "RFC"),
+                    ("referencia", "Referencia"),
+                    ("concepto", "Concepto"),
+                    ("total", "Total"),
+                    ("tabla_celdas", "Tabla celdas")
                 },
                 DocumentType.ConstanciaSituacionFiscal => new List<(string, string)>
                 {
@@ -468,7 +511,20 @@ public class DocumentsController : ControllerBase
                     ("titular", "Titular"),
                     ("rfc", "RFC"),
                     ("fecha_corte", "Fecha de corte"),
-                    ("periodo", "Periodo")
+                    ("periodo", "Periodo"),
+                    ("tabla_celdas", "Tabla celdas")
+                },
+                DocumentType.Factura => new List<(string, string)>
+                {
+                    ("banco", "Banco"),
+                    ("clabe", "CLABE"),
+                    ("cuenta", "Cuenta"),
+                    ("titular", "Titular"),
+                    ("rfc", "RFC"),
+                    ("referencia", "Referencia"),
+                    ("concepto", "Concepto"),
+                    ("total", "Total"),
+                    ("tabla_celdas", "Tabla celdas")
                 },
                 DocumentType.ConstanciaSituacionFiscal => new List<(string, string)>
                 {
@@ -641,6 +697,21 @@ public class DocumentsController : ControllerBase
             _ => true
         };
     }
+
+    private static string? BuildProcessOptionsJson(DocumentProcessOptionsRequest? request)
+    {
+        var forced = (request?.ForceDocumentType ?? string.Empty).Trim().ToUpperInvariant();
+        if (forced != "FACTURA")
+        {
+            return null;
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            force_document_type = "FACTURA"
+        });
+    }
 }
 
 public sealed record DocumentFailRequest(string? Reason);
+public sealed record DocumentProcessOptionsRequest(string? ForceDocumentType);

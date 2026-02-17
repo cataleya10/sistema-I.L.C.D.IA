@@ -5,6 +5,7 @@ param(
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $apiPath = Join-Path $root "backend-dotnet\src\Api"
+. "$root\load-env.ps1"
 
 if ($Force) {
     $listeners = Get-NetTCPConnection -LocalPort 5000 -State Listen -ErrorAction SilentlyContinue

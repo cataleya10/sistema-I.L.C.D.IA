@@ -130,19 +130,38 @@ def _merge_legacy_fields(fields: list[dict], legacy_values: dict[str, str], ocr_
         confidence = 0.9 if key in LEGACY_OVERRIDE_KEYS else 0.65
         fields.append(_make_field(key, label, normalized, ocr_boxes, confidence=confidence))
 
+_ALIAS_MODEL_PATH = os.getenv(
+    "FIELD_ALIAS_PATH",
+    os.path.join(os.path.dirname(__file__), "..", "models", "field_aliases.json"),
+)
+_ALIAS_MODEL_MTIME = None
+_ALIAS_MODEL_CACHE = {}
+
+
 def _load_alias_model():
-    path = os.getenv("FIELD_ALIAS_PATH", os.path.join(os.path.dirname(__file__), "..", "models", "field_aliases.json"))
+    global _ALIAS_MODEL_MTIME
+    global _ALIAS_MODEL_CACHE
+
     try:
-        if not os.path.exists(path):
+        if not os.path.exists(_ALIAS_MODEL_PATH):
+            _ALIAS_MODEL_MTIME = None
+            _ALIAS_MODEL_CACHE = {}
             return {}
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+
+        mtime = os.path.getmtime(_ALIAS_MODEL_PATH)
+        if _ALIAS_MODEL_MTIME == mtime and isinstance(_ALIAS_MODEL_CACHE, dict):
+            return _ALIAS_MODEL_CACHE
+
+        with open(_ALIAS_MODEL_PATH, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        if not isinstance(loaded, dict):
+            loaded = {}
+        _ALIAS_MODEL_CACHE = loaded
+        _ALIAS_MODEL_MTIME = mtime
+        return _ALIAS_MODEL_CACHE
     except Exception:
-        logger.exception("Failed to load alias model from %s", path)
-        return {}
-
-
-ALIASES_FROM_MODEL = _load_alias_model()
+        logger.exception("Failed to load alias model from %s", _ALIAS_MODEL_PATH)
+        return _ALIAS_MODEL_CACHE if isinstance(_ALIAS_MODEL_CACHE, dict) else {}
 
 
 def _is_reasonable_alias(alias: str) -> bool:
@@ -160,7 +179,8 @@ def _is_reasonable_alias(alias: str) -> bool:
 
 def _merge_aliases(label: str) -> list[str]:
     base = LABEL_ALIASES.get(label, [label])
-    raw_extra = ALIASES_FROM_MODEL.get(LABEL_MAP.get(label, label), [])
+    aliases_from_model = _load_alias_model()
+    raw_extra = aliases_from_model.get(LABEL_MAP.get(label, label), [])
     extra = [alias for alias in raw_extra if _is_reasonable_alias(str(alias))]
     return list(dict.fromkeys([*base, *extra]))
 
@@ -421,6 +441,127 @@ def _lines_text_from_boxes(ocr_boxes):
     boxes = _boxes_with_rect(ocr_boxes)
     lines = _line_groups(boxes)
     return lines
+
+
+_PAYMENT_TABLE_HEADER_TOKENS = (
+    "CUENTA",
+    "REFERENCIA",
+    "IMPORTE",
+    "NOMBRE",
+    "APELLIDO",
+    "ESTATUS",
+    "CONCEPTO",
+    "BENEFICIARIO",
+    "CLAVE RASTREO",
+)
+
+_PAYMENT_TABLE_STATUS_TOKENS = (
+    "PROCESADO",
+    "APLICADO",
+    "ACEPTADO",
+    "TRANSMITIDO",
+)
+
+
+def _normalize_table_cell(text: str) -> str:
+    cell = _normalize_text(str(text or "")).upper()
+    if not cell:
+        return ""
+    if len(cell) > 90:
+        return cell[:90].rstrip() + "..."
+    return cell
+
+
+def _looks_like_payment_table_header(cells: list[str]) -> bool:
+    joined = " ".join(cells)
+    hits = sum(1 for token in _PAYMENT_TABLE_HEADER_TOKENS if token in joined)
+    return hits >= 2
+
+
+def _looks_like_payment_table_data(cells: list[str]) -> bool:
+    joined = " ".join(cells)
+    has_amount = bool(re.search(r"\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})\b", joined))
+    long_numeric_cells = sum(1 for cell in cells if len(re.sub(r"\D", "", cell)) >= 8)
+    has_status = any(token in joined for token in _PAYMENT_TABLE_STATUS_TOKENS)
+    return (
+        (has_amount and long_numeric_cells >= 1)
+        or (has_status and long_numeric_cells >= 1)
+        or (long_numeric_cells >= 2 and len(cells) >= 4)
+    )
+
+
+def _is_payment_table_footer(cells: list[str]) -> bool:
+    joined = " ".join(cells)
+    if "TOTAL" not in joined:
+        return False
+    return any(token in joined for token in ("MOVIMIENTO", "MOVIMIENTOS", "REGISTROS", "IMPORTE"))
+
+
+def _extract_payment_table_rows_from_boxes(ocr_boxes) -> list[list[str]]:
+    rows: list[list[str]] = []
+    for line in _lines_text_from_boxes(ocr_boxes):
+        cells = [_normalize_table_cell(box.get("text", "")) for box in line.get("boxes", [])]
+        cells = [cell for cell in cells if cell]
+        if len(cells) >= 3:
+            rows.append(cells[:10])
+
+    if not rows:
+        return []
+
+    header_idx = next((idx for idx, row in enumerate(rows) if _looks_like_payment_table_header(row)), None)
+    if header_idx is None:
+        return [row for row in rows if _looks_like_payment_table_data(row)][:12]
+
+    selected = [rows[header_idx]]
+    for row in rows[header_idx + 1:]:
+        if len(selected) >= 20:
+            break
+        if _is_payment_table_footer(row) and len(selected) > 1:
+            break
+        if _looks_like_payment_table_header(row) and len(selected) <= 2:
+            selected.append(row)
+            continue
+        if _looks_like_payment_table_data(row):
+            selected.append(row)
+
+    return selected if len(selected) > 1 else []
+
+
+def _extract_payment_table_rows_from_text(raw_text: str) -> list[list[str]]:
+    if not raw_text:
+        return []
+    rows: list[list[str]] = []
+    for raw_line in raw_text.splitlines():
+        line = str(raw_line or "").strip()
+        if not line:
+            continue
+        if "\t" in line:
+            parts = [part.strip() for part in line.split("\t") if part.strip()]
+        else:
+            parts = [part.strip() for part in re.split(r"\s{2,}", line) if part.strip()]
+        cells = [_normalize_table_cell(part) for part in parts if part.strip()]
+        if len(cells) < 3:
+            continue
+        if _looks_like_payment_table_header(cells) or _looks_like_payment_table_data(cells):
+            rows.append(cells[:10])
+        if len(rows) >= 12:
+            break
+    return rows
+
+
+def _extract_payment_table_payload(base_text_raw: str, ocr_boxes) -> dict | None:
+    rows = _extract_payment_table_rows_from_boxes(ocr_boxes)
+    source = "ocr_boxes"
+    if not rows:
+        rows = _extract_payment_table_rows_from_text(base_text_raw)
+        source = "text_lines"
+    if len(rows) < 2:
+        return None
+
+    return {
+        "source": source,
+        "rows": rows,
+    }
 
 
 def _extract_label_value(lines, label, stop_labels=None, value_regex=None):
@@ -1472,7 +1613,7 @@ def _extract_ine_from_boxes(ocr_boxes):
         if sec_box:
             result["seccion"] = {"value": sec_box.get("text", "").strip(), "source": sec_box}
         else:
-            m = re.search(r"SECCION\s*([0-9OIL]+)", seccion_line["text"], re.IGNORECASE)
+            m = re.search(r"SECCION\s*([0-9OIL]+)", str(seccion_line["text"]).upper())
             if m:
                 result["seccion"] = {"value": m.group(1)}
             else:
@@ -2018,6 +2159,66 @@ def _extract_telmex_domicilio_from_full_text(full_text: str) -> str | None:
     return candidates[0][1]
 
 
+def _extract_cfe_address_from_lines(lines: list[str]) -> str | None:
+    if not lines:
+        return None
+    stop_tokens = (
+        "NO.DESERVICIO",
+        "RMU",
+        "CUENTA",
+        "LIMITE DE PAGO",
+        "CORTE A PARTIR",
+        "TARIFA",
+        "PERI0DO",
+        "PERIODO",
+        "CONCEPTO",
+        "SUBTOTAL",
+        "CFE-CONTIGO",
+        "LECTURA",
+    )
+    skip_tokens = (
+        "TOTALA PAGAR",
+        "PESOS M.N.",
+        "DESCARGA NUESTRA",
+    )
+    start_tokens = ("DN.", "DEPTO", "CALLE", "CLL", "AV", "BENITO")
+
+    start_idx = None
+    prepared = [_normalize_text(line).upper() for line in lines if _normalize_text(line)]
+    for idx, line in enumerate(prepared):
+        if any(token in line for token in start_tokens) and "NO.DESERVICIO" not in line:
+            start_idx = idx
+            break
+    if start_idx is None:
+        return None
+
+    parts: list[str] = []
+    for idx in range(start_idx, min(len(prepared), start_idx + 6)):
+        line = prepared[idx]
+        if any(token in line for token in stop_tokens):
+            break
+        if any(token in line for token in skip_tokens):
+            continue
+        parts.append(line)
+        if re.search(r"\b(?:C\.?\s*P\.?\s*)?\d{5}\b", line):
+            if idx + 1 < len(prepared):
+                nxt = prepared[idx + 1]
+                if "CIUDAD" in nxt or "CARMEN" in nxt or "CAMP" in nxt:
+                    parts.append(nxt)
+            break
+
+    if not parts:
+        return None
+    raw = " ".join(parts)
+    raw = re.sub(r"\([^)]{0,200}\)", " ", raw)
+    raw = re.sub(r"\bDESCARGA\s+NUESTRA\b.*$", " ", raw)
+    raw = re.sub(r"\s+", " ", raw).strip(" .,-")
+    if len(raw) < 12:
+        return None
+    cleaned = _clean_address_value(raw)
+    return cleaned if len(cleaned) >= 12 else None
+
+
 def _pick_telmex_customer_index(lines: list[str]) -> int | None:
     indices = []
     for idx, line in enumerate(lines):
@@ -2100,6 +2301,8 @@ def _clean_address_value(value: str) -> str:
     upper = re.sub(r"\bCFE\s+COMISION\s+FEDERAL\s+DE\s+ELECTRICIDAD\b", " ", upper)
     upper = re.sub(r"\bCOMISION\s+FEDERAL\s+DE\s+ELECTRICIDAD\b", " ", upper)
     upper = re.sub(r"\$\s*\d{1,5}(?:[.,]\d{2})?(?:\s+\d{1,3})*", " ", upper)
+    upper = re.sub(r"\([^)]{0,200}\)", " ", upper)
+    upper = re.sub(r"\bDESCARGA\s+NUESTRA\b.*$", " ", upper)
     # Remove leading payment/amount fragments that OCR sometimes merges into CFE address lines.
     upper = re.sub(r"^\s*\$\s*\d{1,5}(?:[.,]\d{2})?(?:\s+\d{1,3})*\s+", "", upper)
     upper = re.sub(
@@ -2157,6 +2360,8 @@ def _clean_address_value(value: str) -> str:
             continue
         if tok in noise:
             continue
+        if any(fragment in tok for fragment in ("INSTI", "ELECT", "CREDEN", "VOTAR")):
+            continue
         if tok in allowed_keywords:
             tokens.append(tok)
             continue
@@ -2196,8 +2401,16 @@ def _normalize_vigencia(value: str) -> str:
     year_range = re.search(r"(\d{4}\s*/\s*\d{4})", value)
     if year_range:
         return year_range.group(1).replace(" ", "")
-    date_match = re.search(r"(\d{2}/\d{2}/\d{4})", value)
-    return date_match.group(1) if date_match else value
+    years = [int(y) for y in re.findall(r"\b(19\d{2}|20\d{2})\b", value)]
+    if years:
+        plausible = [year for year in years if 2020 <= year <= 2055]
+        selected = max(plausible) if plausible else max(years)
+        return str(selected)
+    date_match = re.search(r"(\d{2}/\d{2}/(\d{4}))", value)
+    if date_match:
+        year = date_match.group(2)
+        return _normalize_vigencia(year)
+    return value
 
 
 def _normalize_numeric_field(value: str) -> str:
@@ -2265,9 +2478,12 @@ def _normalize_reference_value(value: str) -> str:
     numeric = _normalize_numeric_field(text)
     if 10 <= len(numeric) <= 30:
         return numeric
+    text_norm = _normalize_text(text).upper()
+    if len(text_norm) >= 12 and any(marker in text_norm for marker in ("CALLE", "CLL", "AV", "COL", "DEPTO", "CIUDAD", "CP", "C.P.", "BENITO", "CARMEN")):
+        return text_norm
     alnum = _normalize_alnum(text)
     digits = sum(1 for ch in alnum if ch.isdigit())
-    if 10 <= len(alnum) <= 30 and digits >= 8:
+    if 10 <= len(alnum) <= 120 and digits >= 8:
         return alnum
     return ""
 
@@ -2277,6 +2493,8 @@ def _normalize_seccion_value(value: str) -> str:
     raw = re.sub(r"\D", "", text)
     if not raw:
         return ""
+    if re.fullmatch(r"\d{3,4}", raw):
+        return raw
     trimmed = raw.lstrip("0")
     if re.fullmatch(r"\d{3,4}", trimmed):
         return trimmed
@@ -2305,12 +2523,16 @@ def _normalize_field_value_for_contract(key: str, value: str) -> str:
     raw = str(value or "")
     if not raw:
         return ""
+    if key == "tabla_celdas":
+        return raw.strip()
     if key in FIELD_VALUE_NORMALIZERS:
         return _normalize_value_for_key(key, raw)
     if key in {"curp", "rfc", "clave_elector", "id_cif"}:
         return _normalize_alnum(raw)
-    if key in {"nss", "clabe", "cp", "seccion", "numero_servicio", "cuenta"}:
+    if key in {"nss", "clabe", "cp", "seccion", "numero_servicio"}:
         return _normalize_numeric_field(raw)
+    if key == "cuenta":
+        return _normalize_alnum(raw)
     if key in {"fecha", "fecha_nacimiento", "fecha_registro", "fecha_limite", "fecha_corte", "fecha_emision", "fecha_documento"}:
         return _normalize_date_value(raw)
     if key in {"nombre", "titular", "nombres", "apellido_paterno", "apellido_materno", "primer_apellido", "segundo_apellido"}:
@@ -2324,6 +2546,33 @@ def _normalize_field_value_for_contract(key: str, value: str) -> str:
     if key in {"entidad_registro", "municipio_registro", "banco", "estado", "ciudad", "proveedor"}:
         return _normalize_address(raw)
     return _normalize_text(raw)
+
+
+def _is_valid_table_cells_payload(value: str) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    try:
+        payload = json.loads(text)
+    except Exception:
+        return False
+
+    if not isinstance(payload, dict):
+        return False
+
+    rows = payload.get("rows")
+    if not isinstance(rows, list) or len(rows) < 2:
+        return False
+
+    non_empty_rows = 0
+    for row in rows:
+        if not isinstance(row, list):
+            continue
+        cells = [_normalize_text(str(cell or "")) for cell in row]
+        if any(cells):
+            non_empty_rows += 1
+
+    return non_empty_rows >= 2
 
 
 def _looks_like_person_name(value: str) -> bool:
@@ -2348,9 +2597,102 @@ def _looks_like_person_name(value: str) -> bool:
         "SEXO",
         "FECHA",
     }
+    banned_fragments = (
+        "CONSUMO",
+        "GRAFIC",
+        "SUBTOTAL",
+        "MULTIPLICADOR",
+        "IMPORTE",
+        "PAGAR",
+        "SERVICIO",
+        "KWH",
+        "TARIFA",
+    )
     if any(tok in banned for tok in tokens):
         return False
+    if any(fragment in text for fragment in banned_fragments):
+        return False
+    if sum(1 for ch in text if ch.isdigit()) >= 4:
+        return False
     return True
+
+
+_ALLOWED_FIELDS_BY_TYPE: dict[str, set[str]] = {
+    "INE": {
+        "nombre",
+        "curp",
+        "clave_elector",
+        "fecha_nacimiento",
+        "sexo",
+        "domicilio",
+        "seccion",
+        "vigencia",
+    },
+    "CURP": {
+        "nombre",
+        "curp",
+        "fecha_nacimiento",
+        "sexo",
+        "entidad_nacimiento",
+    },
+    "ACTA_NACIMIENTO": {
+        "nombre",
+        "sexo",
+        "fecha_nacimiento",
+        "lugar_nacimiento",
+        "folio",
+        "numero_acta",
+        "fecha_registro",
+        "municipio_registro",
+        "entidad_registro",
+        "numero_certificado",
+        "identificador_electronico",
+    },
+    "NSS": {
+        "nss",
+        "nombre",
+    },
+    "COMPROBANTE_DOMICILIO": {
+        "proveedor",
+        "numero_servicio",
+        "cuenta",
+        "referencia",
+        "titular",
+        "domicilio",
+        "cp",
+        "fecha_limite",
+        "total",
+        "contrato",
+    },
+    "DATOS_BANCARIOS": {
+        "banco",
+        "clabe",
+        "cuenta",
+        "titular",
+        "rfc",
+        "fecha_corte",
+        "periodo",
+        "tabla_celdas",
+    },
+    "FACTURA": {
+        "tabla_celdas",
+    },
+    "CONSTANCIA_SITUACION_FISCAL": {
+        "rfc",
+        "nombre",
+        "regimen",
+        "domicilio",
+    },
+}
+
+
+def _is_allowed_field_for_type(document_type: str, key: str) -> bool:
+    if key == "texto_detectado":
+        return True
+    allowed = _ALLOWED_FIELDS_BY_TYPE.get(document_type)
+    if not allowed:
+        return True
+    return key in allowed
 
 
 def _is_valid_by_contract(document_type: str, key: str, value: str) -> bool:
@@ -2358,6 +2700,9 @@ def _is_valid_by_contract(document_type: str, key: str, value: str) -> bool:
     if not text:
         return False
     upper = text.upper()
+
+    if key == "tabla_celdas":
+        return _is_valid_table_cells_payload(text)
 
     if key == "curp":
         return bool(CURP_PATTERN.fullmatch(_normalize_alnum(upper)))
@@ -2374,9 +2719,15 @@ def _is_valid_by_contract(document_type: str, key: str, value: str) -> bool:
     if key == "numero_servicio":
         return bool(re.fullmatch(r"\d{10,13}", _normalize_numeric_field(upper)))
     if key == "cuenta":
-        return bool(re.fullmatch(r"\d{8,22}", _normalize_numeric_field(upper)))
+        if document_type in {"DATOS_BANCARIOS", "FACTURA"}:
+            return bool(re.fullmatch(r"\d{8,22}", _normalize_numeric_field(upper)))
+        normalized_account = _normalize_alnum(upper)
+        digit_count = sum(1 for ch in normalized_account if ch.isdigit())
+        return bool(normalized_account) and 8 <= len(normalized_account) <= 24 and digit_count >= 6
     if key == "referencia":
         normalized = _normalize_value_for_key("referencia", upper)
+        if any(ch.isalpha() for ch in normalized):
+            return len(normalized) >= 12
         digits = sum(1 for ch in normalized if ch.isdigit())
         return bool(normalized) and 10 <= len(normalized) <= 30 and digits >= 8
     if key == "sexo":
@@ -2414,6 +2765,8 @@ def _apply_field_contracts(document_type: str, fields: list[dict]) -> list[dict]
     for field in fields:
         key = str(field.get("key", "") or "")
         if not key:
+            continue
+        if not _is_allowed_field_for_type(document_type, key):
             continue
         if key == "texto_detectado":
             contracted.append(field)
@@ -2735,9 +3088,16 @@ def _extract_acta_folio_numero_from_text(full_text: str) -> tuple[str | None, st
         text,
     )
     if table_match:
-        numero_acta = _normalize_value_for_key("numero_acta", table_match.group(2))
-        folio = _normalize_value_for_key("folio", table_match.group(3))
-        return (folio or None, numero_acta or None)
+        first_value = _normalize_value_for_key("folio", table_match.group(1))
+        middle_value = _normalize_value_for_key("numero_acta", table_match.group(2))
+        last_value = _normalize_value_for_key("numero_acta", table_match.group(3))
+
+        if first_value and last_value:
+            return (first_value, last_value)
+
+        fallback_folio = _normalize_value_for_key("folio", table_match.group(3))
+        fallback_numero = middle_value or last_value
+        return (fallback_folio or None, fallback_numero or None)
 
     numero_acta = None
     folio = None
@@ -2913,6 +3273,17 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
             match = re.search(r"(?:VIGENCIA|VGENCIA)\s*(\d{4})", text)
             if match:
                 fields.append(_make_field("vigencia", "Vigencia", match.group(1), ocr_boxes, confidence=0.95))
+            current_vigencia = next((f for f in fields if f.get("key") == "vigencia" and f.get("value")), None)
+            current_year = 0
+            if current_vigencia:
+                current_digits = re.sub(r"\D", "", str(current_vigencia.get("value", "")))
+                if len(current_digits) >= 4:
+                    current_year = int(current_digits[-4:])
+            if current_year < 2020:
+                year_candidates = [int(year) for year in re.findall(r"(20\d{2})", text)]
+                plausible_years = [year for year in year_candidates if 2020 <= year <= 2055]
+                if plausible_years:
+                    fields.append(_make_field("vigencia", "Vigencia", str(max(plausible_years)), ocr_boxes, confidence=0.97))
             surname_line = next((line for line in text_lines if "<" in line and "<<" not in line and not re.search(r"\d", line)), "")
             given_line = next((line for line in text_lines if "<<" in line and not re.search(r"\d", line)), "")
             if given_line or surname_line:
@@ -2926,7 +3297,20 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                     elif token.endswith("K") and len(token) > 4:
                         token = token[:-1]
                     tokens.append(token)
+                merged_tokens: list[str] = []
+                for token in tokens:
+                    if (
+                        merged_tokens
+                        and len(token) <= 2
+                        and len(merged_tokens[-1]) >= 4
+                        and token not in {"DE", "LA", "DEL", "Y"}
+                    ):
+                        merged_tokens[-1] = f"{merged_tokens[-1]}{token}"
+                        continue
+                    merged_tokens.append(token)
                 name = " ".join([t for t in tokens if t])
+                if merged_tokens:
+                    name = " ".join([t for t in merged_tokens if t])
                 if name:
                     fields.append(_make_field("nombre", "Nombre", _normalize_name(name), ocr_boxes, confidence=0.95))
             existing_dom = next((f for f in fields if f.get("key") == "domicilio"), None)
@@ -2969,7 +3353,7 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
             for value in name_curps:
                 fields.append(_make_field("curp", "CURP", _normalize_alnum(value), ocr_boxes, confidence=0.9))
 
-    if document_type in {"CONSTANCIA_SITUACION_FISCAL", "DATOS_BANCARIOS"}:
+    if document_type in {"CONSTANCIA_SITUACION_FISCAL", "DATOS_BANCARIOS", "FACTURA"}:
         if ocr_boxes:
             rfc_box_values = _extract_rfc_from_boxes(ocr_boxes)
             if "rfc" in rfc_box_values:
@@ -3036,7 +3420,7 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
         if nss_name:
             fields.append(_make_field("nombre", "Nombre", _normalize_name(nss_name), ocr_boxes, confidence=0.82))
 
-    if document_type == "DATOS_BANCARIOS":
+    if document_type in {"DATOS_BANCARIOS", "FACTURA"}:
         if ocr_boxes:
             fin_box_values = _extract_financial_from_boxes(ocr_boxes)
             if "clabe" in fin_box_values:
@@ -3063,6 +3447,18 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
         labeled_clabe = _find_labeled_value(lines, "CLABE")
         if labeled_clabe:
             fields.append(_make_field("clabe", "CLABE", _normalize_numeric_field(labeled_clabe), ocr_boxes, confidence=0.8))
+
+        payment_table = _extract_payment_table_payload(base_text_raw, ocr_boxes)
+        if payment_table:
+            fields.append(
+                _make_field(
+                    "tabla_celdas",
+                    "Tabla celdas",
+                    json.dumps(payment_table, ensure_ascii=False),
+                    ocr_boxes,
+                    confidence=0.92,
+                )
+            )
 
     if document_type in {"ACTA_NACIMIENTO", "INE"}:
         if document_type == "ACTA_NACIMIENTO" and ocr_boxes:
@@ -4046,6 +4442,23 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
         fields = normalized_fields
         if recovered_due_date and not any(f.get("key") == "fecha_limite" and f.get("value") for f in fields):
             fields.append(_make_field("fecha_limite", "Fecha limite", recovered_due_date, ocr_boxes, confidence=0.84))
+
+    if document_type == "ACTA_NACIMIENTO":
+        best_place = next((f for f in fields if f.get("key") == "lugar_nacimiento" and f.get("value")), None)
+        best_state = next((f for f in fields if f.get("key") == "entidad_registro" and f.get("value")), None)
+        if best_place and best_state:
+            place_text = _clean_acta_lugar_nacimiento(str(best_place.get("value", "")))
+            state_text = _normalize_address(str(best_state.get("value", "")))
+            if place_text and state_text and state_text not in place_text:
+                fields.append(
+                    _make_field(
+                        "lugar_nacimiento",
+                        "Lugar de nacimiento",
+                        _clean_acta_lugar_nacimiento(f"{place_text} {state_text}"),
+                        ocr_boxes,
+                        confidence=0.95,
+                    )
+                )
 
     if base_text:
         snippet = base_text.strip()

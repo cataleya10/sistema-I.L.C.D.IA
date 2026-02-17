@@ -107,6 +107,25 @@ class PipelineIntegrationTests(unittest.TestCase):
         self.assertEqual(nss.get("value"), "12345678901")
         self.assertTrue(bool(nss.get("valid")))
 
+    def test_pipeline_factura_pago_end_to_end(self):
+        text = "\n".join(
+            [
+                "Reporte de operaciones",
+                "Dispersion de Pago de Nomina",
+                "Cuenta    Referencia    Importe    Nombre",
+                "56551346133    1620260115132703271255    $1,462.58    JOSE LUIS",
+            ]
+        )
+        doc_type, _ = asyncio.run(classify.classify_document(None, text, "PAGO FIS BMPEI.pdf"))
+        self.assertEqual(doc_type, "FACTURA")
+
+        fields = asyncio.run(extract_fields(doc_type, text, None, raw_text=text, filename="PAGO FIS BMPEI.pdf"))
+        validated = asyncio.run(validate_fields(fields))
+
+        table_field = _field_by_key(validated, "tabla_celdas")
+        self.assertIsNotNone(table_field)
+        self.assertTrue(bool(table_field.get("value")))
+
 
 if __name__ == "__main__":
     unittest.main()

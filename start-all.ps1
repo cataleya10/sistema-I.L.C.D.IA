@@ -81,6 +81,26 @@ function Invoke-AiPreflight {
     }
 }
 
+function Invoke-ApiPreflight {
+    param([string]$rootPath)
+    Write-Host "Running API preflight checks..." -ForegroundColor Cyan
+    Push-Location (Join-Path $rootPath "backend-dotnet\src\Api")
+    try {
+        $env:MSBuildEnableWorkloadResolver = "false"
+        & dotnet msbuild "Api.csproj" /t:Restore /m:1 /nr:false /v:minimal
+        if ($LASTEXITCODE -ne 0) {
+            throw "API restore check failed."
+        }
+        & dotnet msbuild "Api.csproj" /t:Build /p:RestorePackages=false /m:1 /nr:false /v:minimal
+        if ($LASTEXITCODE -ne 0) {
+            throw "API build check failed."
+        }
+        Write-Host "API preflight checks passed." -ForegroundColor Green
+    } finally {
+        Pop-Location
+    }
+}
+
 $frontendPort = Get-FreePort
 
 Write-Host "Cleaning stale listeners..." -ForegroundColor Cyan
@@ -88,6 +108,7 @@ Stop-PortListeners -port 8000
 Stop-PortListeners -port 5000
 
 Invoke-AiPreflight -rootPath $root
+Invoke-ApiPreflight -rootPath $root
 
 Write-Host "Starting IA Engine..." -ForegroundColor Cyan
 $aiLog = Join-Path $logs "ai-engine.log"
@@ -103,12 +124,13 @@ $ai = Start-Process powershell -PassThru -ArgumentList @(
 Write-Host "Starting Backend API..." -ForegroundColor Cyan
 $apiLog = Join-Path $logs "backend-api.log"
 $apiErr = Join-Path $logs "backend-api.err.log"
+$apiScriptPath = Join-Path $root "start-api-quick.ps1"
 $api = Start-Process powershell -PassThru -ArgumentList @(
     '-NoProfile',
     '-ExecutionPolicy',
     'Bypass',
     '-Command',
-    "Set-Location -LiteralPath '$root\backend-dotnet\src\Api'; `$env:ASPNETCORE_ENVIRONMENT='Development'; . '$root\\load-env.ps1'; dotnet run --launch-profile http"
+    "& '$apiScriptPath' -NoBuild -Force"
 ) -RedirectStandardOutput $apiLog -RedirectStandardError $apiErr
 
 Write-Host "Starting Frontend (port $frontendPort)..." -ForegroundColor Cyan

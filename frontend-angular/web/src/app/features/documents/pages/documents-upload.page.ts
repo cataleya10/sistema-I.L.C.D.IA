@@ -1,5 +1,6 @@
 import { Component } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { DropzoneComponent } from '../../../shared/components/dropzone.component';
 import { DocumentsService } from '../services/documents.service';
 import { HttpErrorResponse } from '@angular/common/http';
@@ -8,7 +9,7 @@ import { ToastNotificationComponent } from '../../../shared/components/toast-not
 @Component({
   selector: 'app-documents-upload-page',
   standalone: true,
-  imports: [CommonModule, DropzoneComponent, ToastNotificationComponent],
+  imports: [CommonModule, FormsModule, DropzoneComponent, ToastNotificationComponent],
   template: `
     <section class="page">
       <header>
@@ -20,6 +21,11 @@ import { ToastNotificationComponent } from '../../../shared/components/toast-not
         <span>Tipos permitidos: PDF, PNG, JPG.</span>
         <span>Tamano maximo: 15 MB.</span>
       </div>
+
+      <label class="toggle">
+        <input type="checkbox" [(ngModel)]="forceFacturaOnUpload" [disabled]="isUploading" />
+        <span>Procesar automaticamente como FACTURA/PAGO</span>
+      </label>
 
       <div class="loading" *ngIf="isUploading">Subiendo documento...</div>
       <app-dropzone (fileDropped)="handleFile($event)" />
@@ -49,6 +55,13 @@ import { ToastNotificationComponent } from '../../../shared/components/toast-not
         font-size: 13px;
         color: #6b7280;
       }
+      .toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: #374151;
+      }
       .file-info {
         display: grid;
         gap: 4px;
@@ -66,6 +79,7 @@ export class DocumentsUploadPage {
   isUploading = false;
   lastFileName: string | null = null;
   lastFileSize = '';
+  forceFacturaOnUpload = false;
 
   private readonly maxFileSizeBytes = 15728640;
   private readonly allowedContentTypes = new Set(['application/pdf', 'image/png', 'image/jpeg']);
@@ -94,9 +108,23 @@ export class DocumentsUploadPage {
     this.isUploading = true;
 
     this.documents.upload(file).subscribe({
-      next: () => {
-        this.message = 'Documento cargado correctamente.';
-        this.isUploading = false;
+      next: (uploaded) => {
+        if (!this.forceFacturaOnUpload) {
+          this.message = 'Documento cargado correctamente.';
+          this.isUploading = false;
+          return;
+        }
+
+        this.documents.process(uploaded.id, { forceDocumentType: 'FACTURA' }).subscribe({
+          next: () => {
+            this.message = 'Documento cargado y enviado a procesamiento forzado como FACTURA.';
+            this.isUploading = false;
+          },
+          error: () => {
+            this.message = 'Documento cargado, pero no se pudo iniciar el procesamiento forzado.';
+            this.isUploading = false;
+          }
+        });
       },
       error: (error: HttpErrorResponse) => {
         const detail = typeof error.error === 'string' ? error.error : error.message;

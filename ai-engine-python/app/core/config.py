@@ -26,7 +26,7 @@ class Settings(BaseModel):
     enable_text_layer_short_circuit: bool = _env_bool("ENABLE_TEXT_LAYER_SHORT_CIRCUIT", False)
     text_layer_fastpath_types: list[str] = _env_csv_upper(
         "TEXT_LAYER_FASTPATH_TYPES",
-        "INE,CURP,ACTA_NACIMIENTO,COMPROBANTE_DOMICILIO,NSS,DATOS_BANCARIOS,CONSTANCIA_SITUACION_FISCAL",
+        "INE,CURP,ACTA_NACIMIENTO,COMPROBANTE_DOMICILIO,NSS,DATOS_BANCARIOS,FACTURA,CONSTANCIA_SITUACION_FISCAL",
     )
 
 settings = Settings()

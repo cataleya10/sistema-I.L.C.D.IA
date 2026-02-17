@@ -5,9 +5,10 @@ import { FormsModule } from '@angular/forms';
 import { DocumentViewerComponent } from '../../../shared/components/document-viewer.component';
 import { StatusBadgeComponent } from '../../../shared/components/status-badge.component';
 import { DocumentsService } from '../services/documents.service';
-import { DocumentDetail, ProcessingLog } from '../../../shared/models/document.models';
+import { DocumentDetail, getDocumentTypeLabel, ProcessingLog } from '../../../shared/models/document.models';
 import { ToastNotificationComponent } from '../../../shared/components/toast-notification.component';
 import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
+import { TableViewModel, buildTableView, isTableCellsField, parseTableRows } from '../utils/table-cells';
 
 @Component({
   selector: 'app-documents-detail-page',
@@ -25,14 +26,29 @@ import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
       <header>
         <div>
           <h2>{{ document.original_filename }}</h2>
-          <p>{{ document.document_type }} - Confianza {{ document.confidence ?? 0 | percent: '1.0-0' }}</p>
+          <p>{{ typeLabel(document.document_type) }} - Confianza {{ document.confidence ?? 0 | percent: '1.0-0' }}</p>
         </div>
         <app-status-badge [status]="document.status" />
       </header>
 
       <div class="actions">
         <button type="button" (click)="process()" [disabled]="isProcessing || document.status === 'PROCESSING'">Procesar</button>
+        <button
+          type="button"
+          (click)="processAsFactura()"
+          [disabled]="isProcessing || document.status === 'PROCESSING'"
+        >
+          Procesar como Factura
+        </button>
         <button type="button" class="ghost" (click)="reprocess()" [disabled]="isProcessing || document.status === 'PROCESSING'">Reprocesar</button>
+        <button
+          type="button"
+          class="ghost"
+          (click)="reprocessAsFactura()"
+          [disabled]="isProcessing || document.status === 'PROCESSING'"
+        >
+          Reprocesar como Factura
+        </button>
         <button type="button" class="ghost" (click)="toggleEdit()" [disabled]="isSaving">
           {{ editMode ? 'Cancelar edicion' : 'Editar campos' }}
         </button>
@@ -68,15 +84,40 @@ import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
                 <td>{{ field.label }}</td>
                 <td>
                   <ng-container *ngIf="!editMode; else editField">
-                    {{ field.corrected_value ?? field.value ?? '-' }}
+                    <ng-container *ngIf="isTableField(field); else plainValue">
+                      <ng-container *ngIf="tableViewForField(field) as tableView">
+                        <div class="cells-table-wrap" *ngIf="tableView.bodyRows.length; else plainValue">
+                          <table class="cells-table">
+                            <thead *ngIf="tableView.headerRows.length">
+                              <tr *ngFor="let row of tableView.headerRows">
+                                <th *ngFor="let cell of row">{{ cell }}</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr *ngFor="let row of tableView.bodyRows; let rowIndex = index" [class.alt]="rowIndex % 2 === 1">
+                                <td *ngFor="let cell of row">{{ cell }}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </ng-container>
+                    </ng-container>
+                    <ng-template #plainValue>
+                      {{ field.corrected_value ?? field.value ?? '-' }}
+                    </ng-template>
                   </ng-container>
                   <ng-template #editField>
-                    <input
-                      class="field-input"
-                      type="text"
-                      [name]="field.key"
-                      [(ngModel)]="editedValues[field.key]"
-                    />
+                    <ng-container *ngIf="!isTableField(field); else tableReadonly">
+                      <input
+                        class="field-input"
+                        type="text"
+                        [name]="field.key"
+                        [(ngModel)]="editedValues[field.key]"
+                      />
+                    </ng-container>
+                    <ng-template #tableReadonly>
+                      <span class="table-readonly">Tabla generada automaticamente.</span>
+                    </ng-template>
                   </ng-template>
                 </td>
                 <td>
@@ -90,6 +131,27 @@ import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
           <p class="empty" *ngIf="!displayFields.length">No se detectaron campos todavia.</p>
         </div>
       </div>
+
+      <section class="table-panel" *ngIf="tableView.bodyRows.length">
+        <div class="table-panel__header">
+          <h3>Tabla detectada</h3>
+          <button type="button" class="ghost" (click)="downloadTableCsv()">Descargar CSV tabla</button>
+        </div>
+        <div class="cells-table-wrap">
+          <table class="cells-table">
+            <thead *ngIf="tableView.headerRows.length">
+              <tr *ngFor="let row of tableView.headerRows">
+                <th *ngFor="let cell of row">{{ cell }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let row of tableView.bodyRows; let rowIndex = index" [class.alt]="rowIndex % 2 === 1">
+                <td *ngFor="let cell of row">{{ cell }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       <details class="logs">
         <summary>Ver logs</summary>
@@ -218,6 +280,23 @@ import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
         display: grid;
         gap: 12px;
       }
+      .table-panel {
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 16px;
+        display: grid;
+        gap: 12px;
+      }
+      .table-panel__header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .table-panel__header h3 {
+        margin: 0;
+      }
       .review {
         color: #b45309;
         font-size: 12px;
@@ -266,6 +345,40 @@ import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
         border-radius: 8px;
         border: 1px solid #e5e7eb;
         font-size: 13px;
+      }
+      .cells-table-wrap {
+        overflow-x: auto;
+      }
+      .cells-table {
+        width: max-content;
+        min-width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      .cells-table th,
+      .cells-table td {
+        padding: 6px 8px;
+        border: 1px solid #e5e7eb;
+        white-space: nowrap;
+        text-align: left;
+      }
+      .cells-table th {
+        background: #f3f4f6;
+        color: #111827;
+        font-weight: 700;
+        position: sticky;
+        top: 0;
+        z-index: 1;
+      }
+      .cells-table tbody tr.alt td {
+        background: #fafafa;
+      }
+      .cells-table tbody tr:hover td {
+        background: #eef2ff;
+      }
+      .table-readonly {
+        color: #6b7280;
+        font-size: 12px;
       }
       .empty {
         font-size: 12px;
@@ -333,12 +446,15 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
   previewMimeType: string | null = null;
   previewError: string | null = null;
   displayFields: DocumentDetail['fields'] = [];
+  tableView: TableViewModel = { headerRows: [], bodyRows: [] };
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private pollAttempts = 0;
   private readonly maxPollAttempts = 80;
   private readonly pollIntervalMs = 1500;
   private pollInFlight = false;
   private previewRequestId = 0;
+  private tableRowsCache = new Map<string, string[][]>();
+  private tableViewCache = new Map<string, TableViewModel>();
 
   constructor(private readonly route: ActivatedRoute, private readonly documents: DocumentsService) {}
 
@@ -373,6 +489,29 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
       },
       error: () => {
         this.message = 'No se pudo procesar el documento.';
+        this.isProcessing = false;
+      }
+    });
+  }
+
+  processAsFactura(): void {
+    if (!this.document) {
+      return;
+    }
+    if (this.document.status === 'PROCESSING') {
+      this.message = 'El documento ya esta en procesamiento.';
+      return;
+    }
+    this.isProcessing = true;
+    this.documents.process(this.document.id, { forceDocumentType: 'FACTURA' }).subscribe({
+      next: () => {
+        this.message = 'Procesamiento en cola (tipo forzado FACTURA).';
+        this.markDocumentAsProcessing();
+        this.startProcessingPoll(this.document!.id);
+        this.isProcessing = false;
+      },
+      error: () => {
+        this.message = 'No se pudo procesar el documento como FACTURA.';
         this.isProcessing = false;
       }
     });
@@ -521,8 +660,11 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
           ...data,
           file_url: this.documents.getFileUrl(data.id)
         };
+        this.tableRowsCache.clear();
+        this.tableViewCache.clear();
         this.loadPreview(data.id, data.mime_type ?? null, data.original_filename ?? '');
         this.displayFields = this.mapDisplayFields(this.document);
+        this.syncTableRows();
         if (this.document.status === 'PROCESSING') {
           this.startProcessingPoll(this.document.id);
         } else {
@@ -534,8 +676,32 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
         this.stopProcessingPoll();
         this.revokePreviewFileUrl();
         this.previewError = 'No se pudo cargar la vista previa.';
+        this.tableView = { headerRows: [], bodyRows: [] };
         this.message = 'No se pudo cargar el documento.';
         this.isLoading = false;
+      }
+    });
+  }
+
+  reprocessAsFactura(): void {
+    if (!this.document) {
+      return;
+    }
+    if (this.document.status === 'PROCESSING') {
+      this.message = 'El documento ya esta en procesamiento.';
+      return;
+    }
+    this.isProcessing = true;
+    this.documents.reprocess(this.document.id, { forceDocumentType: 'FACTURA' }).subscribe({
+      next: () => {
+        this.message = 'Reprocesamiento solicitado (tipo forzado FACTURA).';
+        this.markDocumentAsProcessing();
+        this.startProcessingPoll(this.document!.id);
+        this.isProcessing = false;
+      },
+      error: () => {
+        this.message = 'No se pudo reprocesar el documento como FACTURA.';
+        this.isProcessing = false;
       }
     });
   }
@@ -566,6 +732,27 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
     });
   }
 
+  downloadTableCsv(): void {
+    if (!this.document || this.tableView.bodyRows.length === 0 || this.isDownloading) {
+      return;
+    }
+    this.isDownloading = true;
+    const baseName = (this.document.original_filename || 'documento')
+      .replace(/\.[^/.]+$/, '')
+      .trim();
+    const filename = baseName ? `${baseName}-tabla.csv` : 'documento-tabla.csv';
+    const csvRows = [...this.tableView.headerRows, ...this.tableView.bodyRows];
+    const csvContent = this.buildCsv(csvRows);
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    window.URL.revokeObjectURL(url);
+    this.isDownloading = false;
+  }
+
   private mapDisplayFields(document: DocumentDetail): DocumentDetail['fields'] {
     const template = DOCUMENT_FIELD_TEMPLATES[document.document_type];
     if (!template) {
@@ -588,6 +775,9 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
           corrected: resolved?.corrected ?? false
         };
       });
+    if (document.document_type === 'FACTURA') {
+      return mappedFromTemplate;
+    }
 
     const templateKeys = new Set(template.map((field) => field.key.toLowerCase()));
     const extras = document.fields.filter((field) => !templateKeys.has(field.key.toLowerCase()));
@@ -727,6 +917,63 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
       .split(',')
       .map((value) => value.trim())
       .filter((value) => value.length > 0);
+  }
+
+  typeLabel(type: DocumentDetail['document_type']): string {
+    return getDocumentTypeLabel(type);
+  }
+
+  isTableField(field: DocumentDetail['fields'][number]): boolean {
+    return isTableCellsField(field);
+  }
+
+  tableRowsForField(field: DocumentDetail['fields'][number]): string[][] {
+    const rawValue = (field.corrected_value ?? field.value ?? '').toString();
+    if (!rawValue) {
+      return [];
+    }
+    const cached = this.tableRowsCache.get(rawValue);
+    if (cached) {
+      return cached;
+    }
+
+    const rows = parseTableRows(rawValue);
+    this.tableRowsCache.set(rawValue, rows);
+    return rows;
+  }
+
+  tableViewForField(field: DocumentDetail['fields'][number]): TableViewModel {
+    const rawValue = (field.corrected_value ?? field.value ?? '').toString();
+    if (!rawValue) {
+      return { headerRows: [], bodyRows: [] };
+    }
+    const cached = this.tableViewCache.get(rawValue);
+    if (cached) {
+      return cached;
+    }
+
+    const tableView = buildTableView(this.tableRowsForField(field));
+    this.tableViewCache.set(rawValue, tableView);
+    return tableView;
+  }
+
+  private syncTableRows(): void {
+    const tableField = this.displayFields.find((field) => this.isTableField(field));
+    this.tableView = tableField ? this.tableViewForField(tableField) : { headerRows: [], bodyRows: [] };
+  }
+
+  private buildCsv(rows: string[][]): string {
+    return rows
+      .map((row) => row.map((cell) => this.escapeCsvCell(cell)).join(','))
+      .join('\n');
+  }
+
+  private escapeCsvCell(value: string): string {
+    const normalized = String(value ?? '');
+    if (/[",\n\r]/.test(normalized)) {
+      return `"${normalized.replace(/"/g, '""')}"`;
+    }
+    return normalized;
   }
 
   levelClass(level: string): string {

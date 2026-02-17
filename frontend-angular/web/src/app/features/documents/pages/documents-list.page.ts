@@ -4,7 +4,12 @@ import { FormsModule } from '@angular/forms';
 import { RouterModule } from '@angular/router';
 import { StatusBadgeComponent } from '../../../shared/components/status-badge.component';
 import { DocumentsService } from '../services/documents.service';
-import { DocumentSummary, DocumentStatus, DocumentType } from '../../../shared/models/document.models';
+import {
+  DocumentSummary,
+  DocumentStatus,
+  DocumentType,
+  getDocumentTypeLabel
+} from '../../../shared/models/document.models';
 
 @Component({
   selector: 'app-documents-list-page',
@@ -24,9 +29,15 @@ import { DocumentSummary, DocumentStatus, DocumentType } from '../../../shared/m
         </select>
         <select [(ngModel)]="query.type" aria-label="Filtrar por tipo">
           <option value="">Tipo</option>
-          <option *ngFor="let type of typeOptions" [value]="type">{{ type }}</option>
+          <option *ngFor="let type of typeOptions" [value]="type">{{ typeLabel(type) }}</option>
         </select>
         <button type="button" (click)="applyFilters()" [disabled]="isLoading">Filtrar</button>
+      </div>
+      <div class="quick-types">
+        <button type="button" class="ghost" (click)="setTypeFilter('')" [disabled]="isLoading">Todos</button>
+        <button type="button" class="ghost" (click)="setTypeFilter('FACTURA')" [disabled]="isLoading">
+          Factura/Pago
+        </button>
       </div>
       <div class="loading" *ngIf="isLoading">Cargando documentos...</div>
       <div class="error" *ngIf="errorMessage && !isLoading" role="alert">
@@ -38,7 +49,7 @@ import { DocumentSummary, DocumentStatus, DocumentType } from '../../../shared/m
           <a class="card-link" [routerLink]="['/documents', doc.id]">
             <div>
               <h3>{{ doc.original_filename }}</h3>
-              <p>{{ doc.document_type }}</p>
+              <p>{{ typeLabel(doc.document_type) }}</p>
             </div>
             <app-status-badge [status]="doc.status" />
           </a>
@@ -79,6 +90,11 @@ import { DocumentSummary, DocumentStatus, DocumentType } from '../../../shared/m
       .loading {
         font-size: 13px;
         color: #6b7280;
+      }
+      .quick-types {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
       }
       .error {
         font-size: 13px;
@@ -196,6 +212,7 @@ export class DocumentsListPage implements OnInit {
     'COMPROBANTE_DOMICILIO',
     'NSS',
     'DATOS_BANCARIOS',
+    'FACTURA',
     'CONSTANCIA_SITUACION_FISCAL',
     'UNKNOWN'
   ];
@@ -259,6 +276,15 @@ export class DocumentsListPage implements OnInit {
     }
     this.page -= 1;
     this.load();
+  }
+
+  setTypeFilter(type: DocumentType | ''): void {
+    this.query.type = type;
+    this.applyFilters();
+  }
+
+  typeLabel(type: DocumentType): string {
+    return getDocumentTypeLabel(type);
   }
 
   confirmDelete(doc: DocumentSummary, event: Event): void {

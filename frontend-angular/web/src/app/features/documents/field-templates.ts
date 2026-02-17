@@ -49,7 +49,11 @@ export const DOCUMENT_FIELD_TEMPLATES: Record<string, Array<{ key: string; label
     { key: 'titular', label: 'Titular' },
     { key: 'rfc', label: 'RFC' },
     { key: 'fecha_corte', label: 'Fecha de corte' },
-    { key: 'periodo', label: 'Periodo' }
+    { key: 'periodo', label: 'Periodo' },
+    { key: 'tabla_celdas', label: 'Tabla celdas' }
+  ],
+  FACTURA: [
+    { key: 'tabla_celdas', label: 'Tabla celdas' }
   ],
   CONSTANCIA_SITUACION_FISCAL: [
     { key: 'rfc', label: 'RFC' },
@@ -58,4 +62,3 @@ export const DOCUMENT_FIELD_TEMPLATES: Record<string, Array<{ key: string; label
     { key: 'domicilio', label: 'Domicilio' }
   ]
 };
-

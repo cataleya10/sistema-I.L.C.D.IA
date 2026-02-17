@@ -3,8 +3,9 @@ import { Component, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { DocumentsService } from '../services/documents.service';
-import { DocumentDetail, DocumentField } from '../../../shared/models/document.models';
+import { DocumentDetail, DocumentField, getDocumentTypeLabel } from '../../../shared/models/document.models';
 import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
+import { TableViewModel, buildTableView, isTableCellsField, parseTableRows } from '../utils/table-cells';
 
 @Component({
   selector: 'app-documents-results-page',
@@ -20,6 +21,9 @@ import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
         </div>
         <div class="actions">
           <button type="button" (click)="refresh()" [disabled]="isLoading">Actualizar</button>
+          <button type="button" class="ghost" (click)="downloadTableCsv()" [disabled]="!tableView.bodyRows.length">
+            Descargar CSV tabla
+          </button>
           <a class="ghost" [routerLink]="['/documents', document.id]">Ver detalle</a>
         </div>
       </header>
@@ -31,7 +35,7 @@ import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
         </div>
         <div class="card">
           <span>Tipo</span>
-          <strong>{{ document.document_type }}</strong>
+          <strong>{{ typeLabel(document.document_type) }}</strong>
         </div>
         <div class="card">
           <span>Confianza</span>
@@ -78,7 +82,29 @@ import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
           <tbody>
             <tr *ngFor="let field of filteredFields">
               <td>{{ field.label }}</td>
-              <td>{{ field.corrected_value ?? field.value ?? '-' }}</td>
+              <td>
+                <ng-container *ngIf="isTableField(field); else plainValue">
+                  <ng-container *ngIf="tableViewForField(field) as tableView">
+                    <div class="cells-table-wrap" *ngIf="tableView.bodyRows.length; else plainValue">
+                      <table class="cells-table">
+                        <thead *ngIf="tableView.headerRows.length">
+                          <tr *ngFor="let row of tableView.headerRows">
+                            <th *ngFor="let cell of row">{{ cell }}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr *ngFor="let row of tableView.bodyRows; let rowIndex = index" [class.alt]="rowIndex % 2 === 1">
+                            <td *ngFor="let cell of row">{{ cell }}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </ng-container>
+                </ng-container>
+                <ng-template #plainValue>
+                  {{ field.corrected_value ?? field.value ?? '-' }}
+                </ng-template>
+              </td>
               <td>{{ field.confidence | percent: '1.0-0' }}</td>
               <td>
                 <span class="badge" [ngClass]="field.valid ? 'ok' : 'warn'">
@@ -89,6 +115,26 @@ import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
           </tbody>
         </table>
         <p class="empty" *ngIf="!filteredFields.length">No hay campos con esos filtros.</p>
+      </section>
+
+      <section class="panel" *ngIf="tableView.bodyRows.length">
+        <div class="panel__header">
+          <h3>Tabla detectada</h3>
+        </div>
+        <div class="cells-table-wrap">
+          <table class="cells-table">
+            <thead *ngIf="tableView.headerRows.length">
+              <tr *ngFor="let row of tableView.headerRows">
+                <th *ngFor="let cell of row">{{ cell }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let row of tableView.bodyRows; let rowIndex = index" [class.alt]="rowIndex % 2 === 1">
+                <td *ngFor="let cell of row">{{ cell }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </section>
     </section>
 
@@ -214,6 +260,36 @@ import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
         font-size: 12px;
         color: #6b7280;
       }
+      .cells-table-wrap {
+        overflow-x: auto;
+      }
+      .cells-table {
+        width: max-content;
+        min-width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      .cells-table th,
+      .cells-table td {
+        padding: 6px 8px;
+        border: 1px solid #e5e7eb;
+        white-space: nowrap;
+        text-align: left;
+      }
+      .cells-table th {
+        background: #f3f4f6;
+        color: #111827;
+        font-weight: 700;
+        position: sticky;
+        top: 0;
+        z-index: 1;
+      }
+      .cells-table tbody tr.alt td {
+        background: #fafafa;
+      }
+      .cells-table tbody tr:hover td {
+        background: #eef2ff;
+      }
       .badge {
         display: inline-flex;
         align-items: center;
@@ -247,6 +323,9 @@ export class DocumentsResultsPage implements OnInit {
   search = '';
   onlyInvalid = false;
   isLoading = false;
+  tableView: TableViewModel = { headerRows: [], bodyRows: [] };
+  private tableRowsCache = new Map<string, string[][]>();
+  private tableViewCache = new Map<string, TableViewModel>();
 
   constructor(private readonly route: ActivatedRoute, private readonly documents: DocumentsService) {}
 
@@ -298,12 +377,16 @@ export class DocumentsResultsPage implements OnInit {
           ...data,
           file_url: this.documents.getFileUrl(data.id)
         };
+        this.tableRowsCache.clear();
+        this.tableViewCache.clear();
         this.displayFields = this.mapDisplayFields(this.document);
+        this.syncTableRows();
         this.isLoading = false;
       },
       error: () => {
         this.document = null;
         this.displayFields = [];
+        this.tableView = { headerRows: [], bodyRows: [] };
         this.isLoading = false;
       }
     });
@@ -315,7 +398,7 @@ export class DocumentsResultsPage implements OnInit {
       return document.fields;
     }
     const fieldMap = new Map(document.fields.map((field) => [field.key.toLowerCase(), field]));
-    return template.map((field) => {
+    const mappedFromTemplate = template.map((field) => {
       const resolved = fieldMap.get(field.key.toLowerCase());
       return {
         key: field.key,
@@ -329,5 +412,87 @@ export class DocumentsResultsPage implements OnInit {
         corrected_value: resolved?.corrected_value ?? null
       };
     });
+    if (document.document_type === 'FACTURA') {
+      return mappedFromTemplate;
+    }
+    const templateKeys = new Set(template.map((field) => field.key.toLowerCase()));
+    const extras = document.fields.filter((field) => !templateKeys.has(field.key.toLowerCase()));
+    return [...mappedFromTemplate, ...extras];
+  }
+
+  typeLabel(type: DocumentDetail['document_type']): string {
+    return getDocumentTypeLabel(type);
+  }
+
+  isTableField(field: DocumentField): boolean {
+    return isTableCellsField(field);
+  }
+
+  tableRowsForField(field: DocumentField): string[][] {
+    const rawValue = (field.corrected_value ?? field.value ?? '').toString();
+    if (!rawValue) {
+      return [];
+    }
+    const cached = this.tableRowsCache.get(rawValue);
+    if (cached) {
+      return cached;
+    }
+
+    const rows = parseTableRows(rawValue);
+    this.tableRowsCache.set(rawValue, rows);
+    return rows;
+  }
+
+  tableViewForField(field: DocumentField): TableViewModel {
+    const rawValue = (field.corrected_value ?? field.value ?? '').toString();
+    if (!rawValue) {
+      return { headerRows: [], bodyRows: [] };
+    }
+    const cached = this.tableViewCache.get(rawValue);
+    if (cached) {
+      return cached;
+    }
+
+    const tableView = buildTableView(this.tableRowsForField(field));
+    this.tableViewCache.set(rawValue, tableView);
+    return tableView;
+  }
+
+  downloadTableCsv(): void {
+    if (!this.document || this.tableView.bodyRows.length === 0) {
+      return;
+    }
+    const baseName = (this.document.original_filename || 'documento')
+      .replace(/\.[^/.]+$/, '')
+      .trim();
+    const filename = baseName ? `${baseName}-tabla.csv` : 'documento-tabla.csv';
+    const csvRows = [...this.tableView.headerRows, ...this.tableView.bodyRows];
+    const csvContent = this.buildCsv(csvRows);
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    window.URL.revokeObjectURL(url);
+  }
+
+  private syncTableRows(): void {
+    const tableField = this.displayFields.find((field) => this.isTableField(field));
+    this.tableView = tableField ? this.tableViewForField(tableField) : { headerRows: [], bodyRows: [] };
+  }
+
+  private buildCsv(rows: string[][]): string {
+    return rows
+      .map((row) => row.map((cell) => this.escapeCsvCell(cell)).join(','))
+      .join('\n');
+  }
+
+  private escapeCsvCell(value: string): string {
+    const normalized = String(value ?? '');
+    if (/[",\n\r]/.test(normalized)) {
+      return `"${normalized.replace(/"/g, '""')}"`;
+    }
+    return normalized;
   }
 }

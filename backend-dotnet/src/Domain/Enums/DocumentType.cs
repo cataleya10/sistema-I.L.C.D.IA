@@ -9,5 +9,6 @@ public enum DocumentType
     ComprobanteDomicilio = 4,
     Nss = 5,
     DatosBancarios = 6,
-    ConstanciaSituacionFiscal = 7
+    ConstanciaSituacionFiscal = 7,
+    Factura = 8
 }

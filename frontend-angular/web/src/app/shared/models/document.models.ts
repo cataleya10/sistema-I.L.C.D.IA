@@ -7,8 +7,28 @@ export type DocumentType =
   | 'COMPROBANTE_DOMICILIO'
   | 'NSS'
   | 'DATOS_BANCARIOS'
+  | 'FACTURA'
   | 'CONSTANCIA_SITUACION_FISCAL'
   | 'UNKNOWN';
+
+export const DOCUMENT_TYPE_LABELS: Record<DocumentType, string> = {
+  INE: 'INE',
+  CURP: 'CURP',
+  ACTA_NACIMIENTO: 'ACTA_NACIMIENTO',
+  COMPROBANTE_DOMICILIO: 'COMPROBANTE_DOMICILIO',
+  NSS: 'NSS',
+  DATOS_BANCARIOS: 'DATOS_BANCARIOS',
+  FACTURA: 'FACTURA / PAGO',
+  CONSTANCIA_SITUACION_FISCAL: 'CONSTANCIA_SITUACION_FISCAL',
+  UNKNOWN: 'UNKNOWN'
+};
+
+export function getDocumentTypeLabel(type: DocumentType | string | null | undefined): string {
+  if (!type) {
+    return 'UNKNOWN';
+  }
+  return DOCUMENT_TYPE_LABELS[type as DocumentType] ?? String(type);
+}
 
 export interface DocumentField {
   key: string;

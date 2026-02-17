@@ -8,5 +8,10 @@ public interface IPythonAiClient
         Guid documentId,
         string filePath,
         string? originalFilename,
+        string? optionsJson,
+        CancellationToken cancellationToken);
+
+    Task<OnlineLearningStatsDto> GetOnlineLearningStatsAsync(
+        int recent,
         CancellationToken cancellationToken);
 }
