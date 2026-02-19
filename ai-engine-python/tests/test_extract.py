@@ -256,6 +256,34 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertEqual(payload["rows"][1][0], "0438349034")
         self.assertEqual(payload["rows"][1][1], "7379597479")
 
+    def test_extract_factura_payment_table_completes_empty_ocr_cells_from_text(self):
+        ocr_text = "\n".join(
+            [
+                "Cuenta    Referencia    Importe    Nombre",
+                "56551346133    1620260115132703271255    $1,462.58    JOSE LUIS GARCIA LOPEZ",
+            ]
+        )
+        ocr_boxes = [
+            {"text": "Cuenta", "page": 1, "confidence": 0.99, "bbox": [[10, 10], [90, 10], [90, 30], [10, 30]]},
+            {"text": "Referencia", "page": 1, "confidence": 0.99, "bbox": [[120, 10], [240, 10], [240, 30], [120, 30]]},
+            {"text": "Importe", "page": 1, "confidence": 0.99, "bbox": [[260, 10], [340, 10], [340, 30], [260, 30]]},
+            {"text": "Nombre", "page": 1, "confidence": 0.99, "bbox": [[360, 10], [440, 10], [440, 30], [360, 30]]},
+            {"text": "56551346133", "page": 1, "confidence": 0.99, "bbox": [[10, 40], [120, 40], [120, 60], [10, 60]]},
+            {"text": "1620260115132703271255", "page": 1, "confidence": 0.99, "bbox": [[120, 40], [300, 40], [300, 60], [120, 60]]},
+            {"text": "$1,462.58", "page": 1, "confidence": 0.99, "bbox": [[260, 40], [340, 40], [340, 60], [260, 60]]},
+        ]
+
+        fields = asyncio.run(extract_fields("FACTURA", ocr_text, ocr_boxes))
+        data = _field_map(fields)
+
+        self.assertIn("tabla_celdas", data)
+        payload = json.loads(data["tabla_celdas"])
+        self.assertEqual(payload.get("source"), "ocr_boxes")
+        self.assertEqual(payload["rows"][1][0], "56551346133")
+        self.assertEqual(payload["rows"][1][1], "1620260115132703271255")
+        self.assertEqual(payload["rows"][1][2], "$1,462.58")
+        self.assertEqual(payload["rows"][1][3], "JOSE LUIS GARCIA LOPEZ")
+
     def test_extract_factura_includes_pdf_replica_text_when_raw_text_has_layout(self):
         raw_text = "\n".join(
             [
@@ -558,11 +586,60 @@ class ExtractPipelineTests(unittest.TestCase):
         payload = json.loads(data["tabla_celdas"])
         rows = payload.get("rows", [])
         self.assertGreaterEqual(len(rows), 2)
-        self.assertIn(rows[1][0], {"0438349034", "000000001069485436"})
-        self.assertEqual(rows[1][2], "$3,000.00")
-        self.assertIn("CARLOS ROBERTO", rows[1][3])
-        self.assertTrue(rows[1][4] in {"TRANSMITIDO", "APLICADO"} or "CODIGO" in rows[1][4])
-        self.assertIn("PAGO DE NOMINA", rows[1][5])
+        self.assertEqual(rows[0][0], "NO. EMPLEADO")
+        self.assertEqual(rows[0][1], "NOMBRE")
+        self.assertEqual(rows[0][2], "TIPO CUENTA")
+        self.assertEqual(rows[0][3], "NO. DE CUENTA")
+        self.assertEqual(rows[0][4], "IMPORTE")
+        self.assertEqual(rows[0][5], "ESTATUS")
+        self.assertEqual(rows[0][6], "CODIGO")
+        self.assertEqual(rows[0][7], "DESCRIPCION")
+        self.assertEqual(rows[0][8], "CLAVE RASTREO")
+        self.assertEqual(rows[1][0], "0000000001")
+        self.assertIn("CARLOS ROBERTO", rows[1][1])
+        self.assertEqual(rows[1][2], "01")
+        self.assertEqual(rows[1][3], "000000001069485436")
+        self.assertEqual(rows[1][4], "$3,000.00")
+        self.assertIn(rows[1][5], {"TRANSMITIDO", "APLICADO", "ACEPTADO"})
+        self.assertEqual(rows[1][6], "00")
+        self.assertIn(rows[1][7], {"ACEPTADO", "APLICADO", "TRANSMITIDO"})
+
+    def test_extract_factura_banorte_detail_table_keeps_all_columns(self):
+        ocr_text = "\n".join(
+            [
+                "GRUPO FINANCIERO BANORTE",
+                "REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS",
+                "Folio electronico: 150120264263001PN7379597479",
+                "Tipo de Pago: PAGO DE NOMINA",
+                "Estatus: TRANSMITIDO",
+                "Detalle",
+                "No. EmpleadoNombre",
+                "Tipo CuentaNo. de Cuenta",
+                "Importe Estatus CodigoDescripcionClave Rastreo",
+                "0000000001",
+                "CARLOS ROBERTO RODRIGUEZ DOMINGUEZ",
+                "01",
+                "000000001069485436$3,000.00APLICADO",
+                "00",
+                "ACEPTADO",
+            ]
+        )
+        fields = asyncio.run(extract_fields("FACTURA", ocr_text, None))
+        data = _field_map(fields)
+
+        payload = json.loads(data["tabla_celdas"])
+        rows = payload.get("rows", [])
+        self.assertGreaterEqual(len(rows), 2)
+        self.assertEqual(rows[0][0], "NO. EMPLEADO")
+        self.assertEqual(rows[0][8], "CLAVE RASTREO")
+        self.assertEqual(rows[1][0], "0000000001")
+        self.assertIn("CARLOS ROBERTO", rows[1][1])
+        self.assertEqual(rows[1][2], "01")
+        self.assertEqual(rows[1][3], "000000001069485436")
+        self.assertEqual(rows[1][4], "$3,000.00")
+        self.assertEqual(rows[1][6], "00")
+        self.assertEqual(rows[1][7], "ACEPTADO")
+        self.assertIn("150120264263001PN7379597479", rows[1][8])
 
     def test_extract_factura_contract_keeps_only_table_cells(self):
         ocr_text = "\n".join(
@@ -620,6 +697,63 @@ class ExtractPipelineTests(unittest.TestCase):
         data = _field_map(fields)
 
         self.assertEqual(data.get("folio"), "1203")
+
+    def test_extract_acta_nombre_from_text_with_labeled_parts(self):
+        ocr_text = "\n".join(
+            [
+                "ACTA DE NACIMIENTO",
+                "NOMBRE(S): ERWIN GUSTAVO",
+                "PRIMER APELLIDO: GARCIA",
+                "SEGUNDO APELLIDO: CAMPOS",
+                "SEXO: HOMBRE",
+            ]
+        )
+        fields = asyncio.run(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
+        data = _field_map(fields)
+        self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
+
+    def test_extract_acta_nombre_from_persona_registrada_section(self):
+        ocr_text = "\n".join(
+            [
+                "ACTA DE NACIMIENTO",
+                "DATOS DE LA PERSONA REGISTRADA",
+                "ERWIN GUSTAVO GARCIA CAMPOS",
+                "SEXO HOMBRE",
+            ]
+        )
+        fields = asyncio.run(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
+        data = _field_map(fields)
+        self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
+
+    def test_extract_acta_nombre_with_noisy_ocr_labels(self):
+        ocr_text = "\n".join(
+            [
+                "ACTA DE NACIMIENTO",
+                "N0MBRE(S): ERWIN GUSTAVO",
+                "PR1MER APELLID0: GARCIA",
+                "SEGUND0 APELLID0: CAMPOS",
+                "SEX0: HOMBRE",
+            ]
+        )
+        fields = asyncio.run(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
+        data = _field_map(fields)
+        self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
+
+    def test_extract_acta_nombre_when_label_and_value_are_split_lines(self):
+        ocr_text = "\n".join(
+            [
+                "ACTA DE NACIMIENTO",
+                "N0MBRE(S)",
+                "ERWIN GUSTAVO",
+                "PR1MER APELLID0",
+                "GARCIA",
+                "SEGUND0 APELLID0",
+                "CAMPOS",
+            ]
+        )
+        fields = asyncio.run(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
+        data = _field_map(fields)
+        self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
 
     def test_extract_comprobante_referencia_with_ocr_confusions(self):
         ocr_text = "\n".join(
@@ -728,6 +862,20 @@ class ExtractPipelineTests(unittest.TestCase):
 
         self.assertEqual(data.get("referencia"), "24180130522010101002")
 
+    def test_extract_cfe_referencia_prefers_address_when_available(self):
+        ocr_text = "\n".join(
+            [
+                "CFE COMISION FEDERAL DE ELECTRICIDAD",
+                "DOMICILIO DE SUMINISTRO CALLE BENITO JUAREZ 123 COL CENTRO CP 24180",
+                "RMU:2418013-05-22XAXX-010101002CFE",
+            ]
+        )
+        fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertIn("BENITO JUAREZ", data.get("referencia", ""))
+        self.assertNotEqual(data.get("referencia"), "24180130522010101002")
+
     def test_extract_cfe_domicilio_removes_amount_prefix_noise(self):
         ocr_text = "\n".join(
             [
@@ -744,6 +892,53 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertIn("DN", domicilio)
         self.assertNotIn("$", domicilio)
         self.assertNotIn("548 17", domicilio)
+
+    def test_extract_ine_mrz_name_and_domicilio_from_noisy_text(self):
+        ocr_text = "\n".join(
+            [
+                "INSTITUTONACIONALELECTORAI",
+                "CREDENCIALPARAVOTAR",
+                "DOMICILIO",
+                "-LOCZAPOTAL2DASECCIONS/N",
+                "INSTITIONCIGALELECIO",
+                "RIAZAPOTAL2DASECCION86781",
+                "JONUTA.TAB.",
+                "CLAVEDEELECTORGRCMER01042527H100",
+                "CURP GACE010425HTCRMRA8",
+                "SECCION0860",
+                "GARC",
+                "IA<CAMPOS,",
+                "<<ERWIN<GUSTAVOK",
+                "EMISON2019MGENCA2029",
+            ]
+        )
+        fields = asyncio.run(extract_fields("INE", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
+        self.assertIn("JONUTA", data.get("domicilio", ""))
+
+    def test_extract_cfe_reference_keeps_customer_context_from_noisy_block(self):
+        ocr_text = "\n".join(
+            [
+                "CFE COMISION FEDERAL DE ELECTRICIDAD",
+                "TOTALA PAGAR:",
+                "$548",
+                "17DN.223DEPTO.1BENITOJUAR",
+                "AVLUISDONALDOCOLOSIOY46",
+                "SSL.BENITOJUAREZFC.P.24180",
+                "CIUDADDELCARMEN,CAMP.",
+                "NO.DESERVICIO:795130504593",
+                "RMU:2418013-05-22XAXX-010101002CFE",
+                "CUENTA:29DW05A012970875",
+            ]
+        )
+        fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
+        data = _field_map(fields)
+        referencia = data.get("referencia", "")
+
+        self.assertIn("BENITOJUAR", referencia)
+        self.assertIn("CARMEN", referencia)
 
     def test_extract_acta_numero_acta_with_ocr_confusions_from_boxes(self):
         ocr_boxes = [
@@ -803,8 +998,8 @@ class ExtractPipelineTests(unittest.TestCase):
         fields = asyncio.run(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
         data = _field_map(fields)
 
-        self.assertEqual(data.get("numero_acta"), "3")
-        self.assertEqual(data.get("folio"), "437")
+        self.assertEqual(data.get("numero_acta"), "437")
+        self.assertEqual(data.get("folio"), "0001")
 
     def test_extract_acta_lugar_nacimiento_cleans_label_noise(self):
         ocr_text = "ACTA DE NACIMIENTO\nHOMBRE 25/04/2001 JONUTA SEXO: FECHA DE NACIMIENTO: LUGAR DE NACIMIENTO:"

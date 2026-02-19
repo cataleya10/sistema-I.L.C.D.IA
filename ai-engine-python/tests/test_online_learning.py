@@ -5,7 +5,12 @@ import uuid
 from pathlib import Path
 from unittest.mock import patch
 
-from app.services.online_learning import learn_from_processed_document, get_online_learning_stats
+from app.services.online_learning import (
+    learn_from_processed_document,
+    get_online_learning_stats,
+    record_feedback_document,
+    run_feedback_retraining,
+)
 
 
 class OnlineLearningTests(unittest.TestCase):
@@ -121,6 +126,106 @@ class OnlineLearningTests(unittest.TestCase):
                 1,
             )
             self.assertEqual(len(stats.get("recent_events", [])), 1)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_record_feedback_document_persists_human_labels(self):
+        temp_dir = Path("reports") / f"online_feedback_{uuid.uuid4().hex}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            feedback_path = temp_dir / "feedback.jsonl"
+            with patch.dict(
+                os.environ,
+                {
+                    "ONLINE_FEEDBACK_DATASET_PATH": str(feedback_path),
+                },
+                clear=False,
+            ):
+                result = record_feedback_document(
+                    document_id="doc-fb-1",
+                    document_type="ACTA_NACIMIENTO",
+                    ocr_text=(
+                        "ACTA DE NACIMIENTO\n"
+                        "NOMBRE JUAN PEREZ LOPEZ\n"
+                        "FECHA DE NACIMIENTO 01/01/1990\n"
+                        "REGISTRO CIVIL MEXICO"
+                    ),
+                    corrected_labels={"nombre": "JUAN PEREZ LOPEZ", "fecha_nacimiento": "01/01/1990"},
+                    extracted_fields=[],
+                    reviewer="qa_user",
+                )
+
+            self.assertTrue(result.get("accepted"))
+            self.assertTrue(feedback_path.exists())
+            lines = feedback_path.read_text(encoding="utf-8").strip().splitlines()
+            self.assertEqual(len(lines), 1)
+            self.assertIn("JUAN PEREZ LOPEZ", lines[0])
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_run_feedback_retraining_promotes_model_when_metrics_pass(self):
+        temp_dir = Path("reports") / f"online_retrain_{uuid.uuid4().hex}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            feedback_path = temp_dir / "feedback.jsonl"
+            dataset_path = temp_dir / "dataset.jsonl"
+            model_path = temp_dir / "doc_type_nb.json"
+            alias_path = temp_dir / "field_aliases.json"
+            report_path = temp_dir / "promotion_report.json"
+
+            samples = [
+                (
+                    "CURP",
+                    "CONSTANCIA DE LA CLAVE UNICA DE REGISTRO DE POBLACION CURP AACD900101HDFRRL09 NOMBRE JUAN PEREZ LOPEZ NACIONALIDAD MEXICANA",
+                    {"curp": "AACD900101HDFRRL09", "nombre": "JUAN PEREZ LOPEZ"},
+                ),
+                (
+                    "NSS",
+                    "NUMERO DE SEGURIDAD SOCIAL IMSS NSS 12345678901 NOMBRE MARIA GARCIA HERNANDEZ CLINICA FAMILIAR",
+                    {"nss": "12345678901", "nombre": "MARIA GARCIA HERNANDEZ"},
+                ),
+            ]
+
+            with patch.dict(
+                os.environ,
+                {
+                    "ONLINE_FEEDBACK_DATASET_PATH": str(feedback_path),
+                    "ONLINE_TRAINING_DATASET_PATH": str(dataset_path),
+                    "DOC_MODEL_PATH": str(model_path),
+                    "FIELD_ALIAS_PATH": str(alias_path),
+                    "ONLINE_PROMOTION_REPORT_PATH": str(report_path),
+                    "ONLINE_RETRAIN_INCLUDE_AUTO": "0",
+                },
+                clear=False,
+            ):
+                for idx in range(10):
+                    doc_type, text, labels = samples[idx % 2]
+                    recorded = record_feedback_document(
+                        document_id=f"doc-{idx}",
+                        document_type=doc_type,
+                        ocr_text=text,
+                        corrected_labels=labels,
+                        extracted_fields=[],
+                        reviewer="qa",
+                    )
+                    self.assertTrue(recorded.get("accepted"))
+
+                result = run_feedback_retraining(
+                    min_feedback_samples=4,
+                    validation_ratio=0.3,
+                    min_doc_accuracy=0.6,
+                    min_validation_docs=1,
+                    max_accuracy_drop=0.5,
+                    promote=True,
+                )
+
+            self.assertTrue(result.get("promoted"))
+            self.assertTrue(model_path.exists())
+            self.assertTrue(alias_path.exists())
+            self.assertTrue(report_path.exists())
+            model_data = model_path.read_text(encoding="utf-8")
+            self.assertIn('"CURP"', model_data)
+            self.assertIn('"NSS"', model_data)
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 

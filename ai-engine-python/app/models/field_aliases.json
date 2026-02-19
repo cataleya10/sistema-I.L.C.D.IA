@@ -49,11 +49,16 @@
     "SOCIAL ES"
   ],
   "numero_servicio": [
-    "DESERVICIO"
+    "DESERVICIO",
+    "SERVICIOS",
+    "OTROS SERVICIOS",
+    "TELMEX OTROS SERVICIOS"
   ],
   "cuenta": [
     "CUENTA",
-    "014052"
+    "014052",
+    "CERTIFICADO CSD",
+    "SERIE CERTIFICADO CSD"
   ],
   "cp": [
     "P",
@@ -74,5 +79,10 @@
     "FISCAL",
     "SITUACION FISCAL",
     "CONSTANCIA SITUACION FISCAL"
+  ],
+  "referencia": [
+    "SERVICIOS",
+    "OTROS SERVICIOS",
+    "TELMEX OTROS SERVICIOS"
   ]
 }

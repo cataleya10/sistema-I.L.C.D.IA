@@ -3,6 +3,8 @@ import os
 import re
 import threading
 import unicodedata
+import hashlib
+import math
 from pathlib import Path
 from typing import Any
 from datetime import datetime, timezone
@@ -81,6 +83,24 @@ def _stats_path() -> Path:
     )
 
 
+def _feedback_dataset_path() -> Path:
+    return Path(
+        os.getenv(
+            "ONLINE_FEEDBACK_DATASET_PATH",
+            str(_models_dir() / "online_feedback_dataset.jsonl"),
+        )
+    )
+
+
+def _promotion_report_path() -> Path:
+    return Path(
+        os.getenv(
+            "ONLINE_PROMOTION_REPORT_PATH",
+            str(_models_dir() / "online_promotion_report.json"),
+        )
+    )
+
+
 def _normalize_text(text: str) -> str:
     value = unicodedata.normalize("NFKD", str(text or ""))
     value = value.encode("ascii", "ignore").decode("ascii")
@@ -128,6 +148,24 @@ def _append_jsonl(path: Path, item: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+
+def _load_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    items: list[dict[str, Any]] = []
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                raw = line.strip()
+                if not raw:
+                    continue
+                payload = json.loads(raw)
+                if isinstance(payload, dict):
+                    items.append(payload)
+    except Exception:
+        return []
+    return items
 
 
 def _utc_now_iso() -> str:
@@ -330,6 +368,175 @@ def _candidate_aliases(ocr_text: str, value: str) -> list[str]:
     return candidates
 
 
+def _normalize_labels_dict(raw: dict[str, Any] | None) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    for key, value in (raw or {}).items():
+        normalized_key = _normalize_key(str(key or ""))
+        if not normalized_key or normalized_key == "texto_detectado":
+            continue
+        if value is None:
+            continue
+        normalized_value = str(value).strip()
+        if not normalized_value:
+            continue
+        if len(normalized_value) > 250:
+            continue
+        labels[normalized_key] = normalized_value
+    return labels
+
+
+def _labels_from_fields(fields: list[dict[str, Any]]) -> dict[str, str]:
+    labels: dict[str, tuple[float, str]] = {}
+    for item in fields or []:
+        key = _normalize_key(str(item.get("key", "")))
+        if not key or key == "texto_detectado":
+            continue
+        value = item.get("value")
+        if value is None:
+            continue
+        value = str(value).strip()
+        if not value:
+            continue
+        confidence = float(item.get("confidence", 0) or 0)
+        existing = labels.get(key)
+        if existing is None or confidence >= existing[0]:
+            labels[key] = (confidence, value)
+    return {key: value for key, (_, value) in labels.items()}
+
+
+def _sample_key(sample: dict[str, Any]) -> str:
+    document_id = str(sample.get("document_id", "")).strip()
+    if document_id:
+        return document_id
+    doc_type = str(sample.get("document_type", "")).strip()
+    text = str(sample.get("ocr", {}).get("text", "")).strip()
+    digest = hashlib.md5(text.encode("utf-8")).hexdigest() if text else "empty"
+    return f"{doc_type}:{digest}"
+
+
+def _split_samples(samples: list[dict[str, Any]], validation_ratio: float) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not samples:
+        return [], []
+    ratio = max(0.05, min(0.45, float(validation_ratio)))
+    threshold = int(ratio * 100)
+    train: list[dict[str, Any]] = []
+    validation: list[dict[str, Any]] = []
+    for sample in samples:
+        bucket = int(hashlib.md5(_sample_key(sample).encode("utf-8")).hexdigest(), 16) % 100
+        if bucket < threshold:
+            validation.append(sample)
+        else:
+            train.append(sample)
+    if not train and validation:
+        train.append(validation.pop())
+    if not validation and len(train) > 1:
+        validation.append(train.pop())
+    return train, validation
+
+
+def _train_doc_model(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    model = _empty_model()
+    classes = set()
+    class_counts: dict[str, int] = {}
+    token_counts: dict[str, dict[str, int]] = {}
+    vocab: set[str] = set()
+    total_docs = 0
+    for sample in samples:
+        doc_type = str(sample.get("document_type", "")).upper()
+        text = str(sample.get("ocr", {}).get("text", "")).strip()
+        tokens = _tokenize(text)
+        if not doc_type or doc_type == "UNKNOWN" or not tokens:
+            continue
+        classes.add(doc_type)
+        class_counts[doc_type] = int(class_counts.get(doc_type, 0)) + 1
+        bucket = token_counts.get(doc_type) or {}
+        for token in tokens:
+            bucket[token] = int(bucket.get(token, 0)) + 1
+            vocab.add(token)
+        token_counts[doc_type] = bucket
+        total_docs += 1
+
+    model["classes"] = sorted(classes)
+    model["class_counts"] = class_counts
+    model["token_counts"] = token_counts
+    model["vocab"] = sorted(vocab)
+    model["total_docs"] = total_docs
+    return model
+
+
+def _predict_doc_type(model: dict[str, Any], text: str) -> tuple[str | None, float]:
+    if not model:
+        return None, 0.0
+    tokens = _tokenize(text)
+    if not tokens:
+        return None, 0.0
+    classes = list(model.get("classes") or [])
+    class_counts = dict(model.get("class_counts") or {})
+    token_counts = dict(model.get("token_counts") or {})
+    vocab = set(model.get("vocab") or [])
+    total_docs = max(1, int(model.get("total_docs") or 1))
+    vocab_size = max(1, len(vocab))
+    if not classes:
+        return None, 0.0
+
+    best_cls = None
+    best_score = None
+    for cls in classes:
+        prior = (int(class_counts.get(cls, 0)) + 1) / (total_docs + len(classes))
+        score = math.log(prior)
+        cls_tokens = dict(token_counts.get(cls) or {})
+        cls_total = max(1, sum(cls_tokens.values()) + vocab_size)
+        for token in tokens:
+            if token not in vocab:
+                continue
+            count = int(cls_tokens.get(token, 0)) + 1
+            score += math.log(count / cls_total)
+        if best_score is None or score > best_score:
+            best_score = score
+            best_cls = cls
+    if best_cls is None:
+        return None, 0.0
+    return best_cls, 0.85
+
+
+def _evaluate_doc_accuracy(model: dict[str, Any], samples: list[dict[str, Any]]) -> dict[str, Any]:
+    total = 0
+    correct = 0
+    for sample in samples:
+        expected = str(sample.get("document_type", "")).upper()
+        if not expected or expected == "UNKNOWN":
+            continue
+        text = str(sample.get("ocr", {}).get("text", "")).strip()
+        predicted, _ = _predict_doc_type(model, text)
+        if not predicted:
+            continue
+        total += 1
+        if predicted == expected:
+            correct += 1
+    accuracy = (correct / total) if total else 0.0
+    return {"total": total, "correct": correct, "accuracy": accuracy}
+
+
+def _train_alias_model(samples: list[dict[str, Any]]) -> dict[str, list[str]]:
+    max_aliases = int(os.getenv("ONLINE_TRAINING_MAX_ALIASES_PER_FIELD", "12"))
+    counts: dict[str, dict[str, int]] = {}
+    for sample in samples:
+        text = str(sample.get("ocr", {}).get("text", ""))
+        labels = _normalize_labels_dict(sample.get("labels"))
+        for key, value in labels.items():
+            bucket = counts.get(key) or {}
+            for phrase in _candidate_aliases(text, value):
+                bucket[phrase] = int(bucket.get(phrase, 0)) + 1
+            counts[key] = bucket
+    aliases: dict[str, list[str]] = {}
+    for key, bucket in counts.items():
+        ranked = sorted(bucket.items(), key=lambda item: item[1], reverse=True)
+        phrases = [phrase for phrase, _ in ranked[:max_aliases]]
+        if phrases:
+            aliases[key] = phrases
+    return aliases
+
+
 def _update_alias_model(path: Path, labels: dict[str, str], ocr_text: str) -> None:
     if not labels:
         return
@@ -479,6 +686,161 @@ def learn_from_processed_document(
     return {"trained": True, "labels": len(labels)}
 
 
+def record_feedback_document(
+    *,
+    document_id: str,
+    document_type: str,
+    ocr_text: str,
+    corrected_labels: dict[str, Any] | None,
+    extracted_fields: list[dict[str, Any]] | None = None,
+    reviewer: str | None = None,
+    source: str = "human_review",
+) -> dict[str, Any]:
+    doc_type = str(document_type or "").strip().upper()
+    if not doc_type or doc_type == "UNKNOWN":
+        return {"accepted": False, "reason": "unknown_document_type"}
+
+    text = str(ocr_text or "").strip()
+    if not text:
+        return {"accepted": False, "reason": "missing_ocr_text"}
+
+    labels = _normalize_labels_dict(corrected_labels)
+    if not labels and extracted_fields:
+        labels = _labels_from_fields(extracted_fields)
+    if not labels:
+        return {"accepted": False, "reason": "empty_labels"}
+
+    sample = {
+        "document_id": str(document_id or ""),
+        "document_type": doc_type,
+        "source": str(source or "human_review"),
+        "reviewer": str(reviewer or "").strip() or None,
+        "created_at_utc": _utc_now_iso(),
+        "ocr": {"text": text},
+        "labels": labels,
+    }
+    predicted_labels = _labels_from_fields(extracted_fields or [])
+    if predicted_labels:
+        sample["prediction_labels"] = predicted_labels
+
+    with _LOCK:
+        _append_jsonl(_feedback_dataset_path(), sample)
+    return {"accepted": True, "labels": len(labels), "document_type": doc_type}
+
+
+def run_feedback_retraining(
+    *,
+    min_feedback_samples: int = 20,
+    validation_ratio: float = 0.2,
+    min_doc_accuracy: float = 0.9,
+    min_validation_docs: int = 5,
+    max_accuracy_drop: float = 0.02,
+    promote: bool = True,
+) -> dict[str, Any]:
+    feedback_items = _load_jsonl(_feedback_dataset_path())
+    accepted_feedback = [item for item in feedback_items if isinstance(item, dict)]
+    if len(accepted_feedback) < max(1, int(min_feedback_samples)):
+        report = {
+            "timestamp_utc": _utc_now_iso(),
+            "promoted": False,
+            "reason": "insufficient_feedback_samples",
+            "feedback_samples": len(accepted_feedback),
+            "required_feedback_samples": int(min_feedback_samples),
+        }
+        _safe_write_json(_promotion_report_path(), report)
+        return report
+
+    include_auto = _env_bool("ONLINE_RETRAIN_INCLUDE_AUTO", True)
+    training_pool = list(accepted_feedback)
+    if include_auto:
+        training_pool.extend(_load_jsonl(_dataset_path()))
+
+    prepared: list[dict[str, Any]] = []
+    for item in training_pool:
+        doc_type = str(item.get("document_type", "")).strip().upper()
+        labels = _normalize_labels_dict(item.get("labels"))
+        text = str(item.get("ocr", {}).get("text", "")).strip()
+        if not doc_type or doc_type == "UNKNOWN":
+            continue
+        if not labels:
+            continue
+        if len(_tokenize(text)) < 10:
+            continue
+        prepared.append(
+            {
+                "document_id": str(item.get("document_id", "")).strip(),
+                "document_type": doc_type,
+                "ocr": {"text": text},
+                "labels": labels,
+                "source": str(item.get("source", "")),
+            }
+        )
+
+    train_samples, validation_samples = _split_samples(prepared, validation_ratio)
+    candidate_model = _train_doc_model(train_samples)
+    candidate_aliases = _train_alias_model(train_samples)
+    candidate_metrics = _evaluate_doc_accuracy(candidate_model, validation_samples)
+
+    baseline_model = _safe_load_json(_doc_model_path())
+    baseline_metrics = _evaluate_doc_accuracy(baseline_model, validation_samples) if baseline_model else {"total": 0, "correct": 0, "accuracy": 0.0}
+
+    required_validation = max(1, int(min_validation_docs))
+    required_accuracy = max(0.0, min(1.0, float(min_doc_accuracy)))
+    allowed_drop = max(0.0, min(0.5, float(max_accuracy_drop)))
+    actual_drop = float(baseline_metrics.get("accuracy", 0) or 0) - float(candidate_metrics.get("accuracy", 0) or 0)
+
+    decision_reasons: list[str] = []
+    if int(candidate_metrics.get("total", 0)) < required_validation:
+        decision_reasons.append("insufficient_validation_docs")
+    if float(candidate_metrics.get("accuracy", 0)) < required_accuracy:
+        decision_reasons.append("candidate_accuracy_below_threshold")
+    if baseline_model and actual_drop > allowed_drop:
+        decision_reasons.append("accuracy_drop_vs_baseline")
+    if not candidate_model.get("classes"):
+        decision_reasons.append("empty_candidate_model")
+
+    promoted = False
+    if promote and not decision_reasons:
+        with _LOCK:
+            _safe_write_json(_doc_model_path(), candidate_model)
+            _safe_write_json(_alias_model_path(), candidate_aliases)
+        promoted = True
+
+    report = {
+        "timestamp_utc": _utc_now_iso(),
+        "promoted": promoted,
+        "promotion_requested": bool(promote),
+        "decision_reasons": decision_reasons,
+        "thresholds": {
+            "min_feedback_samples": int(min_feedback_samples),
+            "min_validation_docs": required_validation,
+            "min_doc_accuracy": required_accuracy,
+            "max_accuracy_drop": allowed_drop,
+        },
+        "dataset": {
+            "feedback_samples": len(accepted_feedback),
+            "prepared_samples": len(prepared),
+            "train_samples": len(train_samples),
+            "validation_samples": len(validation_samples),
+            "include_auto_dataset": include_auto,
+        },
+        "metrics": {
+            "candidate_doc_type_accuracy": candidate_metrics,
+            "baseline_doc_type_accuracy": baseline_metrics,
+            "accuracy_drop": actual_drop,
+        },
+        "paths": {
+            "feedback_dataset_path": str(_feedback_dataset_path()),
+            "online_dataset_path": str(_dataset_path()),
+            "doc_model_path": str(_doc_model_path()),
+            "alias_model_path": str(_alias_model_path()),
+            "promotion_report_path": str(_promotion_report_path()),
+        },
+    }
+    _safe_write_json(_promotion_report_path(), report)
+    return report
+
+
 def get_online_learning_stats(recent: int = 10) -> dict[str, Any]:
     requested_recent = max(0, min(100, int(recent)))
     path = _stats_path()
@@ -496,8 +858,10 @@ def get_online_learning_stats(recent: int = 10) -> dict[str, Any]:
         "enabled": _env_bool("ONLINE_TRAINING_ENABLED", True),
         "stats_path": str(path),
         "dataset_path": str(_dataset_path()),
+        "feedback_dataset_path": str(_feedback_dataset_path()),
         "model_path": str(_doc_model_path()),
         "alias_path": str(_alias_model_path()),
+        "promotion_report_path": str(_promotion_report_path()),
         "updated_at_utc": stats.get("updated_at_utc"),
         "dataset_samples": int(stats.get("dataset_samples", 0) or 0),
         "totals": stats.get("totals", {}),

@@ -1,7 +1,8 @@
 from fastapi import APIRouter, UploadFile, File, Form, Header, HTTPException, Depends, Query
 from app.schemas.process import ProcessResponse
+from app.schemas.online_learning import OnlineLearningFeedbackRequest, OnlineLearningRetrainRequest
 from app.services.document_processor import process_document
-from app.services.online_learning import get_online_learning_stats
+from app.services.online_learning import get_online_learning_stats, record_feedback_document, run_feedback_retraining
 from app.core.config import settings
 
 router = APIRouter()
@@ -27,3 +28,29 @@ async def online_learning_stats_endpoint(
     recent: int = Query(default=10, ge=0, le=100),
 ):
     return get_online_learning_stats(recent=recent)
+
+
+@router.post("/online-learning/feedback", dependencies=[Depends(verify_api_key)])
+async def online_learning_feedback_endpoint(payload: OnlineLearningFeedbackRequest):
+    corrected = {item.key: item.value for item in payload.corrected_fields}
+    return record_feedback_document(
+        document_id=payload.document_id,
+        document_type=payload.document_type,
+        ocr_text=payload.ocr_text,
+        corrected_labels=corrected,
+        extracted_fields=payload.extracted_fields,
+        reviewer=payload.reviewer,
+        source=payload.source,
+    )
+
+
+@router.post("/online-learning/retrain", dependencies=[Depends(verify_api_key)])
+async def online_learning_retrain_endpoint(payload: OnlineLearningRetrainRequest):
+    return run_feedback_retraining(
+        min_feedback_samples=payload.min_feedback_samples,
+        validation_ratio=payload.validation_ratio,
+        min_doc_accuracy=payload.min_doc_accuracy,
+        min_validation_docs=payload.min_validation_docs,
+        max_accuracy_drop=payload.max_accuracy_drop,
+        promote=payload.promote,
+    )

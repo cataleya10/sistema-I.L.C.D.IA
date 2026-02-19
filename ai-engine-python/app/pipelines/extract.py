@@ -264,12 +264,16 @@ def _pick_address(lines: list[str]):
         "#",
         "MUNICIPIO",
         "ESTADO",
+        "DEPTO",
     )
     noise_tokens = (
         "TELMEX",
         "TELCEL",
         "TELEFON",
         "NUMERO DE SERVICIO",
+        "NO. DE SERVICIO",
+        "NO DE SERVICIO",
+        "RMU",
         "LINEA DE CAPTURA",
         "REFERENCIA",
         "CUENTA",
@@ -278,22 +282,90 @@ def _pick_address(lines: list[str]):
         "SALDO",
         "IMPORTE",
     )
-    candidates = [
-        line
-        for line in lines
-        if any(k in line for k in keywords)
-        and not any(token in line for token in noise_tokens)
-    ]
-    if not candidates:
-        return None
-    primary = candidates[0]
-    idx = lines.index(primary)
-    extra = []
-    if idx + 1 < len(lines):
-        extra.append(lines[idx + 1])
-    if idx + 2 < len(lines) and ("CP" in lines[idx + 2] or "C.P." in lines[idx + 2]):
-        extra.append(lines[idx + 2])
-    return " ".join([primary, *extra]).strip()
+    corporate_tokens = (
+        "PASEO DE LA REFORMA",
+        "ALCALDIA",
+        "CUAUHTEMOC",
+        "CIUDAD DE MEXICO",
+        "RFC:CFE",
+        "COMISION FEDERAL",
+    )
+    customer_tokens = ("DEPTO", "BENITO", "CARMEN", "S/N", "RIA", "SSL")
+    stop_tokens = (
+        "NO.DESERVICIO",
+        "NO. DE SERVICIO",
+        "RMU",
+        "CUENTA",
+        "TOTAL",
+        "LIMITE",
+        "CORTE",
+        "TARIFA",
+        "CONCEPTO",
+        "LECTURA",
+        "PERIODO",
+    )
+
+    best_candidate = None
+    best_score = -10_000.0
+    best_idx = -1
+
+    def _line_score(text_line: str) -> float:
+        score = 0.0
+        score += sum(1.6 for k in keywords if k in text_line)
+        if re.search(r"\bC\.?\s*P\.?\s*\d{5}\b", text_line) or re.search(r"\b\d{5}\b", text_line):
+            score += 3.0
+        if any(tok in text_line for tok in customer_tokens):
+            score += 2.5
+        if re.search(r"\b\d{1,2}DN\.?\d{1,4}\b|\b\d{1,2}DN\.?\b", text_line):
+            score += 3.0
+        if any(tok in text_line for tok in corporate_tokens):
+            score -= 4.0
+        if text_line.startswith("-"):
+            score -= 0.6
+        return score
+
+    for idx, line in enumerate(lines):
+        upper = _normalize_text(line).upper()
+        if not upper:
+            continue
+        if not any(k in upper for k in keywords) and not any(tok in upper for tok in customer_tokens):
+            continue
+        if any(token in upper for token in noise_tokens):
+            continue
+
+        parts = [upper]
+        score = _line_score(upper)
+        if "DOMICILIO DE SUMINISTRO" in upper:
+            score += 3.5
+
+        for offset in (1, 2):
+            next_idx = idx + offset
+            if next_idx >= len(lines):
+                break
+            nxt = _normalize_text(lines[next_idx]).upper()
+            if not nxt:
+                continue
+            if any(token in nxt for token in stop_tokens):
+                break
+            if any(token in nxt for token in noise_tokens):
+                break
+            if not (
+                any(k in nxt for k in keywords)
+                or re.search(r"\b\d{5}\b", nxt)
+                or any(tok in nxt for tok in ("CIUDAD", "MUNICIPIO", "EDO", "TAB", "CAMP", "JONUTA"))
+            ):
+                break
+            parts.append(nxt)
+            score += _line_score(nxt) * 0.7
+
+        candidate = " ".join(parts).strip()
+        score += min(len(candidate), 140) * 0.02
+        if score > best_score or (score == best_score and idx > best_idx):
+            best_score = score
+            best_candidate = candidate
+            best_idx = idx
+
+    return best_candidate
 
 
 def _normalize_text(text: str) -> str:
@@ -899,6 +971,9 @@ def _extract_payment_table_rows_from_compact_text(raw_text: str) -> list[list[st
     scotia_rows = _extract_scotia_transfer_rows(lines)
     if scotia_rows:
         return scotia_rows
+    detail_rows = _extract_banorte_bbva_detail_rows(lines, raw_text)
+    if detail_rows:
+        return detail_rows
 
     full = " ".join(lines)
     values: dict[str, str] = {}
@@ -1062,6 +1137,113 @@ def _extract_payment_table_rows_from_compact_text(raw_text: str) -> list[list[st
     return [header, row]
 
 
+def _extract_banorte_bbva_detail_rows(lines: list[str], raw_text: str) -> list[list[str]]:
+    full = " ".join(lines)
+    if "REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS" not in full:
+        return []
+    if not any(token in full for token in ("NO. EMPLEADO", "NOEMPLEADO", "DETALLE")):
+        return []
+
+    header = [
+        "NO. EMPLEADO",
+        "NOMBRE",
+        "TIPO CUENTA",
+        "NO. DE CUENTA",
+        "IMPORTE",
+        "ESTATUS",
+        "CODIGO",
+        "DESCRIPCION",
+        "CLAVE RASTREO",
+    ]
+
+    employee = ""
+    name = ""
+    tipo_cuenta = ""
+    cuenta = ""
+    importe = ""
+    estatus = ""
+    codigo = ""
+    descripcion = ""
+    clave_rastreo = ""
+
+    detail_idx = next(
+        (
+            i
+            for i, line in enumerate(lines)
+            if any(marker in line for marker in ("NO. EMPLEADO", "NOEMPLEADO", "DETALLE"))
+        ),
+        None,
+    )
+
+    if detail_idx is not None:
+        scope = lines[detail_idx : min(len(lines), detail_idx + 20)]
+        for idx, line in enumerate(scope):
+            if not employee and re.fullmatch(r"\d{6,12}", line):
+                employee = line
+                for nxt in scope[idx + 1 : idx + 5]:
+                    words = [w for w in nxt.split() if w.isalpha() and len(w) >= 2]
+                    if len(words) >= 3:
+                        name = _normalize_name(nxt)
+                        break
+                continue
+            if not tipo_cuenta and re.fullmatch(r"\d{2}", line):
+                tipo_cuenta = line
+                continue
+            if not codigo and re.fullmatch(r"\d{2}", line) and tipo_cuenta and line != tipo_cuenta:
+                codigo = line
+                continue
+            if (
+                not descripcion
+                and any(token in line for token in ("ACEPTADO", "RECHAZADO", "APLICADO", "TRANSMITIDO"))
+                and "$" not in line
+                and len(re.sub(r"\D", "", line)) < 4
+            ):
+                descripcion = _normalize_table_cell(line)
+
+    if detail_idx is not None:
+        chunk = " ".join(lines[detail_idx : min(len(lines), detail_idx + 24)])
+    else:
+        chunk = full
+    account_match = re.search(r"\b\d{12,24}\b", chunk)
+    if account_match:
+        cuenta = _normalize_numeric_field(account_match.group(0))
+    amount_match = re.search(r"\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})", chunk)
+    if amount_match:
+        importe = _normalize_payment_amount(amount_match.group(0))
+    status_match = re.search(r"\b(TRANSMITIDO|APLICADO|ACEPTADO|RECHAZADO|PROCESADO)\b", chunk)
+    if status_match:
+        estatus = _normalize_table_cell(status_match.group(1))
+
+    if not descripcion:
+        status_values = re.findall(r"\b(ACEPTADO|RECHAZADO|APLICADO|TRANSMITIDO|PROCESADO)\b", chunk)
+        if status_values:
+            descripcion = _normalize_table_cell(status_values[-1])
+    if not descripcion and estatus:
+        descripcion = estatus
+
+    trace_match = re.search(r"FOLIO\s+ELECTRONICO\s*:?\s*([A-Z0-9]{8,50})", full)
+    if trace_match:
+        clave_rastreo = _normalize_table_cell(trace_match.group(1))
+    elif cuenta:
+        ref_match = re.search(r"\b\d{7,12}\b", chunk)
+        if ref_match:
+            clave_rastreo = _normalize_table_cell(ref_match.group(0))
+
+    if not name:
+        candidate_name = re.search(r"\b([A-Z]{2,}(?:\s+[A-Z]{2,}){2,6})\b", chunk)
+        if candidate_name:
+            guessed = _normalize_name(candidate_name.group(1))
+            if _looks_like_person_name(guessed):
+                name = guessed
+
+    populated = sum(1 for value in [cuenta, importe, name, estatus, employee] if value)
+    if populated < 3:
+        return []
+
+    row = [employee, name, tipo_cuenta, cuenta, importe, estatus, codigo, descripcion, clave_rastreo]
+    return [header, row]
+
+
 def _extract_payment_table_payload(base_text_raw: str, ocr_boxes) -> dict | None:
     rows_ocr = _extract_payment_table_rows_from_boxes(ocr_boxes)
     rows_text = _extract_payment_table_rows_from_text(base_text_raw)
@@ -1077,6 +1259,11 @@ def _extract_payment_table_payload(base_text_raw: str, ocr_boxes) -> dict | None
         source = "text_lines"
     else:
         return None
+
+    if source == "ocr_boxes":
+        rows = _merge_payment_rows_with_backup(rows, rows_text)
+    else:
+        rows = _merge_payment_rows_with_backup(rows, rows_ocr)
 
     rows = _append_scotia_summary_rows_to_table(rows, base_text_raw)
     return {
@@ -1157,6 +1344,80 @@ def _payment_rows_quality_score(rows: list[list[str]]) -> int:
     else:
         score -= 20
     return score
+
+
+def _payment_header_token_index(header: list[str]) -> dict[str, int]:
+    mapping: dict[str, int] = {}
+    for idx, cell in enumerate(header):
+        normalized = _normalize_keyword(cell).lower()
+        if normalized and normalized not in mapping:
+            mapping[normalized] = idx
+    return mapping
+
+
+def _payment_header_alias(token: str) -> str:
+    aliases = {
+        "nocuentabeneficiario": "cuenta",
+        "numerodecuenta": "cuenta",
+        "numerodecuentadeabono": "cuenta",
+        "referenciadecarga": "referencia",
+        "clavebeneficiario": "referencia",
+        "nombredelbeneficiario": "nombre",
+        "nombrebeneficiario": "nombre",
+        "tipodemovimientopago": "concepto",
+        "tipodemovimiento": "concepto",
+    }
+    return aliases.get(token, token)
+
+
+def _merge_payment_rows_with_backup(primary_rows: list[list[str]], backup_rows: list[list[str]]) -> list[list[str]]:
+    if len(primary_rows) < 2 or len(backup_rows) < 2:
+        return primary_rows
+
+    primary_header = [str(cell or "") for cell in primary_rows[0]]
+    backup_header = [str(cell or "") for cell in backup_rows[0]]
+    if not primary_header or not backup_header:
+        return primary_rows
+
+    primary_idx = _payment_header_token_index(primary_header)
+    backup_idx_raw = _payment_header_token_index(backup_header)
+    backup_idx: dict[str, int] = {}
+    for token, idx in backup_idx_raw.items():
+        alias = _payment_header_alias(token)
+        if alias and alias not in backup_idx:
+            backup_idx[alias] = idx
+
+    if not primary_idx or not backup_idx:
+        return primary_rows
+
+    merged = [primary_header]
+    max_data_rows = max(len(primary_rows), len(backup_rows)) - 1
+    for row_offset in range(max_data_rows):
+        primary_row = list(primary_rows[row_offset + 1]) if row_offset + 1 < len(primary_rows) else [""] * len(primary_header)
+        backup_row = backup_rows[row_offset + 1] if row_offset + 1 < len(backup_rows) else []
+        if not backup_row:
+            merged.append(primary_row)
+            continue
+
+        if len(primary_row) < len(primary_header):
+            primary_row.extend([""] * (len(primary_header) - len(primary_row)))
+
+        for token, p_idx in primary_idx.items():
+            if p_idx >= len(primary_row):
+                continue
+            if _normalize_text(primary_row[p_idx]):
+                continue
+            alias = _payment_header_alias(token)
+            b_idx = backup_idx.get(alias)
+            if b_idx is None or b_idx >= len(backup_row):
+                continue
+            backup_value = _normalize_text(str(backup_row[b_idx] or ""))
+            if backup_value:
+                primary_row[p_idx] = backup_value
+
+        merged.append(primary_row)
+
+    return merged
 
 
 def _payment_detect_bank(raw_text: str) -> str:
@@ -3444,17 +3705,19 @@ def _clean_address_value(value: str) -> str:
     upper = _normalize_address(value)
     upper = re.sub(r"\bCFE\s+COMISION\s+FEDERAL\s+DE\s+ELECTRICIDAD\b", " ", upper)
     upper = re.sub(r"\bCOMISION\s+FEDERAL\s+DE\s+ELECTRICIDAD\b", " ", upper)
+    upper = re.sub(r"\bRMU[:\s-].*$", " ", upper)
     upper = re.sub(r"\$\s*\d{1,5}(?:[.,]\d{2})?(?:\s+\d{1,3})*", " ", upper)
     upper = re.sub(r"\([^)]{0,200}\)", " ", upper)
     upper = re.sub(r"\bDESCARGA\s+NUESTRA\b.*$", " ", upper)
     # Remove leading payment/amount fragments that OCR sometimes merges into CFE address lines.
     upper = re.sub(r"^\s*\$\s*\d{1,5}(?:[.,]\d{2})?(?:\s+\d{1,3})*\s+", "", upper)
     upper = re.sub(
-        r"^\s*\d{2,5}\s+\d{1,3}\s+(?=(?:DN\.?|DEPTO|DEPARTAMENTO|CALLE|CLL|AV|COL|BENITO|MZ|LT|NO\.?|NUM|KM)\b)",
+        r"^\s*\d{3,5}\s+\d{1,3}\s+(?=(?:DN\.?|DEPTO|DEPARTAMENTO|CALLE|CLL|AV|COL|BENITO|MZ|LT|NO\.?|NUM|KM)\b)",
         "",
         upper,
     )
     upper = upper.replace("DOMICILIO", " ")
+    upper = re.sub(r"^\s*DE\s+SUMINISTRO\b", " ", upper)
     upper = re.sub(r"\bAV(?=[A-Z])", "AV ", upper)
     upper = re.sub(r"\bFCP\b", "CP", upper)
     upper = re.sub(r"([A-Z])S/N\b", r"\1 S/N", upper)
@@ -3619,12 +3882,12 @@ def _normalize_reference_value(value: str) -> str:
     text = str(value or "").upper().strip()
     if not text:
         return ""
-    numeric = _normalize_numeric_field(text)
-    if 10 <= len(numeric) <= 30:
-        return numeric
     text_norm = _normalize_text(text).upper()
     if len(text_norm) >= 12 and any(marker in text_norm for marker in ("CALLE", "CLL", "AV", "COL", "DEPTO", "CIUDAD", "CP", "C.P.", "BENITO", "CARMEN")):
         return text_norm
+    numeric = _normalize_numeric_field(text)
+    if 10 <= len(numeric) <= 30:
+        return numeric
     alnum = _normalize_alnum(text)
     digits = sum(1 for ch in alnum if ch.isdigit())
     if 10 <= len(alnum) <= 120 and digits >= 8:
@@ -4305,8 +4568,9 @@ def _extract_acta_folio_numero_from_text(full_text: str) -> tuple[str | None, st
         middle_value = _normalize_value_for_key("numero_acta", table_match.group(2))
         last_value = _normalize_value_for_key("folio", table_match.group(3))
 
-        # In compact table rows the first number is usually "LIBRO",
-        # then "NUMERO DE ACTA", and the last one maps better to "FOLIO".
+        # Prefer common pattern where first number behaves as folio and the last as numero_acta.
+        if first_value and last_value:
+            return (first_value, _normalize_value_for_key("numero_acta", table_match.group(3)) or last_value)
         if middle_value and last_value:
             return (last_value, middle_value)
 
@@ -4332,6 +4596,140 @@ def _extract_acta_folio_numero_from_text(full_text: str) -> tuple[str | None, st
             folio = normalized
 
     return folio, numero_acta
+
+
+def _extract_acta_name_from_text(raw_text: str) -> str | None:
+    def fix_ocr_letters(value: str) -> str:
+        text = str(value or "").upper()
+        text = re.sub(r"(?<=[A-Z])0(?=[A-Z])", "O", text)
+        text = re.sub(r"(?<=[A-Z])0(?=\b|[^0-9])", "O", text)
+        text = re.sub(r"(?<=[A-Z])1(?=[A-Z])", "I", text)
+        text = re.sub(r"(?<=[A-Z])5(?=[A-Z])", "S", text)
+        return text
+
+    lines = [fix_ocr_letters(_normalize_text(line)) for line in str(raw_text or "").splitlines() if _normalize_text(line)]
+    if not lines:
+        return None
+    full = " ".join(lines)
+
+    stop_words = (
+        "SEXO",
+        "FECHA",
+        "LUGAR",
+        "NACIMIENTO",
+        "PRIMER",
+        "SEGUNDO",
+        "APELLIDO",
+        "CURP",
+        "FOLIO",
+        "LIBRO",
+        "TOMO",
+        "OFICIALIA",
+        "REGISTRO",
+        "ACTA",
+    )
+
+    def clean_piece(value: str) -> str:
+        piece = re.sub(r"[^A-ZÑÁÉÍÓÚÜ ]", " ", str(value or "").upper())
+        piece = re.sub(r"\s+", " ", piece).strip()
+        if not piece:
+            return ""
+        if len(piece) <= 1:
+            return ""
+        if any(token in piece for token in ("APELLIDO", "NOMBRE(S)")):
+            return ""
+        return piece
+
+    def cut_at_stop(text_value: str) -> str:
+        cut = text_value
+        for token in stop_words:
+            idx = cut.find(token)
+            if idx > 0:
+                cut = cut[:idx].strip()
+        return cut
+
+    def label_equals(line_value: str, target: str) -> bool:
+        return _label_key(line_value) == _label_key(target)
+
+    inline_candidate = ""
+
+    # Pattern 1: full label in one line.
+    inline = re.search(r"\bNOMBRE(?:\(S\))?\s*[:\-]?\s*([A-ZÑÁÉÍÓÚÜ ]{4,120})", full)
+    if inline:
+        candidate = clean_piece(cut_at_stop(inline.group(1)))
+        if candidate and _looks_like_person_name(candidate):
+            inline_candidate = _normalize_name(candidate)
+
+    # Pattern 1b: label in one line, value in next line (with OCR-noisy labels).
+    for idx, line in enumerate(lines):
+        if not (label_equals(line, "NOMBRE") or label_equals(line, "NOMBRES") or label_equals(line, "NOMBRE(S)")):
+            continue
+        if idx + 1 >= len(lines):
+            continue
+        candidate = clean_piece(cut_at_stop(lines[idx + 1]))
+        if candidate and _looks_like_person_name(candidate):
+            if not inline_candidate:
+                inline_candidate = _normalize_name(candidate)
+            break
+
+    # Pattern 2: labeled parts.
+    nombre = ""
+    apellido1 = ""
+    apellido2 = ""
+    for line in lines:
+        if not nombre:
+            match = re.search(r"\bNOMBRE(?:\(S\))?\s*[:\-]?\s*(.+)$", line)
+            if match:
+                nombre = clean_piece(cut_at_stop(match.group(1)))
+                continue
+            if label_equals(line, "NOMBRE") or label_equals(line, "NOMBRES") or label_equals(line, "NOMBRE(S)"):
+                continue
+        if not apellido1:
+            match = re.search(r"\bPRIMER\s+APELLID[O0]\s*[:\-]?\s*(.+)$", line)
+            if match:
+                apellido1 = clean_piece(cut_at_stop(match.group(1)))
+                continue
+            if label_equals(line, "PRIMER APELLIDO") or label_equals(line, "1ER APELLIDO"):
+                continue
+        if not apellido2:
+            match = re.search(r"\bSEGUND[O0]\s+APELLID[O0]\s*[:\-]?\s*(.+)$", line)
+            if match:
+                apellido2 = clean_piece(cut_at_stop(match.group(1)))
+                continue
+            if label_equals(line, "SEGUNDO APELLIDO") or label_equals(line, "2DO APELLIDO"):
+                continue
+
+    # Pattern 2b: OCR noisy labels with values in following lines.
+    if not (nombre and apellido1 and apellido2):
+        for idx, line in enumerate(lines):
+            if not nombre and (label_equals(line, "NOMBRE") or label_equals(line, "NOMBRES") or label_equals(line, "NOMBRE(S)")):
+                if idx + 1 < len(lines):
+                    nombre = clean_piece(cut_at_stop(lines[idx + 1])) or nombre
+            if not apellido1 and (label_equals(line, "PRIMER APELLIDO") or label_equals(line, "1ER APELLIDO")):
+                if idx + 1 < len(lines):
+                    apellido1 = clean_piece(cut_at_stop(lines[idx + 1])) or apellido1
+            if not apellido2 and (label_equals(line, "SEGUNDO APELLIDO") or label_equals(line, "2DO APELLIDO")):
+                if idx + 1 < len(lines):
+                    apellido2 = clean_piece(cut_at_stop(lines[idx + 1])) or apellido2
+    composed = " ".join(part for part in [nombre, apellido1, apellido2] if part).strip()
+    if composed and _looks_like_person_name(composed):
+        return _normalize_name(composed)
+
+    # Pattern 3: section "DATOS DE LA PERSONA REGISTRADA".
+    section_idx = next((i for i, line in enumerate(lines) if "DATOS DE LA PERSONA REGISTRADA" in line), -1)
+    if section_idx >= 0:
+        collected: list[str] = []
+        for line in lines[section_idx + 1 : section_idx + 6]:
+            if any(token in line for token in ("NOMBRE", "APELLIDO", "SEXO", "FECHA", "LUGAR", "NACIMIENTO")):
+                break
+            cleaned = clean_piece(line)
+            if cleaned:
+                collected.append(cleaned)
+        candidate = " ".join(collected).strip()
+        if candidate and _looks_like_person_name(candidate):
+            return _normalize_name(candidate)
+
+    return inline_candidate or None
 
 
 def _clean_acta_lugar_nacimiento(value: str) -> str:
@@ -4361,13 +4759,40 @@ def _dedupe_fields(fields: list[dict]) -> list[dict]:
         except (TypeError, ValueError):
             return None
 
-    def _rank(field: dict) -> tuple[int, float]:
+    def _address_quality(value: str | None) -> float:
+        text = _normalize_address(str(value or ""))
+        if not text:
+            return 0.0
+        score = float(min(len(text), 140))
+        if re.search(r"\b\d{5}\b", text):
+            score += 12
+        marker_hits = sum(
+            1
+            for marker in ("CALLE", "CLL", "AV", "COL", "CP", "C.P.", "MUN", "EDO", "S/N", "NUM", "NO.", "LOC", "RIA", "DEPTO")
+            if marker in text
+        )
+        score += marker_hits * 10
+        if "SSL" in text or "BENITOJUAREZ" in text:
+            score += 18
+        if re.search(r"\b\d{5}\s*$", text):
+            score -= 16
+        if text.startswith("-"):
+            score -= 12
+        if any(noise in text for noise in ("NO. DE SERVICIO", "NUMERO DE SERVICIO", "CUENTA", "RMU")):
+            score -= 35
+        if any(noise in text for noise in ("INSTITUTO NACIONAL ELECTORAL", "CREDENCIAL PARA VOTAR", "TELMEX TOTAL A PAGAR")):
+            score -= 20
+        return score
+
+    def _rank(field: dict) -> tuple[float, float, float]:
         key = str(field.get("key", ""))
         confidence = float(field.get("confidence", 0) or 0)
         if key == "total":
             amount = _parse_amount_for_rank(field.get("value"))
-            return (1 if amount is not None and amount > 0 else 0, confidence)
-        return (1, confidence)
+            return (1 if amount is not None and amount > 0 else 0, 0, confidence)
+        if key == "domicilio":
+            return (1, _address_quality(field.get("value")), confidence)
+        return (1, 0, confidence)
 
     best: dict[str, dict] = {}
     for field in fields:
@@ -4442,9 +4867,6 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
             if normalized in {"H", "M"}:
                 fields.append(_make_field("sexo", "Sexo", normalized, ocr_boxes, confidence=0.8))
         if document_type == "INE":
-            ine_address = _pick_address(lines)
-            if ine_address:
-                fields.append(_make_field("domicilio", "Domicilio", _clean_address_value(ine_address), ocr_boxes, confidence=0.7))
             if "domicilio" in box_values:
                 fields.append(_make_field("domicilio", "Domicilio", _clean_address_value(box_values["domicilio"]["value"]), ocr_boxes, confidence=0.8))
             clave_elector = _find_value_after_keyword(lines, ["CLAVE DE ELECTOR", "CLAVE ELECTOR", "ELECTOR"])
@@ -4504,7 +4926,12 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
             surname_line = next((line for line in text_lines if "<" in line and "<<" not in line and not re.search(r"\d", line)), "")
             given_line = next((line for line in text_lines if "<<" in line and not re.search(r"\d", line)), "")
             if given_line or surname_line:
+                surname_idx = next((i for i, line in enumerate(text_lines) if line == surname_line), -1)
                 last = surname_line.replace("<", " ").strip()
+                if surname_idx > 0:
+                    previous = re.sub(r"[^A-Z]", "", text_lines[surname_idx - 1])
+                    if 3 <= len(previous) <= 6 and previous not in {"NOMBRE", "DOMICILIO", "CURP", "SECCION"}:
+                        last = f"{previous} {last}".strip()
                 first = given_line.split("<<", 1)[-1].replace("<", " ").strip() if given_line else ""
                 tokens = []
                 for token in f"{first} {last}".split():
@@ -4547,7 +4974,7 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                     after = line.split("DOMICILIO", 1)[-1].strip()
                     if after:
                         addr_lines.append(after)
-                    for line in text_lines[dom_line_idx + 1: dom_line_idx + 4]:
+                    for line in text_lines[dom_line_idx + 1: dom_line_idx + 5]:
                         if any(skip in line for skip in ["INSTITUTO", "INSTITU", "ELECTO", "ELECT", "CREDENCIAL"]):
                             continue
                         addr_lines.append(line)
@@ -4764,12 +5191,21 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                     fields.append(_make_field(key, label, value, ocr_boxes, confidence=0.7))
         for value in dates:
             fields.append(_make_field("fecha", "Fecha", _normalize_date_value(value), ocr_boxes, confidence=0.6))
-        folio = _find_value_after_keyword(lines, ["FOLIO", "NO ACTA", "NUMERO DE ACTA"])
+        folio = _find_value_after_keyword(lines, ["FOLIO"])
         if folio:
             folio_num = _normalize_value_for_key("folio", folio)
             if folio_num:
                 fields.append(_make_field("folio", "Folio", folio_num, ocr_boxes, confidence=0.6))
         if document_type == "ACTA_NACIMIENTO":
+            if not any(f.get("key") == "nombre" and f.get("value") for f in fields):
+                acta_name = _extract_acta_name_from_text(base_text_raw)
+                if acta_name:
+                    fields.append(_make_field("nombre", "Nombre", acta_name, ocr_boxes, confidence=0.9))
+            numero_acta_text = _find_value_after_keyword(lines, ["NUMERO DE ACTA", "NO ACTA"])
+            if numero_acta_text:
+                numero_norm = _normalize_value_for_key("numero_acta", numero_acta_text)
+                if numero_norm:
+                    fields.append(_make_field("numero_acta", "Numero de acta", numero_norm, ocr_boxes, confidence=0.6))
             extracted_keys = {str(f.get("key", "")) for f in fields}
             if "folio" not in extracted_keys or "numero_acta" not in extracted_keys:
                 folio_text, numero_text = _extract_acta_folio_numero_from_text(text)
@@ -5634,6 +6070,68 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                 rmu_value = _normalize_value_for_key("referencia", rmu_match.group(1))
                 if rmu_value:
                     fields.append(_make_field("referencia", "Referencia", rmu_value, ocr_boxes, confidence=0.86))
+        if is_cfe:
+            best_dom = next((str(f.get("value", "")).strip() for f in fields if f.get("key") == "domicilio" and f.get("value")), "")
+            if best_dom:
+                dom_upper = _normalize_text(best_dom).upper()
+                if dom_upper.startswith("DN") and "17DN" in text:
+                    dom_upper = _normalize_text(f"17 {dom_upper}").upper()
+                has_address_markers = any(
+                    marker in dom_upper for marker in ("CALLE", "CLL", "AV", "COL", "CP", "C.P.", "DEPTO", "BENITO", "CARMEN")
+                )
+                if has_address_markers and len(dom_upper) >= 16:
+                    av_piece = ""
+                    if "AV " not in dom_upper:
+                        av_match = re.search(r"\bAV[A-Z0-9]{6,120}(?:COLOSIO|DONALDO)[A-Z0-9]{0,20}", text)
+                        if av_match:
+                            av_piece = _clean_address_value(av_match.group(0))
+
+                    dom_with_av = dom_upper
+                    if av_piece and av_piece not in dom_with_av:
+                        if "SSL" in dom_with_av:
+                            dom_with_av = re.sub(r"\bSSL\b", f"{av_piece} SSL", dom_with_av, count=1)
+                        else:
+                            dom_with_av = _normalize_text(f"{dom_with_av} {av_piece}").upper()
+
+                    domicilio_candidate = re.sub(r"\bC\.?\s*P\.?\s*\d{5}\b", " ", dom_with_av)
+                    domicilio_candidate = re.sub(r"\b\d{5}\b", " ", domicilio_candidate)
+                    domicilio_candidate = re.sub(
+                        r"\bCIUDAD\s*DE[L]?\s*CARMEN[,.\s]*CAMP(?:ECHE)?\b|\bCIUDADDELCARMEN[,.\s]*CAMP(?:ECHE)?\b",
+                        " ",
+                        domicilio_candidate,
+                    )
+                    domicilio_candidate = _clean_address_value(domicilio_candidate)
+                    if domicilio_candidate:
+                        fields.append(_make_field("domicilio", "Domicilio", domicilio_candidate, ocr_boxes, confidence=0.94))
+
+                    ref_parts = [dom_with_av]
+                    cp_value = next(
+                        (
+                            _normalize_numeric_field(str(f.get("value", "")))
+                            for f in fields
+                            if f.get("key") == "cp" and f.get("value")
+                        ),
+                        "",
+                    )
+                    if cp_value and cp_value not in dom_upper:
+                        ref_parts.append(f"FC.P. {cp_value}")
+                    city_match = re.search(
+                        r"CIUDAD\s*DE[L]?\s*CARMEN[,.\s]*CAMP(?:ECHE)?|CIUDADDELCARMEN[,.\s]*CAMP(?:ECHE)?",
+                        text,
+                    )
+                    if city_match:
+                        city_text = _normalize_text(city_match.group(0)).upper()
+                        if city_text and city_text not in dom_upper:
+                            ref_parts.append(city_text)
+                    fields.append(
+                        _make_field(
+                            "referencia",
+                            "Referencia",
+                            _normalize_text(" ".join(ref_parts)).upper(),
+                            ocr_boxes,
+                            confidence=0.92,
+                        )
+                    )
 
     legacy_values = legacy_extract_fields(document_type, ocr_boxes)
     if legacy_values:
