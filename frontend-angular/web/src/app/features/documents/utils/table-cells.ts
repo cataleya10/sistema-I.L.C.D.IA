@@ -155,6 +155,25 @@ export interface TableViewModel {
   bodyRows: string[][];
 }
 
+export type TableLayoutMode = 'standard' | 'advanced_nomina';
+
+const ADVANCED_NOMINA_TOKENS = [
+  'TIPO_MOVIMIENTO',
+  'CLAVE_BENEFICIARIO',
+  'CUENTA_BENEFICIARIO',
+  'BANCO_RECEPTOR',
+  'DIAS_VIGENCIA',
+  'CONCEPTO_PAGO'
+];
+
+function normalizeHeaderToken(value: string): string {
+  return String(value ?? '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
 export function buildTableView(rows: string[][]): TableViewModel {
   if (!rows.length) {
     return { headerRows: [], bodyRows: [] };
@@ -179,4 +198,161 @@ export function buildTableView(rows: string[][]): TableViewModel {
     headerRows,
     bodyRows: bodyRows.length ? bodyRows : rows
   };
+}
+
+export function detectTableLayoutMode(tableView: TableViewModel): TableLayoutMode {
+  const header = tableView.headerRows[0] ?? tableView.bodyRows[0] ?? [];
+  if (!header.length) {
+    return 'standard';
+  }
+  const normalized = header.map((cell) => normalizeHeaderToken(cell));
+  const tokenHits = ADVANCED_NOMINA_TOKENS.filter((token) => normalized.includes(token)).length;
+  if (tokenHits >= 3 || normalized.length >= 8) {
+    return 'advanced_nomina';
+  }
+  return 'standard';
+}
+
+function escapeXml(value: string): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+export interface ExcelXmlOptions {
+  reportMode?: boolean;
+}
+
+function columnWidths(rows: string[][], reportMode: boolean): number[] {
+  const maxCols = rows.reduce((max, row) => Math.max(max, row.length), 0);
+  const widths = new Array(maxCols).fill(reportMode ? 90 : 120);
+  for (let col = 0; col < maxCols; col += 1) {
+    let longest = 0;
+    for (const row of rows) {
+      const value = String(row[col] ?? '');
+      longest = Math.max(longest, value.length);
+    }
+    const calculated = reportMode ? longest * 5.4 : longest * 6.6;
+    const min = reportMode ? 70 : 90;
+    const max = reportMode ? 170 : 260;
+    widths[col] = Math.max(min, Math.min(max, Math.round(calculated)));
+  }
+  return widths;
+}
+
+export function buildExcelXml(rows: string[][], options: ExcelXmlOptions = {}): string {
+  const reportMode = Boolean(options.reportMode);
+  const widths = columnWidths(rows, reportMode);
+  const columnsXml = widths.map((width) => `<Column ss:AutoFitWidth="0" ss:Width="${width}"/>`).join('');
+  const body = rows
+    .map((row, rowIndex) => {
+      const isHeader = rowIndex === 0;
+      const style = isHeader ? 'HeaderCell' : reportMode ? 'ReportCell' : 'BodyCell';
+      const cells = row
+        .map((cell) => `<Cell ss:StyleID="${style}"><Data ss:Type="String">${escapeXml(cell)}</Data></Cell>`)
+        .join('');
+      return `<Row>${cells}</Row>`;
+    })
+    .join('');
+
+  return [
+    '<?xml version="1.0"?>',
+    '<?mso-application progid="Excel.Sheet"?>',
+    '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"',
+    ' xmlns:o="urn:schemas-microsoft-com:office:office"',
+    ' xmlns:x="urn:schemas-microsoft-com:office:excel"',
+    ' xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"',
+    ' xmlns:html="http://www.w3.org/TR/REC-html40">',
+    '<Styles>',
+    '<Style ss:ID="HeaderCell">',
+    '<Font ss:Bold="1"/>',
+    '<Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>',
+    '<Interior ss:Color="#EAF0FF" ss:Pattern="Solid"/>',
+    '<Borders>',
+    '<Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>',
+    '<Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>',
+    '<Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>',
+    '<Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>',
+    '</Borders>',
+    '</Style>',
+    '<Style ss:ID="BodyCell">',
+    '<Alignment ss:Horizontal="Left" ss:Vertical="Center" ss:WrapText="1"/>',
+    '<Borders>',
+    '<Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>',
+    '<Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>',
+    '<Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>',
+    '<Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>',
+    '</Borders>',
+    '</Style>',
+    '<Style ss:ID="ReportCell">',
+    '<Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>',
+    '<Borders>',
+    '<Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>',
+    '<Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>',
+    '<Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>',
+    '<Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>',
+    '</Borders>',
+    '</Style>',
+    '</Styles>',
+    '<Worksheet ss:Name="Tabla">',
+    '<Table>',
+    columnsXml,
+    body,
+    '</Table>',
+    '</Worksheet>',
+    '</Workbook>'
+  ].join('');
+}
+
+function escapeHtml(value: string): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+export function buildReportHtmlDocument(title: string, rows: string[][]): string {
+  const header = rows[0] ?? [];
+  const body = rows.slice(1);
+  const colCount = Math.max(1, header.length || (body[0]?.length ?? 1));
+
+  const thead = header.length
+    ? `<thead><tr>${header.map((cell) => `<th>${escapeHtml(cell)}</th>`).join('')}</tr></thead>`
+    : '';
+  const tbody = body.length
+    ? `<tbody>${body
+        .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`)
+        .join('')}</tbody>`
+    : `<tbody><tr><td colspan="${colCount}">Sin datos</td></tr></tbody>`;
+
+  return [
+    '<!doctype html>',
+    '<html lang="es">',
+    '<head>',
+    '<meta charset="utf-8" />',
+    `<title>${escapeHtml(title)}</title>`,
+    '<style>',
+    'body{font-family:"Times New Roman",Georgia,serif;margin:22px;color:#111;}',
+    'h1{font-size:18px;text-align:center;margin:0 0 14px;}',
+    'table{width:100%;border-collapse:collapse;table-layout:fixed;}',
+    'th,td{border:1px solid #374151;padding:4px 6px;font-size:11px;line-height:1.1;text-align:center;vertical-align:middle;word-wrap:break-word;}',
+    'th{background:#e5e7eb;font-weight:700;}',
+    'tbody tr:nth-child(even) td{background:#f9fafb;}',
+    '.meta{font-size:11px;color:#374151;margin:0 0 10px;}',
+    '@page{size:A4 landscape;margin:10mm;}',
+    '</style>',
+    '</head>',
+    '<body>',
+    `<h1>${escapeHtml(title)}</h1>`,
+    `<p class="meta">Generado: ${new Date().toLocaleString('es-MX')}</p>`,
+    `<table>${thead}${tbody}</table>`,
+    '<script>window.onload=function(){setTimeout(function(){window.print();},120);}</script>',
+    '</body>',
+    '</html>'
+  ].join('');
 }

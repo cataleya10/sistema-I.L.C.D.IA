@@ -119,6 +119,90 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertGreaterEqual(len(payload.get("rows", [])), 2)
         self.assertEqual(payload["rows"][0][0], "CUENTA")
 
+    def test_extract_factura_payment_table_from_fragmented_boxes(self):
+        ocr_text = "COMPROBANTE DE LA OPERACION"
+        ocr_boxes = [
+            {"text": "Cuenta", "page": 1, "confidence": 0.99, "bbox": [[10, 10], [90, 10], [90, 30], [10, 30]]},
+            {"text": "Referencia", "page": 1, "confidence": 0.99, "bbox": [[120, 10], [240, 10], [240, 30], [120, 30]]},
+            {"text": "Importe", "page": 1, "confidence": 0.99, "bbox": [[260, 10], [340, 10], [340, 30], [260, 30]]},
+            {"text": "Nombre", "page": 1, "confidence": 0.99, "bbox": [[360, 10], [440, 10], [440, 30], [360, 30]]},
+            {"text": "Benefi", "page": 1, "confidence": 0.99, "bbox": [[470, 10], [530, 10], [530, 30], [470, 30]]},
+            {"text": "ciario", "page": 1, "confidence": 0.99, "bbox": [[535, 10], [600, 10], [600, 30], [535, 30]]},
+            {"text": "56551346133", "page": 1, "confidence": 0.99, "bbox": [[10, 40], [120, 40], [120, 60], [10, 60]]},
+            {"text": "1620260115132703271255", "page": 1, "confidence": 0.99, "bbox": [[120, 40], [300, 40], [300, 60], [120, 60]]},
+            {"text": "$1,462.58", "page": 1, "confidence": 0.99, "bbox": [[260, 40], [340, 40], [340, 60], [260, 60]]},
+            {"text": "JOSE", "page": 1, "confidence": 0.99, "bbox": [[360, 40], [410, 40], [410, 60], [360, 60]]},
+            {"text": "LUIS", "page": 1, "confidence": 0.99, "bbox": [[415, 40], [460, 40], [460, 60], [415, 60]]},
+            {"text": "GARCIA", "page": 1, "confidence": 0.99, "bbox": [[470, 40], [545, 40], [545, 60], [470, 60]]},
+            {"text": "LOPEZ", "page": 1, "confidence": 0.99, "bbox": [[550, 40], [620, 40], [620, 60], [550, 60]]},
+        ]
+
+        fields = asyncio.run(extract_fields("FACTURA", ocr_text, ocr_boxes))
+        data = _field_map(fields)
+
+        self.assertIn("tabla_celdas", data)
+        payload = json.loads(data["tabla_celdas"])
+        self.assertEqual(payload.get("source"), "ocr_boxes")
+        self.assertEqual(payload["rows"][0][0], "CUENTA")
+        self.assertIn("REFERENCIA", payload["rows"][0])
+        self.assertIn("JOSE LUIS", payload["rows"][1])
+        self.assertIn("GARCIA LOPEZ", payload["rows"][1])
+
+    def test_extract_factura_scotia_ocr_boxes_also_append_bottom_summary_rows(self):
+        ocr_text = "\n".join(
+            [
+                "Scotiabank Inverlat S.A.",
+                "Transferencia de Archivos",
+                "Cantidad de Movimientos Altas",
+                "Importe de Movimiento Altas",
+                "Cantidad de Movimientos Bajas",
+                "Importe de Movimientos Bajas",
+                "6",
+                "$18,000.00",
+                "0",
+                "$0.00",
+                "Total Cantidad de Movimientos Altas",
+                "Total Importe de Movimiento Altas",
+                "Total Cantidad de Movimientos Bajas",
+                "Total Importe de Movimientos Bajas",
+                "6",
+                "$18,000.00",
+                "0",
+                "$0.00",
+            ]
+        )
+        ocr_boxes = [
+            {"text": "TIPO DE REGISTRO", "page": 1, "confidence": 0.99, "bbox": [[10, 10], [160, 10], [160, 30], [10, 30]]},
+            {"text": "TIPO DE MOVIMIENTO (PAGO)", "page": 1, "confidence": 0.99, "bbox": [[170, 10], [360, 10], [360, 30], [170, 30]]},
+            {"text": "IMPORTE", "page": 1, "confidence": 0.99, "bbox": [[370, 10], [450, 10], [450, 30], [370, 30]]},
+            {"text": "FECHA DE APLICACION", "page": 1, "confidence": 0.99, "bbox": [[460, 10], [620, 10], [620, 30], [460, 30]]},
+            {"text": "CLAVE DEL BENEFICIARIO", "page": 1, "confidence": 0.99, "bbox": [[630, 10], [820, 10], [820, 30], [630, 30]]},
+            {"text": "NOMBRE DEL BENEFICIARIO", "page": 1, "confidence": 0.99, "bbox": [[830, 10], [1020, 10], [1020, 30], [830, 30]]},
+            {"text": "REFERENCIA", "page": 1, "confidence": 0.99, "bbox": [[1030, 10], [1130, 10], [1130, 30], [1030, 30]]},
+            {"text": "NO. CUENTA BENEFICIARIO", "page": 1, "confidence": 0.99, "bbox": [[1140, 10], [1330, 10], [1330, 30], [1140, 30]]},
+            {"text": "NO. BANCO RECEPTOR", "page": 1, "confidence": 0.99, "bbox": [[1340, 10], [1490, 10], [1490, 30], [1340, 30]]},
+            {"text": "DIAS DE VIGENCIA", "page": 1, "confidence": 0.99, "bbox": [[1500, 10], [1630, 10], [1630, 30], [1500, 30]]},
+            {"text": "CONCEPTO PAGO", "page": 1, "confidence": 0.99, "bbox": [[1640, 10], [1760, 10], [1760, 30], [1640, 30]]},
+            {"text": "DA ALTA", "page": 1, "confidence": 0.99, "bbox": [[10, 40], [160, 40], [160, 60], [10, 60]]},
+            {"text": "04 ABONO EN CUENTA", "page": 1, "confidence": 0.99, "bbox": [[170, 40], [360, 40], [360, 60], [170, 60]]},
+            {"text": "$3,000.00", "page": 1, "confidence": 0.99, "bbox": [[370, 40], [450, 40], [450, 60], [370, 60]]},
+            {"text": "15/01/2026", "page": 1, "confidence": 0.99, "bbox": [[460, 40], [620, 40], [620, 60], [460, 60]]},
+            {"text": "A35", "page": 1, "confidence": 0.99, "bbox": [[630, 40], [820, 40], [820, 60], [630, 60]]},
+            {"text": "VELAZCO DIONICIO ZENON", "page": 1, "confidence": 0.99, "bbox": [[830, 40], [1020, 40], [1020, 60], [830, 60]]},
+            {"text": "1", "page": 1, "confidence": 0.99, "bbox": [[1030, 40], [1130, 40], [1130, 60], [1030, 60]]},
+            {"text": "00014052605935660925", "page": 1, "confidence": 0.99, "bbox": [[1140, 40], [1330, 40], [1330, 60], [1140, 60]]},
+            {"text": "14", "page": 1, "confidence": 0.99, "bbox": [[1340, 40], [1490, 40], [1490, 60], [1340, 60]]},
+            {"text": "1", "page": 1, "confidence": 0.99, "bbox": [[1500, 40], [1630, 40], [1630, 60], [1500, 60]]},
+            {"text": "PAGO35", "page": 1, "confidence": 0.99, "bbox": [[1640, 40], [1760, 40], [1760, 60], [1640, 60]]},
+        ]
+        fields = asyncio.run(extract_fields("FACTURA", ocr_text, ocr_boxes))
+        data = _field_map(fields)
+        payload = json.loads(data["tabla_celdas"])
+        self.assertEqual(payload.get("source"), "ocr_boxes")
+        rows = payload.get("rows", [])
+        self.assertIn(["CANTIDAD DE MOVIMIENTOS ALTAS", "IMPORTE DE MOVIMIENTO ALTAS", "CANTIDAD DE MOVIMIENTOS BAJAS", "IMPORTE DE MOVIMIENTOS BAJAS"], rows)
+        self.assertIn(["TOTAL CANTIDAD DE MOVIMIENTOS ALTAS", "TOTAL IMPORTE DE MOVIMIENTO ALTAS", "TOTAL CANTIDAD DE MOVIMIENTOS BAJAS", "TOTAL IMPORTE DE MOVIMIENTOS BAJAS"], rows)
+
     def test_extract_datos_bancarios_payment_table_from_text_lines(self):
         ocr_text = "\n".join(
             [
@@ -148,6 +232,337 @@ class ExtractPipelineTests(unittest.TestCase):
         payload = json.loads(data["tabla_celdas"])
         self.assertEqual(payload.get("source"), "text_lines")
         self.assertEqual(payload["rows"][0][0], "CUENTA")
+
+    def test_extract_factura_payment_table_falls_back_to_text_when_ocr_rows_are_noisy(self):
+        ocr_text = "\n".join(
+            [
+                "Cuenta    Referencia    Importe    Nombre    Estatus    Concepto",
+                "0438349034    7379597479    $3,000.00    CARLOS ROBERTO RODRIGUEZ DOMINGUEZ    TRANSMITIDO    PAGO DE NOMINA",
+            ]
+        )
+        ocr_boxes = [
+            {"text": "No. 0000000001 Detalle empleado", "page": 1, "confidence": 0.99, "bbox": [[10, 10], [220, 10], [220, 30], [10, 30]]},
+            {"text": "Importe Estatus Código", "page": 1, "confidence": 0.99, "bbox": [[230, 10], [430, 10], [430, 30], [230, 30]]},
+            {"text": "PARA INSTITUCIÓN ACLARACIÓN", "page": 1, "confidence": 0.99, "bbox": [[10, 40], [260, 40], [260, 60], [10, 60]]},
+            {"text": "TELEFONOS UNIDAD ESPECIALIZADA", "page": 1, "confidence": 0.99, "bbox": [[270, 40], [520, 40], [520, 60], [270, 60]]},
+        ]
+
+        fields = asyncio.run(extract_fields("FACTURA", ocr_text, ocr_boxes))
+        data = _field_map(fields)
+
+        self.assertIn("tabla_celdas", data)
+        payload = json.loads(data["tabla_celdas"])
+        self.assertEqual(payload.get("source"), "text_lines")
+        self.assertEqual(payload["rows"][1][0], "0438349034")
+        self.assertEqual(payload["rows"][1][1], "7379597479")
+
+    def test_extract_factura_includes_pdf_replica_text_when_raw_text_has_layout(self):
+        raw_text = "\n".join(
+            [
+                "Scotiabank Inverlat S.A.",
+                "Transferencia de Archivos",
+                "TIPO DE MOVIMIENTO    IMPORTE    FECHA DE APLICACION",
+                "DA ALTA    $3,000.00    15/01/2026",
+            ]
+        )
+        fields = asyncio.run(extract_fields("FACTURA", raw_text, None, raw_text=raw_text))
+        data = _field_map(fields)
+
+        self.assertIn("replica_pdf_texto", data)
+        self.assertIn("Scotiabank Inverlat S.A.", data.get("replica_pdf_texto", ""))
+        self.assertIn("DA ALTA", data.get("replica_pdf_texto", ""))
+
+    def test_extract_factura_includes_pdf_replica_layout_payload(self):
+        raw_text = "\n".join(
+            [
+                "Scotiabank Inverlat S.A.",
+                "Transferencia de Archivos",
+                "TIPO DE MOVIMIENTO    IMPORTE",
+                "DA ALTA    $3,000.00",
+            ]
+        )
+        fields = asyncio.run(extract_fields("FACTURA", raw_text, None, raw_text=raw_text))
+        data = _field_map(fields)
+
+        self.assertIn("replica_pdf_layout", data)
+        payload = json.loads(data["replica_pdf_layout"])
+        self.assertIn("pages", payload)
+        self.assertGreaterEqual(len(payload["pages"]), 1)
+        self.assertIn("lines", payload["pages"][0])
+        self.assertGreaterEqual(len(payload["pages"][0]["lines"]), 2)
+
+    def test_extract_factura_payment_table_from_compact_nomina_text(self):
+        ocr_text = "\n".join(
+            [
+                "Dispersión de Pago de Nómina",
+                "DATOS DEL BENEFICIARIO",
+                "Número de cuenta de Abono:56551346133",
+                "Referencia:1620260115132703271255",
+                "Importe:$1,462.58 MXN",
+                "Estatus:Procesado",
+                "Nombre:JOSE LUIS",
+                "Concepto:Pago de Nómina",
+            ]
+        )
+        fields = asyncio.run(extract_fields("FACTURA", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertIn("tabla_celdas", data)
+        payload = json.loads(data["tabla_celdas"])
+        rows = payload.get("rows", [])
+        self.assertGreaterEqual(len(rows), 2)
+        self.assertEqual(rows[0][0], "CUENTA")
+        self.assertEqual(rows[1][0], "56551346133")
+        self.assertEqual(rows[1][1], "1620260115132703271255")
+        self.assertIn("1,462.58", rows[1][2])
+        self.assertIn("JOSE LUIS", rows[1][3])
+
+    def test_extract_factura_payment_table_from_scotia_transfer_text(self):
+        ocr_text = "\n".join(
+            [
+                "Scotiabank Inverlat S.A.",
+                "Transferencia de Archivos",
+                "DA ALTA",
+                "04 ABONO EN",
+                "CUENTA",
+                "$3,000.00",
+                "15/01/2026",
+                "A35",
+                "VELAZCO",
+                "DIONICIO ZENON",
+                "1",
+                "00014052605935660925 14",
+                "1",
+                "PAGO35",
+            ]
+        )
+        fields = asyncio.run(extract_fields("FACTURA", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertIn("tabla_celdas", data)
+        payload = json.loads(data["tabla_celdas"])
+        rows = payload.get("rows", [])
+        self.assertGreaterEqual(len(rows), 2)
+        self.assertEqual(rows[0][0], "TIPO DE REGISTRO")
+        self.assertEqual(rows[0][1], "TIPO DE MOVIMIENTO (PAGO)")
+        self.assertEqual(rows[1][0], "DA ALTA")
+        self.assertIn("ABONO EN CUENTA", rows[1][1])
+        self.assertEqual(rows[1][2], "$3,000.00")
+        self.assertEqual(rows[1][3], "15/01/2026")
+        self.assertEqual(rows[1][7], "00014052605935660925")
+        self.assertIn("PAGO35", rows[1][10])
+
+    def test_extract_factura_payment_detail_payload_from_scotia_transfer_text(self):
+        ocr_text = "\n".join(
+            [
+                "Scotiabank Inverlat S.A.",
+                "Transferencia de Archivos",
+                "Nombre de Empresa: SUMINISTROS FLOMEN SA DE CV",
+                "Nombre del archivo: NOM 15 SEP 25.txt",
+                "Numero de Contrato Scotia en Linea: 527351",
+                "Folio: 62016184160",
+                "Nombre de usuario del sistema y nombre: 002 - MARIO ANTONIO FLOTA ALPUCHE",
+                "Fecha y hora de validacion del archivo: Sin fecha y hora de registro.",
+                "Cantidad Total de Movimientos: 6",
+                "Importe Total de Movimientos: $18,000.00",
+                "DA ALTA",
+                "04 ABONO EN",
+                "CUENTA",
+                "$3,000.00",
+                "15/01/2026",
+                "A35",
+                "VELAZCO",
+                "DIONICIO ZENON",
+                "1",
+                "00014052605935660925 14",
+                "1",
+                "PAGO35",
+            ]
+        )
+        fields = asyncio.run(extract_fields("FACTURA", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertIn("pago_detalle", data)
+        payload = json.loads(data["pago_detalle"])
+        self.assertEqual(payload.get("bank"), "SCOTIABANK")
+        self.assertEqual(payload.get("metadata", {}).get("nombre_empresa"), "SUMINISTROS FLOMEN SA DE CV")
+        self.assertEqual(payload.get("metadata", {}).get("nombre_archivo"), "NOM 15 SEP 25.TXT")
+        self.assertEqual(payload.get("metadata", {}).get("numero_contrato_scotia_linea"), "527351")
+        self.assertEqual(payload.get("metadata", {}).get("folio"), "62016184160")
+        self.assertIn("002 - MARIO ANTONIO FLOTA ALPUCHE", payload.get("metadata", {}).get("usuario_sistema_nombre", ""))
+        self.assertEqual(payload.get("metadata", {}).get("fecha_hora_validacion_archivo"), "SIN FECHA Y HORA DE REGISTRO")
+        self.assertEqual(payload.get("metadata", {}).get("cantidad_total_movimientos"), "6")
+        self.assertEqual(payload.get("metadata", {}).get("importe_total_movimientos"), "$18,000.00")
+        rows = payload.get("table", {}).get("rows", [])
+        self.assertGreaterEqual(len(rows), 1)
+        self.assertIn("tipoderegistro", rows[0])
+        self.assertEqual(rows[0].get("tipoderegistro"), "DA ALTA")
+        self.assertIn("tipodemovimientopago", rows[0])
+        self.assertIn("ABONO EN CUENTA", rows[0].get("tipodemovimientopago", ""))
+        canonical_rows = payload.get("table", {}).get("canonical_rows", [])
+        self.assertGreaterEqual(len(canonical_rows), 1)
+        self.assertEqual(canonical_rows[0].get("tipo_registro"), "DA ALTA")
+        self.assertIn("ABONO EN CUENTA", canonical_rows[0].get("tipo_movimiento", ""))
+        self.assertEqual(canonical_rows[0].get("fecha_aplicacion"), "15/01/2026")
+        self.assertEqual(canonical_rows[0].get("cuenta_beneficiario"), "00014052605935660925")
+        self.assertEqual(canonical_rows[0].get("concepto_pago"), "PAGO35")
+
+    def test_extract_factura_scotia_rows_are_deduplicated(self):
+        ocr_text = "\n".join(
+            [
+                "Scotiabank Inverlat S.A.",
+                "Transferencia de Archivos",
+                "DA ALTA 04 ABONO EN CUENTA $3,000.00 15/01/2026 A35 VELAZCO DIONICIO ZENON 1 00014052605935660925 14 1 PAGO35",
+                "DA ALTA 04 ABONO EN CUENTA $3,000.00 15/01/2026 A35 VELAZCO DIONICIO ZENON 1 00014052605935660925 14 1 PAGO35",
+            ]
+        )
+        fields = asyncio.run(extract_fields("FACTURA", ocr_text, None))
+        data = _field_map(fields)
+        payload = json.loads(data["tabla_celdas"])
+        rows = payload.get("rows", [])
+        self.assertEqual(len(rows), 2)
+
+    def test_extract_factura_scotia_includes_summary_tables(self):
+        ocr_text = "\n".join(
+            [
+                "Scotiabank Inverlat S.A.",
+                "Transferencia de Archivos",
+                "Cantidad de Movimientos Altas",
+                "Importe de Movimiento Altas",
+                "Cantidad de Movimientos Bajas",
+                "Importe de Movimientos Bajas",
+                "6",
+                "$18,000.00",
+                "0",
+                "$0.00",
+                "Total Cantidad de Movimientos Altas",
+                "Total Importe de Movimiento Altas",
+                "Total Cantidad de Movimientos Bajas",
+                "Total Importe de Movimientos Bajas",
+                "6",
+                "$18,000.00",
+                "0",
+                "$0.00",
+                "DA ALTA 04 ABONO EN CUENTA $3,000.00 15/01/2026 A35 VELAZCO DIONICIO ZENON 1 00014052605935660925 14 1 PAGO35",
+            ]
+        )
+        fields = asyncio.run(extract_fields("FACTURA", ocr_text, None))
+        data = _field_map(fields)
+        self.assertIn("pago_detalle", data)
+        payload = json.loads(data["pago_detalle"])
+        summary = payload.get("table", {}).get("summary_tables", [])
+        self.assertGreaterEqual(len(summary), 2)
+        self.assertEqual(summary[0].get("title"), "RESUMEN MOVIMIENTOS")
+        self.assertEqual(summary[0].get("rows", [[]])[0][0], "6")
+        self.assertEqual(summary[0].get("rows", [[]])[0][1], "$18,000.00")
+        self.assertEqual(summary[1].get("title"), "RESUMEN TOTAL")
+
+    def test_extract_factura_scotia_tablaceldas_includes_bottom_summary_cells(self):
+        ocr_text = "\n".join(
+            [
+                "Scotiabank Inverlat S.A.",
+                "Transferencia de Archivos",
+                "DA ALTA 04 ABONO EN CUENTA $3,000.00 15/01/2026 A35 VELAZCO DIONICIO ZENON 1 00014052605935660925 14 1 PAGO35",
+                "Cantidad de Movimientos Altas",
+                "Importe de Movimiento Altas",
+                "Cantidad de Movimientos Bajas",
+                "Importe de Movimientos Bajas",
+                "6",
+                "$18,000.00",
+                "0",
+                "$0.00",
+                "Total Cantidad de Movimientos Altas",
+                "Total Importe de Movimiento Altas",
+                "Total Cantidad de Movimientos Bajas",
+                "Total Importe de Movimientos Bajas",
+                "6",
+                "$18,000.00",
+                "0",
+                "$0.00",
+            ]
+        )
+        fields = asyncio.run(extract_fields("FACTURA", ocr_text, None))
+        data = _field_map(fields)
+        payload = json.loads(data["tabla_celdas"])
+        rows = payload.get("rows", [])
+        self.assertGreaterEqual(len(rows), 6)
+        self.assertIn(
+            ["CANTIDAD DE MOVIMIENTOS ALTAS", "IMPORTE DE MOVIMIENTO ALTAS", "CANTIDAD DE MOVIMIENTOS BAJAS", "IMPORTE DE MOVIMIENTOS BAJAS"],
+            rows,
+        )
+        self.assertIn(["6", "$18,000.00", "0", "$0.00"], rows)
+        self.assertIn(
+            [
+                "TOTAL CANTIDAD DE MOVIMIENTOS ALTAS",
+                "TOTAL IMPORTE DE MOVIMIENTO ALTAS",
+                "TOTAL CANTIDAD DE MOVIMIENTOS BAJAS",
+                "TOTAL IMPORTE DE MOVIMIENTOS BAJAS",
+            ],
+            rows,
+        )
+
+    def test_extract_factura_payment_detail_payload_canonical_for_bbva(self):
+        ocr_text = "\n".join(
+            [
+                "REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS",
+                "Fecha y hora de proceso: 15/01/2026 09:51",
+                "Archivo: BBVA_PAGOS_15012026.TXT",
+                "Usuario: TESORERIA NOMINA",
+                "Lote: 12",
+                "Cuenta    Referencia    Importe    Nombre    Estatus    Concepto",
+                "000000001069485436    8837492015    $3,000.00    CARLOS ROBERTO RODRIGUEZ DOMINGUEZ    APLICADO    PAGO DE NOMINA",
+                "Tipo de Pago: PAGO DE NOMINA",
+            ]
+        )
+        fields = asyncio.run(extract_fields("FACTURA", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertIn("pago_detalle", data)
+        payload = json.loads(data["pago_detalle"])
+        self.assertEqual(payload.get("bank"), "BBVA")
+        self.assertEqual(payload.get("metadata", {}).get("reporte_tipo"), "REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS")
+        self.assertEqual(payload.get("metadata", {}).get("tipo_pago"), "PAGO DE NOMINA")
+        self.assertIn("APLICADO", payload.get("metadata", {}).get("estatus_detectados", ""))
+        self.assertEqual(payload.get("metadata", {}).get("fecha_hora_proceso"), "15/01/2026 09:51")
+        self.assertEqual(payload.get("metadata", {}).get("nombre_archivo"), "BBVA_PAGOS_15012026.TXT")
+        self.assertEqual(payload.get("metadata", {}).get("usuario_sistema_nombre"), "TESORERIA NOMINA")
+        self.assertEqual(payload.get("metadata", {}).get("numero_lote"), "12")
+        canonical_rows = payload.get("table", {}).get("canonical_rows", [])
+        self.assertGreaterEqual(len(canonical_rows), 1)
+        self.assertEqual(canonical_rows[0].get("cuenta"), "000000001069485436")
+        self.assertEqual(canonical_rows[0].get("referencia"), "8837492015")
+        self.assertEqual(canonical_rows[0].get("importe"), "$3,000.00")
+        self.assertIn("CARLOS ROBERTO", canonical_rows[0].get("nombre_beneficiario", ""))
+        self.assertEqual(canonical_rows[0].get("estatus"), "APLICADO")
+
+    def test_extract_factura_payment_table_from_bbva_transmision_text(self):
+        ocr_text = "\n".join(
+            [
+                "REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS",
+                "No. EmpleadoNombre",
+                "Tipo CuentaNo. de Cuenta",
+                "Importe Estatus CódigoDescripciónClave Rastreo",
+                "0000000001",
+                "CARLOS ROBERTO RODRIGUEZ DOMINGUEZ",
+                "01",
+                "000000001069485436$3,000.00APLICADO",
+                "00",
+                "ACEPTADO",
+                "Tipo de Pago: PAGO DE NOMINA",
+            ]
+        )
+        fields = asyncio.run(extract_fields("FACTURA", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertIn("tabla_celdas", data)
+        payload = json.loads(data["tabla_celdas"])
+        rows = payload.get("rows", [])
+        self.assertGreaterEqual(len(rows), 2)
+        self.assertIn(rows[1][0], {"0438349034", "000000001069485436"})
+        self.assertEqual(rows[1][2], "$3,000.00")
+        self.assertIn("CARLOS ROBERTO", rows[1][3])
+        self.assertTrue(rows[1][4] in {"TRANSMITIDO", "APLICADO"} or "CODIGO" in rows[1][4])
+        self.assertIn("PAGO DE NOMINA", rows[1][5])
 
     def test_extract_factura_contract_keeps_only_table_cells(self):
         ocr_text = "\n".join(

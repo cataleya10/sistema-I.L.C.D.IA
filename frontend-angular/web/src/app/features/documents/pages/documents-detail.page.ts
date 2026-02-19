@@ -8,7 +8,26 @@ import { DocumentsService } from '../services/documents.service';
 import { DocumentDetail, getDocumentTypeLabel, ProcessingLog } from '../../../shared/models/document.models';
 import { ToastNotificationComponent } from '../../../shared/components/toast-notification.component';
 import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
-import { TableViewModel, buildTableView, isTableCellsField, parseTableRows } from '../utils/table-cells';
+import {
+  TableLayoutMode,
+  TableViewModel,
+  buildExcelXml,
+  buildReportHtmlDocument,
+  buildTableView,
+  detectTableLayoutMode,
+  isTableCellsField,
+  parseTableRows
+} from '../utils/table-cells';
+import {
+  parseReplicaLayout,
+  ReplicaLayoutView,
+  ReplicaPreset,
+  ReplicaPresetTuning,
+  ReplicaPresetTuningOverrides,
+  REPLICA_PRESET_TUNING
+} from '../utils/pdf-replica-layout';
+import { parsePaymentDetail, PaymentDetailViewModel } from '../utils/payment-detail';
+import { buildExtractionHtmlDocument } from '../utils/extraction-export';
 
 @Component({
   selector: 'app-documents-detail-page',
@@ -57,6 +76,8 @@ import { TableViewModel, buildTableView, isTableCellsField, parseTableRows } fro
         </button>
         <button type="button" class="ghost" (click)="downloadWord()" [disabled]="!document">Descargar Word</button>
         <button type="button" class="ghost" (click)="downloadExcel()" [disabled]="!document">Descargar Excel</button>
+        <button type="button" class="ghost" (click)="downloadExtractionSnapshot()" [disabled]="!document">Descargar extraccion completa</button>
+        <button type="button" class="ghost" (click)="downloadExtractionPdf()" [disabled]="!document">Descargar extraccion PDF</button>
         <button type="button" class="ghost" (click)="copyFields()" [disabled]="!document">Copiar campos</button>
         <a class="ghost" [routerLink]="['/documents', document.id, 'results']">Ver resultados</a>
       </div>
@@ -84,6 +105,78 @@ import { TableViewModel, buildTableView, isTableCellsField, parseTableRows } fro
                 <td>{{ field.label }}</td>
                 <td>
                   <ng-container *ngIf="!editMode; else editField">
+                    <ng-container *ngIf="isPdfReplicaLayoutField(field); else notLayoutReplica">
+                      <ng-container *ngIf="replicaLayoutForField(field) as layout">
+                        <div class="pdf-layout-wrap" [ngClass]="'preset-' + layout.preset" *ngIf="layout.pages.length; else plainValue">
+                          <p class="bank-chip">Banco detectado: {{ layout.detectedBankLabel }}</p>
+                          <article class="pdf-layout-page" *ngFor="let page of layout.pages">
+                            <div class="pdf-layout-canvas" [style.paddingBottom.%]="page.aspectRatio">
+                              <span
+                                class="pdf-layout-line"
+                                *ngFor="let line of page.lines"
+                                [style.left.%]="line.leftPct"
+                                [style.top.%]="line.topPct"
+                                [style.width.%]="line.widthPct"
+                                [style.height.px]="line.heightPx"
+                                [style.font-size.px]="line.fontSizePx"
+                                [style.lineHeight]="line.lineHeight"
+                              >
+                                {{ line.text }}
+                              </span>
+                            </div>
+                          </article>
+                        </div>
+                      </ng-container>
+                    </ng-container>
+                    <ng-template #notLayoutReplica>
+                    <ng-container *ngIf="isPdfReplicaField(field); else notReplica">
+                      <pre class="pdf-replica">{{ field.corrected_value ?? field.value ?? '-' }}</pre>
+                    </ng-container>
+                    <ng-template #notReplica>
+                    <ng-container *ngIf="isPaymentDetailField(field); else notPaymentDetail">
+                      <ng-container *ngIf="paymentDetailForField(field) as paymentDetail; else plainValue">
+                        <div class="payment-detail">
+                          <p class="payment-detail__bank">Banco: {{ paymentDetail.bank }}</p>
+                          <div class="payment-detail__meta" *ngIf="paymentDetail.metadataEntries.length">
+                            <p class="payment-detail__meta-item" *ngFor="let meta of paymentDetail.metadataEntries">
+                              <strong>{{ meta.key }}:</strong> {{ meta.value }}
+                            </p>
+                          </div>
+                          <div class="cells-table-wrap" *ngIf="paymentDetail.canonicalRows.length">
+                            <table class="cells-table">
+                              <thead *ngIf="paymentDetail.canonicalColumns.length">
+                                <tr>
+                                  <th *ngFor="let col of paymentDetail.canonicalColumns">{{ col }}</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <tr *ngFor="let row of paymentDetail.canonicalRows; let rowIndex = index" [class.alt]="rowIndex % 2 === 1">
+                                  <td *ngFor="let cell of row">{{ cell }}</td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                          <div class="payment-detail__summary" *ngFor="let summary of paymentDetail.summaryTables">
+                            <p class="payment-detail__summary-title">{{ summary.title }}</p>
+                            <div class="cells-table-wrap">
+                              <table class="cells-table">
+                                <thead *ngIf="summary.columns.length">
+                                  <tr>
+                                    <th *ngFor="let col of summary.columns">{{ col }}</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  <tr *ngFor="let row of summary.rows; let rowIndex = index" [class.alt]="rowIndex % 2 === 1">
+                                    <td *ngFor="let cell of row">{{ cell }}</td>
+                                  </tr>
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        </div>
+                      </ng-container>
+                    </ng-container>
+                    <ng-template #notPaymentDetail>
                     <ng-container *ngIf="isTableField(field); else plainValue">
                       <ng-container *ngIf="tableViewForField(field) as tableView">
                         <div class="cells-table-wrap" *ngIf="tableView.bodyRows.length; else plainValue">
@@ -102,12 +195,15 @@ import { TableViewModel, buildTableView, isTableCellsField, parseTableRows } fro
                         </div>
                       </ng-container>
                     </ng-container>
+                    </ng-template>
+                    </ng-template>
+                    </ng-template>
                     <ng-template #plainValue>
                       {{ field.corrected_value ?? field.value ?? '-' }}
                     </ng-template>
                   </ng-container>
                   <ng-template #editField>
-                    <ng-container *ngIf="!isTableField(field); else tableReadonly">
+                    <ng-container *ngIf="!isTableField(field) && !isPaymentDetailField(field); else tableReadonly">
                       <input
                         class="field-input"
                         type="text"
@@ -132,13 +228,21 @@ import { TableViewModel, buildTableView, isTableCellsField, parseTableRows } fro
         </div>
       </div>
 
-      <section class="table-panel" *ngIf="tableView.bodyRows.length">
+      <section class="table-panel" [ngClass]="tableLayoutMode" *ngIf="tableView.bodyRows.length">
         <div class="table-panel__header">
-          <h3>Tabla detectada</h3>
-          <button type="button" class="ghost" (click)="downloadTableCsv()">Descargar CSV tabla</button>
+          <div class="table-panel__title">
+            <h3>Tabla detectada</h3>
+            <span class="table-mode">{{ tableLayoutLabel() }}</span>
+          </div>
+          <div class="table-panel__actions">
+            <button type="button" class="ghost" (click)="toggleTableRenderMode()">{{ tableRenderModeLabel() }}</button>
+            <button type="button" class="ghost" (click)="downloadTableCsv()">Descargar CSV tabla</button>
+            <button type="button" class="ghost" (click)="downloadTableExcel()">Descargar Excel tabla</button>
+            <button type="button" class="ghost" (click)="downloadTablePdfReport()">Descargar PDF reporte</button>
+          </div>
         </div>
         <div class="cells-table-wrap">
-          <table class="cells-table">
+          <table class="cells-table" [ngClass]="{ 'report-mode': tableRenderMode === 'report' }">
             <thead *ngIf="tableView.headerRows.length">
               <tr *ngFor="let row of tableView.headerRows">
                 <th *ngFor="let cell of row">{{ cell }}</th>
@@ -151,6 +255,65 @@ import { TableViewModel, buildTableView, isTableCellsField, parseTableRows } fro
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section class="calibration-panel">
+        <div class="calibration-panel__header">
+          <h3>Calibracion replica PDF</h3>
+          <p>Ajusta escala/margenes por banco y guarda localmente.</p>
+          <p class="calibration-status">Banco detectado: {{ detectedBankLabel() }}</p>
+        </div>
+        <div class="calibration-panel__controls">
+          <label>
+            Preset
+            <select [(ngModel)]="selectedReplicaPreset" (ngModelChange)="onReplicaPresetChange()">
+              <option *ngFor="let preset of replicaPresetOptions" [ngValue]="preset">{{ preset }}</option>
+            </select>
+          </label>
+          <label>
+            Scale X
+            <input type="number" step="0.005" [(ngModel)]="calibrationForm.scaleX" />
+          </label>
+          <label>
+            Scale Y
+            <input type="number" step="0.005" [(ngModel)]="calibrationForm.scaleY" />
+          </label>
+          <label>
+            Offset X
+            <input type="number" step="0.1" [(ngModel)]="calibrationForm.offsetX" />
+          </label>
+          <label>
+            Offset Y
+            <input type="number" step="0.1" [(ngModel)]="calibrationForm.offsetY" />
+          </label>
+          <label>
+            Aspect Shift
+            <input type="number" step="0.1" [(ngModel)]="calibrationForm.aspectShift" />
+          </label>
+          <label>
+            Font Scale
+            <input type="number" step="0.01" [(ngModel)]="calibrationForm.fontScale" />
+          </label>
+          <label>
+            Line Height
+            <input type="text" [(ngModel)]="calibrationForm.lineHeight" />
+          </label>
+        </div>
+        <div class="calibration-panel__actions">
+          <button type="button" class="ghost" (click)="applyReplicaCalibration()">Aplicar calibracion</button>
+          <button type="button" class="ghost" (click)="resetReplicaCalibrationPreset()">Reset preset</button>
+          <button type="button" class="ghost" (click)="resetReplicaCalibrationAll()">Reset total</button>
+          <button type="button" class="ghost" (click)="exportReplicaCalibration()">Exportar JSON</button>
+          <button type="button" class="ghost" (click)="replicaImportInput.click()">Importar JSON</button>
+          <input
+            #replicaImportInput
+            class="calibration-file"
+            type="file"
+            accept="application/json,.json"
+            (change)="importReplicaCalibration($event)"
+          />
+        </div>
+        <p class="calibration-status" *ngIf="calibrationStatus">{{ calibrationStatus }}</p>
       </section>
 
       <details class="logs">
@@ -288,14 +451,92 @@ import { TableViewModel, buildTableView, isTableCellsField, parseTableRows } fro
         display: grid;
         gap: 12px;
       }
+      .table-panel.advanced_nomina {
+        border-color: #93c5fd;
+        box-shadow: 0 8px 18px rgba(37, 99, 235, 0.12);
+      }
       .table-panel__header {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 12px;
       }
+      .table-panel__title {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .table-panel__actions {
+        display: inline-flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
       .table-panel__header h3 {
         margin: 0;
+      }
+      .calibration-panel {
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 16px;
+        display: grid;
+        gap: 12px;
+      }
+      .calibration-panel__header h3 {
+        margin: 0;
+      }
+      .calibration-panel__header p {
+        margin: 4px 0 0;
+        font-size: 12px;
+        color: #6b7280;
+      }
+      .calibration-panel__controls {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 10px;
+      }
+      .calibration-panel__controls label {
+        display: grid;
+        gap: 4px;
+        font-size: 12px;
+        color: #374151;
+      }
+      .calibration-panel__controls input,
+      .calibration-panel__controls select {
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        padding: 7px 8px;
+        font-size: 12px;
+      }
+      .calibration-panel__actions {
+        display: inline-flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .calibration-panel__actions button {
+        padding: 8px 12px;
+        border-radius: 999px;
+        border: 1px solid #d1d5db;
+        background: #f3f4f6;
+        color: #111827;
+      }
+      .calibration-file {
+        display: none;
+      }
+      .calibration-status {
+        margin: 0;
+        font-size: 12px;
+        color: #374151;
+      }
+      .table-mode {
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: #dbeafe;
+        color: #1d4ed8;
+        font-size: 11px;
+        font-weight: 700;
       }
       .review {
         color: #b45309;
@@ -376,9 +617,119 @@ import { TableViewModel, buildTableView, isTableCellsField, parseTableRows } fro
       .cells-table tbody tr:hover td {
         background: #eef2ff;
       }
+      .cells-table.report-mode {
+        table-layout: fixed;
+        width: 100%;
+        font-family: 'Times New Roman', 'Georgia', serif;
+        font-size: 11px;
+        line-height: 1.1;
+      }
+      .cells-table.report-mode th,
+      .cells-table.report-mode td {
+        white-space: normal;
+        text-align: center;
+        vertical-align: middle;
+        padding: 4px 6px;
+        border-color: #d1d5db;
+      }
+      .cells-table.report-mode th {
+        background: #eef2f7;
+        letter-spacing: 0.2px;
+      }
+      .cells-table.report-mode tbody tr:nth-child(even) td {
+        background: #fcfcfd;
+      }
+      .cells-table.report-mode tbody tr:hover td {
+        background: #eaf0ff;
+      }
       .table-readonly {
         color: #6b7280;
         font-size: 12px;
+      }
+      .pdf-replica {
+        margin: 0;
+        white-space: pre-wrap;
+        font-family: 'Times New Roman', 'Georgia', serif;
+        font-size: 11px;
+        line-height: 1.15;
+        background: #f8fafc;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        padding: 10px;
+        max-height: 360px;
+        overflow: auto;
+      }
+      .payment-detail {
+        display: grid;
+        gap: 8px;
+      }
+      .payment-detail__bank {
+        margin: 0;
+        font-size: 12px;
+        font-weight: 700;
+        color: #1f2937;
+      }
+      .payment-detail__meta {
+        display: grid;
+        gap: 3px;
+      }
+      .payment-detail__meta-item {
+        margin: 0;
+        font-size: 12px;
+        color: #374151;
+      }
+      .payment-detail__summary {
+        display: grid;
+        gap: 6px;
+      }
+      .payment-detail__summary-title {
+        margin: 0;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .pdf-layout-wrap {
+        display: grid;
+        gap: 12px;
+      }
+      .bank-chip {
+        margin: 0;
+        font-size: 12px;
+        color: #374151;
+      }
+      .pdf-layout-wrap.preset-scotia .pdf-layout-line {
+        font-size: 10px;
+        line-height: 1.08;
+        letter-spacing: 0.02px;
+      }
+      .pdf-layout-wrap.preset-bbva .pdf-layout-line {
+        font-size: 9.6px;
+        line-height: 1.05;
+        letter-spacing: 0;
+      }
+      .pdf-layout-wrap.preset-bbva .pdf-layout-canvas {
+        background: #fbfbfc;
+      }
+      .pdf-layout-page {
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        background: #f8fafc;
+        overflow: hidden;
+      }
+      .pdf-layout-canvas {
+        position: relative;
+        width: 100%;
+        min-height: 420px;
+        background: #fff;
+      }
+      .pdf-layout-line {
+        position: absolute;
+        display: block;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        font-family: 'Times New Roman', 'Georgia', serif;
+        font-size: 10px;
+        line-height: 1.08;
+        color: #111827;
       }
       .empty {
         font-size: 12px;
@@ -430,6 +781,8 @@ import { TableViewModel, buildTableView, isTableCellsField, parseTableRows } fro
   ]
 })
 export class DocumentsDetailPage implements OnInit, OnDestroy {
+  private static readonly REPLICA_TUNING_STORAGE_KEY = 'documents.replicaPresetTuning.v1';
+  private static readonly HIDDEN_FIELD_KEYS = new Set(['pago_detalle']);
   document: DocumentDetail | null = null;
   logs: ProcessingLog[] = [];
   message: string | null = null;
@@ -447,6 +800,21 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
   previewError: string | null = null;
   displayFields: DocumentDetail['fields'] = [];
   tableView: TableViewModel = { headerRows: [], bodyRows: [] };
+  tableLayoutMode: TableLayoutMode = 'standard';
+  tableRenderMode: 'standard' | 'report' = 'standard';
+  replicaPresetOptions: ReplicaPreset[] = ['default', 'scotia', 'bbva'];
+  selectedReplicaPreset: ReplicaPreset = 'default';
+  calibrationForm = {
+    scaleX: 1,
+    scaleY: 1,
+    offsetX: 0,
+    offsetY: 0,
+    aspectShift: 0,
+    fontScale: 0.9,
+    lineHeight: '1.08'
+  };
+  calibrationStatus: string | null = null;
+  private replicaTuningOverrides: ReplicaPresetTuningOverrides = {};
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private pollAttempts = 0;
   private readonly maxPollAttempts = 80;
@@ -455,8 +823,13 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
   private previewRequestId = 0;
   private tableRowsCache = new Map<string, string[][]>();
   private tableViewCache = new Map<string, TableViewModel>();
+  private replicaLayoutCache = new Map<string, ReplicaLayoutView | null>();
+  private paymentDetailCache = new Map<string, PaymentDetailViewModel | null>();
 
-  constructor(private readonly route: ActivatedRoute, private readonly documents: DocumentsService) {}
+  constructor(private readonly route: ActivatedRoute, private readonly documents: DocumentsService) {
+    this.replicaTuningOverrides = this.loadReplicaTuningOverrides();
+    this.onReplicaPresetChange();
+  }
 
   ngOnInit(): void {
     const id = this.route.snapshot.paramMap.get('id');
@@ -662,6 +1035,8 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
         };
         this.tableRowsCache.clear();
         this.tableViewCache.clear();
+        this.replicaLayoutCache.clear();
+        this.paymentDetailCache.clear();
         this.loadPreview(data.id, data.mime_type ?? null, data.original_filename ?? '');
         this.displayFields = this.mapDisplayFields(this.document);
         this.syncTableRows();
@@ -753,10 +1128,117 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
     this.isDownloading = false;
   }
 
+  downloadTableExcel(): void {
+    if (!this.document || this.tableView.bodyRows.length === 0 || this.isDownloading) {
+      return;
+    }
+    this.isDownloading = true;
+    const baseName = (this.document.original_filename || 'documento')
+      .replace(/\.[^/.]+$/, '')
+      .trim();
+    const filename = baseName ? `${baseName}-tabla.xls` : 'documento-tabla.xls';
+    const rows = [...this.tableView.headerRows, ...this.tableView.bodyRows];
+    const xml = buildExcelXml(rows, { reportMode: this.tableRenderMode === 'report' });
+    const blob = new Blob([xml], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    window.URL.revokeObjectURL(url);
+    this.isDownloading = false;
+  }
+
+  downloadTablePdfReport(): void {
+    if (!this.document || this.tableView.bodyRows.length === 0 || this.isDownloading) {
+      return;
+    }
+    this.isDownloading = true;
+    const rows = [...this.tableView.headerRows, ...this.tableView.bodyRows];
+    const title = `Reporte de tabla - ${this.document.original_filename || 'documento'}`;
+    const html = buildReportHtmlDocument(title, rows);
+    const reportWindow = window.open('', '_blank', 'noopener,noreferrer,width=1200,height=900');
+    if (!reportWindow) {
+      this.message = 'No se pudo abrir la ventana de impresion. Revisa el bloqueador de popups.';
+      this.isDownloading = false;
+      return;
+    }
+    reportWindow.document.open();
+    reportWindow.document.write(html);
+    reportWindow.document.close();
+    this.isDownloading = false;
+  }
+
+  downloadExtractionSnapshot(): void {
+    if (!this.document) {
+      return;
+    }
+    const fields = this.document.fields ?? [];
+    const findRaw = (key: string): string => {
+      const match = fields.find((f) => String(f.key ?? '').toLowerCase() === key);
+      return String(match?.corrected_value ?? match?.value ?? '');
+    };
+    const replicaLayout = parseReplicaLayout(findRaw('replica_pdf_layout'), this.replicaTuningOverrides);
+    const replicaText = findRaw('replica_pdf_texto');
+    const paymentDetail = parsePaymentDetail(findRaw('pago_detalle'));
+    const html = buildExtractionHtmlDocument({
+      title: `Extraccion - ${this.document.original_filename || 'documento'}`,
+      tableView: this.tableView,
+      replicaLayout,
+      replicaText,
+      paymentDetail,
+    });
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    const baseName = (this.document.original_filename || 'documento').replace(/\.[^/.]+$/, '');
+    anchor.href = url;
+    anchor.download = `${baseName}-extraccion.html`;
+    anchor.click();
+    window.URL.revokeObjectURL(url);
+  }
+
+  downloadExtractionPdf(): void {
+    if (!this.document) {
+      return;
+    }
+    const fields = this.document.fields ?? [];
+    const findRaw = (key: string): string => {
+      const match = fields.find((f) => String(f.key ?? '').toLowerCase() === key);
+      return String(match?.corrected_value ?? match?.value ?? '');
+    };
+    const replicaLayout = parseReplicaLayout(findRaw('replica_pdf_layout'), this.replicaTuningOverrides);
+    const replicaText = findRaw('replica_pdf_texto');
+    const paymentDetail = parsePaymentDetail(findRaw('pago_detalle'));
+    const html = buildExtractionHtmlDocument({
+      title: `Extraccion - ${this.document.original_filename || 'documento'}`,
+      tableView: this.tableView,
+      replicaLayout,
+      replicaText,
+      paymentDetail,
+    });
+    const printWindow = window.open('', '_blank', 'noopener,noreferrer,width=1200,height=900');
+    if (!printWindow) {
+      this.message = 'No se pudo abrir la ventana de impresion. Revisa el bloqueador de popups.';
+      return;
+    }
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+    setTimeout(() => {
+      printWindow.focus();
+      printWindow.print();
+    }, 180);
+  }
+
+  toggleTableRenderMode(): void {
+    this.tableRenderMode = this.tableRenderMode === 'report' ? 'standard' : 'report';
+  }
+
   private mapDisplayFields(document: DocumentDetail): DocumentDetail['fields'] {
     const template = DOCUMENT_FIELD_TEMPLATES[document.document_type];
     if (!template) {
-      return document.fields;
+      return document.fields.filter((field) => !this.isHiddenField(field.key));
     }
     const fieldMap = new Map(
       document.fields.map((field) => [field.key.toLowerCase(), field])
@@ -780,8 +1262,14 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
     }
 
     const templateKeys = new Set(template.map((field) => field.key.toLowerCase()));
-    const extras = document.fields.filter((field) => !templateKeys.has(field.key.toLowerCase()));
+    const extras = document.fields.filter(
+      (field) => !templateKeys.has(field.key.toLowerCase()) && !this.isHiddenField(field.key)
+    );
     return [...mappedFromTemplate, ...extras];
+  }
+
+  private isHiddenField(key: string | null | undefined): boolean {
+    return DocumentsDetailPage.HIDDEN_FIELD_KEYS.has(String(key ?? '').toLowerCase());
   }
 
   private loadLogs(id: string): void {
@@ -927,6 +1415,228 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
     return isTableCellsField(field);
   }
 
+  isPdfReplicaField(field: DocumentDetail['fields'][number]): boolean {
+    return String(field.key ?? '').toLowerCase() === 'replica_pdf_texto';
+  }
+
+  isPdfReplicaLayoutField(field: DocumentDetail['fields'][number]): boolean {
+    return String(field.key ?? '').toLowerCase() === 'replica_pdf_layout';
+  }
+
+  isPaymentDetailField(field: DocumentDetail['fields'][number]): boolean {
+    return String(field.key ?? '').toLowerCase() === 'pago_detalle';
+  }
+
+  detectedBankLabel(): string {
+    const layoutField = this.displayFields.find((field) => this.isPdfReplicaLayoutField(field));
+    if (!layoutField) {
+      return 'No identificado';
+    }
+    const layout = this.replicaLayoutForField(layoutField);
+    return layout?.detectedBankLabel ?? 'No identificado';
+  }
+
+  onReplicaPresetChange(): void {
+    const tuning = this.currentPresetTuning(this.selectedReplicaPreset);
+    this.calibrationForm = {
+      scaleX: tuning.geometry.scaleX,
+      scaleY: tuning.geometry.scaleY,
+      offsetX: tuning.geometry.offsetX,
+      offsetY: tuning.geometry.offsetY,
+      aspectShift: tuning.geometry.aspectShift,
+      fontScale: tuning.typography.fontScale,
+      lineHeight: tuning.typography.lineHeight
+    };
+  }
+
+  applyReplicaCalibration(): void {
+    const lineHeightText = String(this.calibrationForm.lineHeight ?? '').trim();
+    this.replicaTuningOverrides[this.selectedReplicaPreset] = {
+      geometry: {
+        scaleX: this.clampNumeric(this.calibrationForm.scaleX, 0.8, 1.2),
+        scaleY: this.clampNumeric(this.calibrationForm.scaleY, 0.8, 1.2),
+        offsetX: this.clampNumeric(this.calibrationForm.offsetX, -20, 20),
+        offsetY: this.clampNumeric(this.calibrationForm.offsetY, -20, 20),
+        aspectShift: this.clampNumeric(this.calibrationForm.aspectShift, -20, 20)
+      },
+      typography: {
+        fontScale: this.clampNumeric(this.calibrationForm.fontScale, 0.7, 1.4),
+        lineHeight: lineHeightText || REPLICA_PRESET_TUNING[this.selectedReplicaPreset].typography.lineHeight
+      }
+    };
+    this.persistReplicaTuningOverrides();
+    this.replicaLayoutCache.clear();
+    this.onReplicaPresetChange();
+    this.calibrationStatus = `Calibracion aplicada para ${this.selectedReplicaPreset}.`;
+    this.message = `Calibracion aplicada para preset ${this.selectedReplicaPreset}.`;
+  }
+
+  resetReplicaCalibrationPreset(): void {
+    delete this.replicaTuningOverrides[this.selectedReplicaPreset];
+    this.persistReplicaTuningOverrides();
+    this.replicaLayoutCache.clear();
+    this.onReplicaPresetChange();
+    this.calibrationStatus = `Preset ${this.selectedReplicaPreset} restaurado.`;
+    this.message = `Preset ${this.selectedReplicaPreset} restaurado.`;
+  }
+
+  resetReplicaCalibrationAll(): void {
+    this.replicaTuningOverrides = {};
+    this.persistReplicaTuningOverrides();
+    this.replicaLayoutCache.clear();
+    this.onReplicaPresetChange();
+    this.calibrationStatus = 'Calibracion global restaurada.';
+    this.message = 'Calibracion global restaurada.';
+  }
+
+  exportReplicaCalibration(): void {
+    const payload = JSON.stringify(this.replicaTuningOverrides, null, 2);
+    const blob = new Blob([payload], { type: 'application/json;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'replica-calibration.json';
+    anchor.click();
+    window.URL.revokeObjectURL(url);
+    this.calibrationStatus = 'Calibracion exportada.';
+  }
+
+  importReplicaCalibration(event: Event): void {
+    const input = event.target as HTMLInputElement | null;
+    const file = input?.files?.[0];
+    if (!file) {
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result ?? '{}'));
+        this.replicaTuningOverrides = this.coerceReplicaOverrides(parsed);
+        this.persistReplicaTuningOverrides();
+        this.replicaLayoutCache.clear();
+        this.onReplicaPresetChange();
+        this.calibrationStatus = 'Calibracion importada correctamente.';
+      } catch {
+        this.calibrationStatus = 'No se pudo importar el JSON de calibracion.';
+      } finally {
+        if (input) {
+          input.value = '';
+        }
+      }
+    };
+    reader.onerror = () => {
+      this.calibrationStatus = 'No se pudo leer el archivo de calibracion.';
+      if (input) {
+        input.value = '';
+      }
+    };
+    reader.readAsText(file, 'utf-8');
+  }
+
+  replicaLayoutForField(field: DocumentDetail['fields'][number]): ReplicaLayoutView | null {
+    const rawValue = (field.corrected_value ?? field.value ?? '').toString();
+    if (!rawValue) {
+      return null;
+    }
+    const cached = this.replicaLayoutCache.get(rawValue);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const parsed = parseReplicaLayout(rawValue, this.replicaTuningOverrides);
+    this.replicaLayoutCache.set(rawValue, parsed);
+    return parsed;
+  }
+
+  paymentDetailForField(field: DocumentDetail['fields'][number]): PaymentDetailViewModel | null {
+    const rawValue = (field.corrected_value ?? field.value ?? '').toString();
+    if (!rawValue) {
+      return null;
+    }
+    const cached = this.paymentDetailCache.get(rawValue);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const parsed = parsePaymentDetail(rawValue);
+    this.paymentDetailCache.set(rawValue, parsed);
+    return parsed;
+  }
+
+  private currentPresetTuning(preset: ReplicaPreset): ReplicaPresetTuning {
+    const base = REPLICA_PRESET_TUNING[preset];
+    const override = this.replicaTuningOverrides[preset];
+    return {
+      geometry: {
+        ...base.geometry,
+        ...(override?.geometry ?? {})
+      },
+      typography: {
+        ...base.typography,
+        ...(override?.typography ?? {})
+      }
+    };
+  }
+
+  private clampNumeric(value: unknown, min: number, max: number): number {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return min;
+    }
+    return Math.max(min, Math.min(max, numeric));
+  }
+
+  private persistReplicaTuningOverrides(): void {
+    try {
+      window.localStorage.setItem(
+        DocumentsDetailPage.REPLICA_TUNING_STORAGE_KEY,
+        JSON.stringify(this.replicaTuningOverrides)
+      );
+    } catch {
+      // Ignore persistence errors in restricted contexts.
+    }
+  }
+
+  private loadReplicaTuningOverrides(): ReplicaPresetTuningOverrides {
+    try {
+      const raw = window.localStorage.getItem(DocumentsDetailPage.REPLICA_TUNING_STORAGE_KEY);
+      if (!raw) {
+        return {};
+      }
+      const parsed = JSON.parse(raw) as ReplicaPresetTuningOverrides;
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  private coerceReplicaOverrides(raw: unknown): ReplicaPresetTuningOverrides {
+    if (!raw || typeof raw !== 'object') {
+      return {};
+    }
+    const source = raw as Record<string, unknown>;
+    const output: ReplicaPresetTuningOverrides = {};
+    this.replicaPresetOptions.forEach((preset) => {
+      const candidate = source[preset];
+      if (!candidate || typeof candidate !== 'object') {
+        return;
+      }
+      const typed = candidate as { geometry?: Record<string, unknown>; typography?: Record<string, unknown> };
+      output[preset] = {
+        geometry: {
+          scaleX: this.clampNumeric(typed.geometry?.['scaleX'], 0.8, 1.2),
+          scaleY: this.clampNumeric(typed.geometry?.['scaleY'], 0.8, 1.2),
+          offsetX: this.clampNumeric(typed.geometry?.['offsetX'], -20, 20),
+          offsetY: this.clampNumeric(typed.geometry?.['offsetY'], -20, 20),
+          aspectShift: this.clampNumeric(typed.geometry?.['aspectShift'], -20, 20)
+        },
+        typography: {
+          fontScale: this.clampNumeric(typed.typography?.['fontScale'], 0.7, 1.4),
+          lineHeight: String(typed.typography?.['lineHeight'] ?? REPLICA_PRESET_TUNING[preset].typography.lineHeight)
+        }
+      };
+    });
+    return output;
+  }
+
   tableRowsForField(field: DocumentDetail['fields'][number]): string[][] {
     const rawValue = (field.corrected_value ?? field.value ?? '').toString();
     if (!rawValue) {
@@ -960,6 +1670,16 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
   private syncTableRows(): void {
     const tableField = this.displayFields.find((field) => this.isTableField(field));
     this.tableView = tableField ? this.tableViewForField(tableField) : { headerRows: [], bodyRows: [] };
+    this.tableLayoutMode = detectTableLayoutMode(this.tableView);
+    this.tableRenderMode = this.tableLayoutMode === 'advanced_nomina' ? 'report' : 'standard';
+  }
+
+  tableLayoutLabel(): string {
+    return this.tableLayoutMode === 'advanced_nomina' ? 'Modo nomina avanzada' : 'Modo estandar';
+  }
+
+  tableRenderModeLabel(): string {
+    return this.tableRenderMode === 'report' ? 'Vista cuadricula' : 'Vista reporte';
   }
 
   private buildCsv(rows: string[][]): string {

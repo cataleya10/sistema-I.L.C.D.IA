@@ -50,10 +50,14 @@ export const DOCUMENT_FIELD_TEMPLATES: Record<string, Array<{ key: string; label
     { key: 'rfc', label: 'RFC' },
     { key: 'fecha_corte', label: 'Fecha de corte' },
     { key: 'periodo', label: 'Periodo' },
-    { key: 'tabla_celdas', label: 'Tabla celdas' }
+    { key: 'tabla_celdas', label: 'Tabla celdas' },
+    { key: 'pago_detalle', label: 'Pago detalle (estructurado)' }
   ],
   FACTURA: [
-    { key: 'tabla_celdas', label: 'Tabla celdas' }
+    { key: 'tabla_celdas', label: 'Tabla celdas' },
+    { key: 'pago_detalle', label: 'Pago detalle (estructurado)' },
+    { key: 'replica_pdf_layout', label: 'Replica PDF (layout)' },
+    { key: 'replica_pdf_texto', label: 'Replica PDF (texto completo)' }
   ],
   CONSTANCIA_SITUACION_FISCAL: [
     { key: 'rfc', label: 'RFC' },

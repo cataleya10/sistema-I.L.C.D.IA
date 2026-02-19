@@ -2,6 +2,7 @@
 import json
 import os
 import logging
+import unicodedata
 
 from app.pipelines.legacy_adapter import legacy_extract_fields
 
@@ -300,6 +301,12 @@ def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _ascii_fold(text: str) -> str:
+    value = str(text or "")
+    normalized = unicodedata.normalize("NFKD", value)
+    return normalized.encode("ascii", "ignore").decode("ascii")
+
+
 def _normalize_keyword(text: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", text.upper())
 
@@ -462,6 +469,15 @@ _PAYMENT_TABLE_STATUS_TOKENS = (
     "TRANSMITIDO",
 )
 
+_PAYMENT_TABLE_TEXT_LABELS = (
+    "cuenta",
+    "referencia",
+    "importe",
+    "nombre",
+    "estatus",
+    "concepto",
+)
+
 
 def _normalize_table_cell(text: str) -> str:
     cell = _normalize_text(str(text or "")).upper()
@@ -497,13 +513,73 @@ def _is_payment_table_footer(cells: list[str]) -> bool:
     return any(token in joined for token in ("MOVIMIENTO", "MOVIMIENTOS", "REGISTROS", "IMPORTE"))
 
 
-def _extract_payment_table_rows_from_boxes(ocr_boxes) -> list[list[str]]:
+def _payment_rows_plain_from_lines(lines: list[dict]) -> list[list[str]]:
     rows: list[list[str]] = []
-    for line in _lines_text_from_boxes(ocr_boxes):
+    for line in lines:
         cells = [_normalize_table_cell(box.get("text", "")) for box in line.get("boxes", [])]
         cells = [cell for cell in cells if cell]
         if len(cells) >= 3:
             rows.append(cells[:10])
+    return rows
+
+
+def _payment_table_column_anchors(header_boxes: list[dict]) -> list[dict]:
+    if not header_boxes:
+        return []
+    sorted_boxes = sorted(header_boxes, key=lambda b: b["rect"][0])
+    anchors: list[dict] = []
+    cluster = [sorted_boxes[0]]
+    for box in sorted_boxes[1:]:
+        prev = cluster[-1]
+        prev_right = prev["rect"][2]
+        curr_left = box["rect"][0]
+        if curr_left - prev_right <= 12:
+            cluster.append(box)
+            continue
+        anchors.append(cluster)
+        cluster = [box]
+    anchors.append(cluster)
+
+    result: list[dict] = []
+    for col_idx, group in enumerate(anchors):
+        x1 = min(item["rect"][0] for item in group)
+        x2 = max(item["rect"][2] for item in group)
+        label = _normalize_table_cell(" ".join(item.get("text", "") for item in group))
+        if not label:
+            label = f"COLUMN_{col_idx + 1}"
+        result.append({"x": (x1 + x2) / 2, "label": label})
+    return result
+
+
+def _payment_table_row_by_anchors(row_boxes: list[dict], anchors: list[dict]) -> list[str]:
+    if not row_boxes or not anchors:
+        return []
+    columns: list[list[tuple[float, str]]] = [[] for _ in anchors]
+    for box in row_boxes:
+        text = _normalize_table_cell(box.get("text", ""))
+        if not text:
+            continue
+        x1, _, x2, _ = box["rect"]
+        center = (x1 + x2) / 2
+        best_idx = min(
+            range(len(anchors)),
+            key=lambda idx: abs(center - anchors[idx]["x"]),
+        )
+        columns[best_idx].append((x1, text))
+
+    row: list[str] = []
+    for col in columns:
+        if not col:
+            row.append("")
+            continue
+        col.sort(key=lambda item: item[0])
+        row.append(_normalize_table_cell(" ".join(text for _, text in col)))
+    return row
+
+
+def _extract_payment_table_rows_from_boxes(ocr_boxes) -> list[list[str]]:
+    lines = _lines_text_from_boxes(ocr_boxes)
+    rows = _payment_rows_plain_from_lines(lines)
 
     if not rows:
         return []
@@ -511,6 +587,38 @@ def _extract_payment_table_rows_from_boxes(ocr_boxes) -> list[list[str]]:
     header_idx = next((idx for idx, row in enumerate(rows) if _looks_like_payment_table_header(row)), None)
     if header_idx is None:
         return [row for row in rows if _looks_like_payment_table_data(row)][:12]
+
+    header_boxes = [
+        box for box in lines[header_idx].get("boxes", [])
+        if _normalize_table_cell(box.get("text", ""))
+    ]
+    anchors = _payment_table_column_anchors(header_boxes)
+    if len(anchors) >= 3:
+        structured_rows: list[list[str]] = []
+        header_row = [_normalize_table_cell(anchor.get("label", "")) for anchor in anchors]
+        if _looks_like_payment_table_header(header_row):
+            structured_rows.append(header_row[:10])
+
+        for line in lines[header_idx + 1:]:
+            if len(structured_rows) >= 20:
+                break
+            row_boxes = [
+                box for box in line.get("boxes", [])
+                if _normalize_table_cell(box.get("text", ""))
+            ]
+            if len(row_boxes) < 2:
+                continue
+            row = _payment_table_row_by_anchors(row_boxes, anchors)[:10]
+            if _is_payment_table_footer(row) and len(structured_rows) > 1:
+                break
+            if _looks_like_payment_table_header(row) and len(structured_rows) <= 2:
+                structured_rows.append(row)
+                continue
+            if _looks_like_payment_table_data(row):
+                structured_rows.append(row)
+
+        if len(structured_rows) > 1:
+            return structured_rows
 
     selected = [rows[header_idx]]
     for row in rows[header_idx + 1:]:
@@ -546,21 +654,1057 @@ def _extract_payment_table_rows_from_text(raw_text: str) -> list[list[str]]:
             rows.append(cells[:10])
         if len(rows) >= 12:
             break
-    return rows
+    if rows:
+        return rows
+    return _extract_payment_table_rows_from_compact_text(raw_text)
+
+
+def _extract_scotia_transfer_rows(lines: list[str]) -> list[list[str]]:
+    if not lines:
+        return []
+    full = " ".join(lines)
+    if "SCOTIABANK" not in full and "TRANSFERENCIA DE ARCHIVOS" not in full:
+        return []
+    if "DA ALTA" not in full and "DAALTA" not in full:
+        return []
+
+    header = [
+        "TIPO DE REGISTRO",
+        "TIPO DE MOVIMIENTO (PAGO)",
+        "IMPORTE",
+        "FECHA DE APLICACION",
+        "CLAVE DEL BENEFICIARIO",
+        "NOMBRE DEL BENEFICIARIO",
+        "REFERENCIA",
+        "NO. CUENTA BENEFICIARIO",
+        "NO. BANCO RECEPTOR",
+        "DIAS DE VIGENCIA",
+        "CONCEPTO PAGO",
+    ]
+
+    rows: list[list[str]] = []
+    seen_keys: set[tuple[str, str, str]] = set()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        key = _normalize_keyword(line)
+        if "DAALTA" not in key and "DA ALTA" not in line:
+            i += 1
+            continue
+
+        block: list[str] = []
+        j = i
+        while j < len(lines) and len(block) < 18:
+            curr = lines[j]
+            curr_key = _normalize_keyword(curr)
+            if j > i and "DAALTA" in curr_key:
+                break
+            if any(token in curr for token in ("TOTAL DE MOVIMIENTOS", "CANTIDAD DE MOVIMIENTOS", "IMPORTE DE MOVIMIENTOS")):
+                break
+            block.append(curr)
+            j += 1
+
+        joined = " ".join(block)
+        amount_match = re.search(r"\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})", joined)
+        date_match = re.search(r"\b\d{2}/\d{2}/\d{4}\b", joined)
+        clave_match = re.search(r"\bA\d{2,4}\b", joined)
+        cuenta_match = re.search(r"\b\d{18,24}\b", joined)
+        concepto_match = re.search(r"\bPAG[O0]\s*0?\d{1,4}\b", joined)
+        movimiento_match = re.search(r"\b\d{2}\s+ABONO\s+EN\s+CUENTA\b", joined)
+        referencia_match = re.search(r"\b([0-9OIL]{1,3})\b(?=\s+\d{18,24})", joined)
+
+        cuenta = cuenta_match.group(0) if cuenta_match else ""
+        banco = ""
+        vigencia = ""
+        if cuenta:
+            post = joined.split(cuenta, 1)[1]
+            trailing = re.search(r"\b(\d{1,2})\b(?:\s+\b(\d)\b)?", post)
+            if trailing:
+                banco = trailing.group(1) or ""
+                vigencia = trailing.group(2) or ""
+
+        beneficiary_parts: list[str] = []
+        for raw in block:
+            candidate = _normalize_text(raw).upper()
+            if not candidate:
+                continue
+            if any(
+                token in candidate
+                for token in (
+                    "DA ALTA",
+                    "ABONO EN",
+                    "TIPO DE",
+                    "MOVIMIENTO",
+                    "IMPORTE",
+                    "FECHA DE",
+                    "CLAVE DEL",
+                    "REFERENCIA",
+                    "CUENTA",
+                    "NO. CUENTA",
+                    "NO.BANCO",
+                    "DIAS DE",
+                    "CONCEPTO",
+                )
+            ):
+                continue
+            if re.fullmatch(r"\d{1,3}", candidate):
+                continue
+            if re.fullmatch(r"\d{18,24}(?:\s+\d{1,2})?(?:\s+\d)?", candidate):
+                continue
+            if re.search(r"\$", candidate) or re.search(r"\d{2}/\d{2}/\d{4}", candidate):
+                continue
+            if re.fullmatch(r"A\d{2,4}", candidate):
+                continue
+            if re.fullmatch(r"PAG[O0]\d{1,4}", candidate):
+                continue
+            normalized_name = _normalize_name(candidate)
+            if not normalized_name:
+                continue
+            if normalized_name not in beneficiary_parts:
+                beneficiary_parts.append(normalized_name)
+
+        beneficiary = " ".join(beneficiary_parts[:3]).strip()
+        beneficiary = re.sub(r"^CUENTA\s+", "", beneficiary)
+        beneficiary = re.sub(r"\s+\b1\b$", "", beneficiary)
+        row = [
+            "DA ALTA",
+            _normalize_table_cell(movimiento_match.group(0) if movimiento_match else "04 ABONO EN CUENTA"),
+            _normalize_table_cell(amount_match.group(0) if amount_match else ""),
+            date_match.group(0) if date_match else "",
+            clave_match.group(0) if clave_match else "",
+            beneficiary,
+            _normalize_numeric_field(referencia_match.group(1)) if referencia_match else "",
+            cuenta,
+            banco,
+            vigencia,
+            _normalize_table_cell(concepto_match.group(0) if concepto_match else ""),
+        ]
+        dedup_key = (row[4], row[7], row[10])
+        if row[7] and (row[2] or row[3] or row[10]) and dedup_key not in seen_keys:
+            seen_keys.add(dedup_key)
+            rows.append(row)
+        i = j
+
+    if not rows:
+        return []
+    summary_rows = _extract_scotia_summary_rows(lines)
+    return [header, *rows[:25], *summary_rows]
+
+
+def _extract_scotia_summary_rows(lines: list[str]) -> list[list[str]]:
+    if not lines:
+        return []
+    extracted: list[list[str]] = []
+
+    normal_values = _extract_scotia_summary_block_values(lines, total=False)
+    if normal_values:
+        extracted.append(
+            [
+                "CANTIDAD DE MOVIMIENTOS ALTAS",
+                "IMPORTE DE MOVIMIENTO ALTAS",
+                "CANTIDAD DE MOVIMIENTOS BAJAS",
+                "IMPORTE DE MOVIMIENTOS BAJAS",
+            ]
+        )
+        extracted.append(normal_values)
+
+    total_values = _extract_scotia_summary_block_values(lines, total=True)
+    if total_values:
+        extracted.append(
+            [
+                "TOTAL CANTIDAD DE MOVIMIENTOS ALTAS",
+                "TOTAL IMPORTE DE MOVIMIENTO ALTAS",
+                "TOTAL CANTIDAD DE MOVIMIENTOS BAJAS",
+                "TOTAL IMPORTE DE MOVIMIENTOS BAJAS",
+            ]
+        )
+        extracted.append(total_values)
+
+    return extracted
+
+
+def _extract_scotia_summary_block_values(lines: list[str], total: bool) -> list[str]:
+    if not lines:
+        return []
+    full = " ".join(lines)
+    if total:
+        pattern = re.search(
+            r"TOTAL\s+CANTIDAD\s+DE\s+MOVIMIENTO[S]?\s+ALTAS\s+"
+            r"TOTAL\s+IMPORTE\s+DE\s+MOVIMIENTO[S]?\s+ALTAS\s+"
+            r"TOTAL\s+CANTIDAD\s+DE\s+MOVIMIENTO[S]?\s+BAJAS\s+"
+            r"TOTAL\s+IMPORTE\s+DE\s+MOVIMIENTO[S]?\s+BAJAS(?:\s+[A-Z]+){0,3}\s+"
+            r"([0-9OIL]{1,6})\s+(\$?\s*[0-9OIL.,]{1,24})\s+([0-9OIL]{1,6})\s+(\$?\s*[0-9OIL.,]{1,24})",
+            full,
+        )
+    else:
+        pattern = re.search(
+            r"CANTIDAD\s+DE\s+MOVIMIENTO[S]?\s+ALTAS\s+"
+            r"IMPORTE\s+DE\s+MOVIMIENTO[S]?\s+ALTAS\s+"
+            r"CANTIDAD\s+DE\s+MOVIMIENTO[S]?\s+BAJAS\s+"
+            r"IMPORTE\s+DE\s+MOVIMIENTO[S]?\s+BAJAS(?:\s+[A-Z]+){0,3}\s+"
+            r"([0-9OIL]{1,6})\s+(\$?\s*[0-9OIL.,]{1,24})\s+([0-9OIL]{1,6})\s+(\$?\s*[0-9OIL.,]{1,24})",
+            full,
+        )
+    if pattern:
+        return [
+            _normalize_payment_count(pattern.group(1)),
+            _normalize_payment_amount(pattern.group(2)),
+            _normalize_payment_count(pattern.group(3)),
+            _normalize_payment_amount(pattern.group(4)),
+        ]
+
+    anchor = "TOTAL CANTIDAD DE MOVIMIENTOS ALTAS" if total else "CANTIDAD DE MOVIMIENTOS ALTAS"
+    start_idx = -1
+    for idx, line in enumerate(lines):
+        if anchor in line:
+            start_idx = idx
+            break
+    if start_idx < 0:
+        return []
+
+    amount_values: list[str] = []
+    count_values: list[str] = []
+    amount_re = re.compile(r"\$?\s*[0-9OIL]{1,3}(?:[.,][0-9OIL]{3})*(?:[.,][0-9OIL]{2})")
+    for raw_line in lines[start_idx : min(len(lines), start_idx + 30)]:
+        line = raw_line.strip()
+        if not line:
+            continue
+        if any(token in line for token in ("CANTIDAD", "IMPORTE", "MOVIMIENTO", "BAJAS", "ALTAS", "TOTAL")):
+            continue
+        for amount in amount_re.findall(line):
+            normalized_amount = _normalize_payment_amount(amount)
+            if normalized_amount:
+                amount_values.append(normalized_amount)
+        compact = re.sub(r"\s+", "", line)
+        if re.fullmatch(r"[0-9OIL]{1,6}", compact or ""):
+            normalized_count = _normalize_payment_count(compact)
+            if normalized_count:
+                count_values.append(normalized_count)
+        if len(count_values) >= 2 and len(amount_values) >= 2:
+            break
+
+    if len(count_values) < 2 or len(amount_values) < 2:
+        return []
+    return [count_values[0], amount_values[0], count_values[1], amount_values[1]]
+
+
+def _extract_payment_table_rows_from_compact_text(raw_text: str) -> list[list[str]]:
+    if not raw_text:
+        return []
+
+    lines = [_ascii_fold(_normalize_text(line)).upper() for line in raw_text.splitlines() if _normalize_text(line)]
+    if not lines:
+        return []
+
+    scotia_rows = _extract_scotia_transfer_rows(lines)
+    if scotia_rows:
+        return scotia_rows
+
+    full = " ".join(lines)
+    values: dict[str, str] = {}
+
+    def pick(pattern: str) -> str:
+        match = re.search(pattern, full)
+        if not match:
+            return ""
+        return _normalize_table_cell(match.group(1))
+
+    def pick_labeled_value(labels: list[str]) -> str:
+        for line in lines:
+            candidate = line
+            for label in labels:
+                if candidate.startswith(label + ":"):
+                    return _normalize_table_cell(candidate.split(":", 1)[1])
+                tag = f"{label}:"
+                if tag in candidate:
+                    return _normalize_table_cell(candidate.split(tag, 1)[1])
+        return ""
+
+    nombre_directo = pick_labeled_value(["NOMBRE"])
+    apellido_paterno = pick_labeled_value(["APELLIDO PATERNO", "APELLIDOPATERNO"])
+    apellido_materno = pick_labeled_value(["APELLIDO MATERNO", "APELLIDOMATERNO"])
+
+    values["cuenta"] = _normalize_numeric_field(
+        pick_labeled_value(
+            [
+                "NUMERO DE CUENTA DE ABONO",
+                "NUMERO DE CUENTA",
+                "NO. DE CUENTA",
+                "CUENTA CARGO",
+            ]
+        )
+    ) or _normalize_numeric_field(
+        pick(r"(?:NUMERO DE CUENTA DE ABONO|CUENTA(?: DE ABONO)?|NO\.?\s*DE\s*CUENTA)\s*:?\s*([0-9OIL.-]{8,26})")
+    )
+    values["referencia"] = _normalize_value_for_key(
+        "referencia",
+        pick_labeled_value(["REFERENCIA", "REFERENCIA DE CARGO", "LINEA DE CAPTURA"])
+        or pick(r"(?:REFERENCIA(?: DE CARGO)?|LINEA DE CAPTURA)\s*:?\s*([0-9OIL.-]{10,36})"),
+    )
+    values["importe"] = _normalize_table_cell(
+        pick_labeled_value(["IMPORTE", "IMPORTE TOTAL", "TOTAL A PAGAR"])
+        or pick(r"(?:IMPORTE(?: TOTAL)?|TOTAL A PAGAR)\s*:?\s*(\$?\s*[0-9OIL]{1,3}(?:[.,][0-9OIL]{3})*(?:[.,][0-9OIL]{2}))")
+    )
+    name_labeled = nombre_directo
+    if not name_labeled:
+        name_labeled = pick(r"(?:NOMBRE)\s*:\s*([A-ZÑÁÉÍÓÚÜ ]{4,80})")
+    if not name_labeled:
+        name_labeled = pick(r"(?:NOMBRE)\s*:?\s*([A-ZÑÁÉÍÓÚÜ ]{4,80}?)(?=\s+(?:ESTATUS|CONCEPTO|REFERENCIA|CUENTA|IMPORTE)\b|$)")
+    full_name = _normalize_name(
+        " ".join(part for part in [name_labeled, apellido_paterno, apellido_materno] if part).strip()
+    ) or _normalize_name(name_labeled)
+    if full_name and not _looks_like_person_name(full_name):
+        full_name = ""
+    values["nombre"] = full_name
+    values["estatus"] = _normalize_table_cell(
+        pick_labeled_value(["ESTATUS"])
+        or pick(r"(?:ESTATUS)\s*:?\s*([A-ZÑÁÉÍÓÚÜ]{4,30})")
+    )
+    concept_labeled = pick_labeled_value(["CONCEPTO"])
+    if not concept_labeled:
+        concept_labeled = pick(r"(?:TIPO DE PAGO)\s*:?\s*([A-ZÑÁÉÍÓÚÜ ]{4,80})")
+    if not concept_labeled:
+        concept_labeled = pick(r"(?:CONCEPTO)\s*:?\s*([A-ZÑÁÉÍÓÚÜ ]{4,80}?)(?=\s+(?:ESTATUS|NOMBRE|REFERENCIA|CUENTA|IMPORTE)\b|$)")
+    values["concepto"] = _normalize_table_cell(concept_labeled)
+    if values["concepto"]:
+        values["concepto"] = re.sub(
+            r"\s+\b(?:ESTATUS|NOMBRE|REFERENCIA|CUENTA|IMPORTE)\b.*$",
+            "",
+            values["concepto"],
+        ).strip()
+
+    if not values["cuenta"] or not values["referencia"]:
+        for line in lines:
+            nums = re.findall(r"\d{10,24}", line)
+            if len(nums) >= 2:
+                if not values["cuenta"]:
+                    values["cuenta"] = nums[0]
+                if not values["referencia"]:
+                    values["referencia"] = nums[1]
+                break
+
+    if not values["importe"] or not values["nombre"]:
+        for line in lines:
+            amt = re.search(r"(\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))", line)
+            if not amt:
+                continue
+            if not values["importe"]:
+                values["importe"] = _normalize_table_cell(amt.group(1))
+            if not values["nombre"]:
+                tail = line[amt.end():].strip()
+                if tail:
+                    tail_name = _normalize_name(tail)
+                    if tail_name and _looks_like_person_name(tail_name):
+                        values["nombre"] = tail_name
+            break
+
+    if not values["cuenta"] or not values["importe"] or not values["estatus"]:
+        movement_match = re.search(
+            r"\b(\d{12,24})\s*\$?\s*(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))\s*(APLICADO|PROCESADO|ACEPTADO|RECHAZADO)\b",
+            full,
+        )
+        if movement_match:
+            if not values["cuenta"]:
+                values["cuenta"] = movement_match.group(1)
+            if not values["importe"]:
+                values["importe"] = "$" + movement_match.group(2) if not movement_match.group(2).startswith("$") else movement_match.group(2)
+            if not values["estatus"]:
+                values["estatus"] = movement_match.group(3)
+
+    if not values["nombre"]:
+        for line in lines:
+            cleaned = _normalize_name(line)
+            if not cleaned:
+                continue
+            token_count = len(cleaned.split())
+            if token_count < 3:
+                continue
+            if any(
+                marker in line
+                for marker in (
+                    "REPORTE",
+                    "ARCHIVO",
+                    "EMPRESA",
+                    "CONTRATO",
+                    "FOLIO",
+                    "TRANSFERENCIA",
+                    "CANTIDAD",
+                    "MOVIMIENTOS",
+                    "TIPO DE",
+                    "CUENTA",
+                    "REFERENCIA",
+                    "IMPORTE",
+                    "ESTATUS",
+                    "CONCEPTO",
+                )
+            ):
+                continue
+            values["nombre"] = cleaned
+            break
+
+    filled = sum(1 for key in _PAYMENT_TABLE_TEXT_LABELS if values.get(key))
+    if filled < 3:
+        return []
+
+    header = ["CUENTA", "REFERENCIA", "IMPORTE", "NOMBRE", "ESTATUS", "CONCEPTO"]
+    row = [
+        values.get("cuenta", ""),
+        values.get("referencia", ""),
+        values.get("importe", ""),
+        values.get("nombre", ""),
+        values.get("estatus", ""),
+        values.get("concepto", ""),
+    ]
+
+    if not any(cell for cell in row):
+        return []
+
+    return [header, row]
 
 
 def _extract_payment_table_payload(base_text_raw: str, ocr_boxes) -> dict | None:
-    rows = _extract_payment_table_rows_from_boxes(ocr_boxes)
-    source = "ocr_boxes"
-    if not rows:
-        rows = _extract_payment_table_rows_from_text(base_text_raw)
+    rows_ocr = _extract_payment_table_rows_from_boxes(ocr_boxes)
+    rows_text = _extract_payment_table_rows_from_text(base_text_raw)
+
+    score_ocr = _payment_rows_quality_score(rows_ocr) if len(rows_ocr) >= 2 else -999
+    score_text = _payment_rows_quality_score(rows_text) if len(rows_text) >= 2 else -999
+
+    if score_ocr >= score_text and score_ocr >= 0:
+        rows = rows_ocr
+        source = "ocr_boxes"
+    elif score_text >= 0:
+        rows = rows_text
         source = "text_lines"
-    if len(rows) < 2:
+    else:
         return None
 
+    rows = _append_scotia_summary_rows_to_table(rows, base_text_raw)
     return {
         "source": source,
         "rows": rows,
+    }
+
+
+def _append_scotia_summary_rows_to_table(rows: list[list[str]], raw_text: str) -> list[list[str]]:
+    if len(rows) < 2:
+        return rows
+    if _payment_detect_bank(raw_text) != "SCOTIABANK":
+        return rows
+    lines = [_ascii_fold(_normalize_text(line)).upper() for line in str(raw_text or "").splitlines() if _normalize_text(line)]
+    if not lines:
+        return rows
+    summary_rows = _extract_scotia_summary_rows(lines)
+    if not summary_rows:
+        return rows
+
+    existing = {"|".join(_normalize_table_cell(cell) for cell in row) for row in rows}
+    appended = list(rows)
+    for row in summary_rows:
+        signature = "|".join(_normalize_table_cell(cell) for cell in row)
+        if signature in existing:
+            continue
+        appended.append(row)
+        existing.add(signature)
+    return appended
+
+
+def _payment_rows_look_low_quality(rows: list[list[str]]) -> bool:
+    return _payment_rows_quality_score(rows) < 0
+
+
+def _payment_rows_quality_score(rows: list[list[str]]) -> int:
+    if len(rows) < 2:
+        return -100
+    header = [str(cell or "").strip().upper() for cell in rows[0]]
+    data = [str(cell or "").strip().upper() for cell in rows[1]]
+    if len(header) < 3:
+        return -80
+
+    header_joined = " ".join(header)
+    header_hits = sum(1 for token in _PAYMENT_TABLE_HEADER_TOKENS if token in header_joined)
+    score = header_hits * 15
+    score += min(10, len(rows) - 1) * 4
+    score -= sum(max(0, len(cell) - 60) for cell in header) // 4
+    score -= sum(max(0, len(cell) - 120) for cell in data) // 6
+
+    data_joined = " ".join(data)
+    noisy_fragments = (
+        "UNIDAD ESPECIALIZADA",
+        "ACLARACION",
+        "TELEFONOS",
+        "INSTITUCION",
+        "COMPROBANTE",
+        "LAPSO",
+    )
+    score -= sum(18 for fragment in noisy_fragments if fragment in data_joined)
+
+    if "CUENTA" in header_joined and data:
+        account_cell = data[0] if len(data) >= 1 else ""
+        if account_cell and re.search(r"[A-Z]", account_cell):
+            if any(token in account_cell for token in ("DATOS", "CLIENTE", "PAGADOR")):
+                score -= 25
+            if sum(ch.isdigit() for ch in account_cell) < 8:
+                score -= 15
+    if "REFERENCIA" in header_joined and len(data) >= 2:
+        ref_cell = data[1]
+        if ref_cell and re.search(r"[A-Z]", ref_cell):
+            if any(token in ref_cell for token in ("DATOS", "CLIENTE", "PAGADOR")):
+                score -= 25
+            if sum(ch.isdigit() for ch in ref_cell) < 8:
+                score -= 15
+    if re.search(r"\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})", data_joined):
+        score += 12
+    else:
+        score -= 20
+    return score
+
+
+def _payment_detect_bank(raw_text: str) -> str:
+    text = _ascii_fold(str(raw_text or "")).upper()
+    if "SCOTIABANK" in text:
+        return "SCOTIABANK"
+    if "BBVA" in text or "BANCOMER" in text or "REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS" in text:
+        return "BBVA"
+    if "SANTANDER" in text:
+        return "SANTANDER"
+    if "BANORTE" in text or "IXE" in text:
+        return "BANORTE"
+    if "BANAMEX" in text or "CITIBANAMEX" in text:
+        return "BANAMEX"
+    return "DESCONOCIDO"
+
+
+def _payment_pick_labeled_value(raw_text: str, labels: list[str], max_len: int = 120) -> str:
+    lines = [_ascii_fold(_normalize_text(line)).upper() for line in str(raw_text or "").splitlines() if _normalize_text(line)]
+    for line in lines:
+        for label in labels:
+            key = _ascii_fold(_normalize_text(label)).upper()
+            if line.startswith(key + ":"):
+                return _normalize_text(line.split(":", 1)[1])[:max_len]
+            if key + ":" in line:
+                return _normalize_text(line.split(key + ":", 1)[1])[:max_len]
+            if line.startswith(key + " "):
+                remainder = _normalize_text(line[len(key):])
+                if len(remainder) >= 2:
+                    return remainder[:max_len]
+    full = " ".join(lines)
+    for label in labels:
+        key = _ascii_fold(_normalize_text(label)).upper()
+        match = re.search(rf"{re.escape(key)}\s*:?\s*(.+?)(?=\s+[A-Z0-9][A-Z0-9 .:/-]{{2,}}:\s*|$)", full)
+        if match:
+            return _normalize_text(match.group(1))[:max_len]
+    return ""
+
+
+def _normalize_payment_datetime(value: str) -> str:
+    raw = _normalize_text(str(value or ""))
+    if not raw:
+        return ""
+    upper = _ascii_fold(raw).upper()
+    if "SIN FECHA" in upper:
+        return "SIN FECHA Y HORA DE REGISTRO"
+    date_match = re.search(r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}", upper)
+    time_match = re.search(r"\d{2}:\d{2}(?::\d{2})?", upper)
+    if date_match and time_match:
+        normalized_date = _normalize_date_value(date_match.group(0))
+        if re.fullmatch(r"\d{2}/\d{2}/\d{4}", normalized_date):
+            return f"{normalized_date} {time_match.group(0)}"
+    if date_match:
+        normalized_date = _normalize_date_value(date_match.group(0))
+        if re.fullmatch(r"\d{2}/\d{2}/\d{4}", normalized_date):
+            return normalized_date
+    return raw
+
+
+def _normalize_payment_amount(value: str) -> str:
+    text = _normalize_text(str(value or "")).upper()
+    if not text:
+        return ""
+    text = text.replace("O", "0").replace("I", "1").replace("L", "1")
+    match = re.search(r"\$?\s*(\d[\d.,]{1,24})", text)
+    if not match:
+        return ""
+    token = match.group(1)
+    token = re.sub(r"[^\d.,]", "", token)
+    if not token:
+        return ""
+    decimal_sep = None
+    if "." in token and "," in token:
+        decimal_sep = "." if token.rfind(".") > token.rfind(",") else ","
+    elif token.count(".") == 1 and len(token.split(".")[-1]) == 2:
+        decimal_sep = "."
+    elif token.count(",") == 1 and len(token.split(",")[-1]) == 2:
+        decimal_sep = ","
+
+    if decimal_sep:
+        integer_raw, cents_raw = token.rsplit(decimal_sep, 1)
+        integer_digits = re.sub(r"\D", "", integer_raw)
+        cents_digits = re.sub(r"\D", "", cents_raw)
+        if not integer_digits:
+            return ""
+        cents = (cents_digits + "00")[:2]
+        return f"${int(integer_digits):,}.{cents}"
+
+    integer_digits = re.sub(r"\D", "", token)
+    if not integer_digits:
+        return ""
+    return f"${int(integer_digits):,}.00"
+
+
+def _normalize_payment_count(value: str) -> str:
+    raw = _normalize_numeric_field(str(value or ""))
+    if not raw:
+        return ""
+    if len(raw) > 6:
+        return raw[:6]
+    return str(int(raw))
+
+
+def _extract_scotia_payment_metadata(raw_text: str) -> dict[str, str]:
+    text = _ascii_fold(str(raw_text or "")).upper()
+    out: dict[str, str] = {}
+    date_match = re.search(r"\b(\d{1,2}/\d{1,2}/\d{2,4})\b", text)
+    if date_match:
+        normalized_date = _normalize_date_value(date_match.group(1))
+        if normalized_date:
+            out["fecha_archivo"] = normalized_date
+    time_match = re.search(r"\b(\d{2}:\d{2}(?::\d{2})?)\b", text)
+    if time_match:
+        out["hora_archivo"] = time_match.group(1)
+    contract_match = re.search(r"NUMERO DE CONTRATO SCOTIA EN LINEA\s*:?\s*([0-9OIL]{4,12})", text)
+    if contract_match:
+        out["numero_contrato_scotia_linea"] = _normalize_numeric_field(contract_match.group(1))
+    folio_match = re.search(r"\bFOLIO\s*:?\s*([0-9OIL]{4,18})\b", text)
+    if folio_match:
+        out["folio"] = _normalize_numeric_field(folio_match.group(1))
+    archivo_match = re.search(r"NOMBRE DEL ARCHIVO\s*:?\s*([A-Z0-9._ -]{6,80})", text)
+    if archivo_match:
+        out["nombre_archivo"] = _normalize_text(archivo_match.group(1))
+    usuario_match = re.search(r"NOMBRE DE USUARIO DEL SISTEMA Y NOMBRE\s*:?\s*([A-Z0-9._ -]{6,120})", text)
+    if usuario_match:
+        out["usuario_sistema_nombre"] = _normalize_text(usuario_match.group(1))
+    validacion_match = re.search(
+        r"FECHA Y HORA DE VALIDACION DEL ARCHIVO\s*:?\s*([A-Z0-9:/ .-]{6,80})",
+        text,
+    )
+    if validacion_match:
+        out["fecha_hora_validacion_archivo"] = _normalize_text(validacion_match.group(1))
+    registro_match = re.search(
+        r"(SIN FECHA Y HORA DE REGISTRO|FECHA Y HORA DE REGISTRO\s*:?\s*[A-Z0-9:/ .-]{6,80})",
+        text,
+    )
+    if registro_match:
+        out["fecha_hora_registro"] = _normalize_text(registro_match.group(1))
+    carga_match = re.search(
+        r"TIPO DE REGISTRO\s+CUENTA DE CARGA\s+REFERENCIA DE CARGA\s+([A-Z]+)\s+([0-9OIL]{6,20})\s+([0-9OIL]{1,4})",
+        text,
+    )
+    if carga_match:
+        out["tipo_registro_carga"] = _normalize_text(carga_match.group(1))
+        out["cuenta_carga"] = _normalize_numeric_field(carga_match.group(2))
+        out["referencia_carga"] = _normalize_numeric_field(carga_match.group(3))
+    for key, pattern in {
+        "cantidad_total_movimientos": r"CANTIDAD TOTAL DE MOVIMIENTOS\s*:?\s*([0-9OIL]{1,6})",
+        "cantidad_movimientos_altas": r"CANTIDAD DE MOVIMIENT(?:O|OS) ALTAS\s*:?\s*([0-9OIL]{1,6})",
+        "cantidad_movimientos_bajas": r"CANTIDAD DE MOVIMIENT(?:O|OS) BAJAS\s*:?\s*([0-9OIL]{1,6})",
+        "total_registros_leidos": r"TOTAL DE REGISTROS LEIDOS\s*:?\s*([0-9OIL]{1,6})",
+    }.items():
+        match = re.search(pattern, text)
+        if match:
+            normalized = _normalize_payment_count(match.group(1))
+            if normalized:
+                out[key] = normalized
+    for key, pattern in {
+        "importe_total_movimientos": r"IMPORTE TOTAL DE MOVIMIENTOS\s*:?\s*(\$?\s*[0-9OIL.,]{4,20})",
+        "importe_movimiento_altas": r"IMPORTE DE MOVIMIENT(?:O|OS) ALTAS\s*:?\s*(\$?\s*[0-9OIL.,]{4,20})",
+        "importe_movimientos_bajas": r"IMPORTE DE MOVIMIENT(?:O|OS) BAJAS\s*:?\s*(\$?\s*[0-9OIL.,]{4,20})",
+    }.items():
+        match = re.search(pattern, text)
+        if match:
+            normalized = _normalize_payment_amount(match.group(1))
+            if normalized:
+                out[key] = normalized
+    return out
+
+
+def _extract_bbva_payment_metadata(raw_text: str) -> dict[str, str]:
+    text = _ascii_fold(str(raw_text or "")).upper()
+    out: dict[str, str] = {}
+    if "REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS" in text:
+        out["reporte_tipo"] = "REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS"
+    payment_type = re.search(r"TIPO DE PAGO\s*:?\s*([A-Z ]{4,80})", text)
+    if payment_type:
+        out["tipo_pago"] = _normalize_text(payment_type.group(1)).upper()
+    accepted = re.findall(r"\b(APLICADO|ACEPTADO|TRANSMITIDO|RECHAZADO)\b", text)
+    if accepted:
+        out["estatus_detectados"] = ",".join(sorted(set(accepted)))
+    amount_match = re.search(r"\$?\s*([0-9OIL]{1,3}(?:[.,][0-9OIL]{3})*(?:[.,][0-9OIL]{2}))", text)
+    if amount_match:
+        normalized = _normalize_payment_amount(amount_match.group(0))
+        if normalized:
+            out["importe_detectado"] = normalized
+    process_dt = re.search(
+        r"(?:FECHA(?:\s+Y\s+HORA)?\s+DE\s+PROCESO|FECHA(?:\s+DE)?\s+TRANSMISION)\s*:?\s*([A-Z0-9:/ .-]{8,80})",
+        text,
+    )
+    if process_dt:
+        out["fecha_hora_proceso"] = _normalize_text(process_dt.group(1))
+    archivo_value = _payment_pick_labeled_value(raw_text, ["NOMBRE DE ARCHIVO", "ARCHIVO"], max_len=120)
+    if archivo_value and ("." in archivo_value or "_" in archivo_value or re.search(r"\d", archivo_value)):
+        out["nombre_archivo"] = _normalize_text(archivo_value)
+    else:
+        archivo_match = re.search(r"(?:NOMBRE\s+DE\s+ARCHIVO|ARCHIVO)\s*:\s*([A-Z0-9._ -]{6,120})", text)
+        if archivo_match:
+            out["nombre_archivo"] = _normalize_text(archivo_match.group(1))
+    usuario_match = re.search(r"(?:USUARIO|OPERADOR)\s*:?\s*([A-Z0-9._ -]{4,80})", text)
+    if usuario_match:
+        out["usuario_sistema_nombre"] = _normalize_text(usuario_match.group(1))
+    lote_match = re.search(r"(?:LOTE|LOTE\s+ID|NO\.?\s+DE\s+LOTE)\s*:?\s*([0-9OIL]{1,12})", text)
+    if lote_match:
+        out["numero_lote"] = _normalize_numeric_field(lote_match.group(1))
+    archivo_num_match = re.search(r"(?:NO\.?\s+DE\s+ARCHIVO|ARCHIVO\s+NO)\s*:?\s*([0-9OIL]{1,12})", text)
+    if archivo_num_match:
+        out["numero_archivo_en_dia"] = _normalize_numeric_field(archivo_num_match.group(1))
+    return out
+
+
+def _extract_scotia_summary_tables(raw_text: str) -> list[dict]:
+    text = str(raw_text or "")
+    if not text.strip():
+        return []
+    lines = [_ascii_fold(_normalize_text(line)).upper() for line in text.splitlines() if _normalize_text(line)]
+    if not lines:
+        return []
+
+    tables: list[dict] = []
+    normal_values = _extract_scotia_summary_block_values(lines, total=False)
+    if normal_values:
+        tables.append(
+            {
+                "title": "RESUMEN MOVIMIENTOS",
+                "columns": [
+                    "CANTIDAD DE MOVIMIENTOS ALTAS",
+                    "IMPORTE DE MOVIMIENTO ALTAS",
+                    "CANTIDAD DE MOVIMIENTOS BAJAS",
+                    "IMPORTE DE MOVIMIENTOS BAJAS",
+                ],
+                "rows": [normal_values],
+            }
+        )
+
+    total_values = _extract_scotia_summary_block_values(lines, total=True)
+    if total_values:
+        tables.append(
+            {
+                "title": "RESUMEN TOTAL",
+                "columns": [
+                    "TOTAL CANTIDAD DE MOVIMIENTOS ALTAS",
+                    "TOTAL IMPORTE DE MOVIMIENTO ALTAS",
+                    "TOTAL CANTIDAD DE MOVIMIENTOS BAJAS",
+                    "TOTAL IMPORTE DE MOVIMIENTOS BAJAS",
+                ],
+                "rows": [total_values],
+            }
+        )
+
+    return tables
+
+
+def _sanitize_payment_metadata(metadata: dict[str, str]) -> dict[str, str]:
+    if not metadata:
+        return {}
+    cleaned: dict[str, str] = {}
+    date_keys = {"fecha_archivo"}
+    datetime_keys = {"fecha_hora_validacion_archivo", "fecha_hora_registro", "fecha_hora_proceso"}
+    amount_keys = {"importe_total_movimientos", "importe_movimiento_altas", "importe_movimientos_bajas", "importe_detectado"}
+    count_keys = {"cantidad_total_movimientos", "cantidad_movimientos_altas", "cantidad_movimientos_bajas", "total_registros_leidos"}
+    numeric_keys = {
+        "numero_contrato_scotia_linea",
+        "folio",
+        "numero_archivo_en_dia",
+        "numero_contrato_servicio",
+        "numero_lote",
+        "cuenta_carga",
+        "referencia_carga",
+    }
+    for key, value in metadata.items():
+        raw = _normalize_text(str(value or ""))
+        if not raw:
+            continue
+        if key in date_keys:
+            normalized = _normalize_date_value(raw)
+            if re.fullmatch(r"\d{2}/\d{2}/\d{4}", normalized):
+                cleaned[key] = normalized
+            continue
+        if key in datetime_keys:
+            normalized = _normalize_payment_datetime(raw)
+            if normalized:
+                cleaned[key] = normalized
+            continue
+        if key in amount_keys:
+            normalized = _normalize_payment_amount(raw)
+            if normalized:
+                cleaned[key] = normalized
+            continue
+        if key in count_keys:
+            normalized = _normalize_payment_count(raw)
+            if normalized:
+                cleaned[key] = normalized
+            continue
+        if key in numeric_keys:
+            normalized = _normalize_numeric_field(raw)
+            if normalized:
+                cleaned[key] = normalized
+            continue
+        if key in {
+            "nombre_archivo",
+            "usuario_sistema_nombre",
+            "nombre_contrato_scotia_linea",
+            "nombre_empresa",
+            "reporte_tipo",
+            "tipo_pago",
+            "tipo_registro_carga",
+        }:
+            cleaned[key] = _normalize_text(raw).upper()
+            continue
+        cleaned[key] = raw
+    return cleaned
+
+
+def _payment_header_keys_from_cells(cells: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: dict[str, int] = {}
+    for idx, cell in enumerate(cells):
+        base = _normalize_keyword(cell).lower()
+        if not base:
+            base = f"columna_{idx + 1}"
+        count = seen.get(base, 0) + 1
+        seen[base] = count
+        normalized.append(base if count == 1 else f"{base}_{count}")
+    return normalized
+
+
+def _payment_rows_to_objects(rows: list[list[str]]) -> list[dict]:
+    if len(rows) < 2:
+        return []
+    header = rows[0]
+    keys = _payment_header_keys_from_cells(header)
+    objects: list[dict] = []
+    for row in rows[1:]:
+        item: dict[str, str] = {}
+        for idx, key in enumerate(keys):
+            if idx >= len(row):
+                item[key] = ""
+            else:
+                item[key] = _normalize_text(str(row[idx] or ""))
+        if any(str(v).strip() for v in item.values()):
+            objects.append(item)
+    return objects[:80]
+
+
+def _canonical_payment_key(bank: str, raw_key: str) -> str:
+    key = _normalize_keyword(raw_key).lower()
+    if not key:
+        return ""
+
+    base_map = {
+        "cuenta": "cuenta",
+        "cuentabeneficiario": "cuenta_beneficiario",
+        "numerodecuentabeneficiario": "cuenta_beneficiario",
+        "numerodecuenta": "cuenta",
+        "nocuenta": "cuenta",
+        "referencia": "referencia",
+        "importe": "importe",
+        "nombre": "nombre_beneficiario",
+        "nombrebeneficiario": "nombre_beneficiario",
+        "estatus": "estatus",
+        "concepto": "concepto_pago",
+        "conceptopago": "concepto_pago",
+        "claverastreo": "clave_rastreo",
+    }
+    scotia_map = {
+        "tipoderegistro": "tipo_registro",
+        "tipodemovimiento": "tipo_movimiento",
+        "tipodemovimientopago": "tipo_movimiento",
+        "fechadeaplicacion": "fecha_aplicacion",
+        "clavedelbeneficiario": "clave_beneficiario",
+        "referencia": "referencia",
+        "referenciadecarga": "referencia",
+        "nocuentabeneficiario": "cuenta_beneficiario",
+        "numerobancoreceptor": "banco_receptor",
+        "nobancoreceptor": "banco_receptor",
+        "diasdevigencia": "dias_vigencia",
+        "nombredelbeneficiario": "nombre_beneficiario",
+    }
+    bbva_map = {
+        "tipodecuenta": "tipo_cuenta",
+        "codigo": "codigo",
+        "descripcion": "descripcion",
+    }
+
+    if bank == "SCOTIABANK" and key in scotia_map:
+        return scotia_map[key]
+    if bank == "BBVA" and key in bbva_map:
+        return bbva_map[key]
+    return base_map.get(key, key)
+
+
+def _payment_to_canonical_rows(bank: str, rows: list[dict]) -> tuple[list[str], list[dict]]:
+    if not rows:
+        return [], []
+    canonical_rows: list[dict] = []
+    canonical_keys: list[str] = []
+    for row in rows:
+        canonical_row: dict[str, str] = {}
+        for raw_key, raw_value in row.items():
+            canon_key = _canonical_payment_key(bank, str(raw_key or ""))
+            if not canon_key:
+                continue
+            value = _normalize_text(str(raw_value or ""))
+            if not value:
+                continue
+            if canon_key in canonical_row:
+                merged = f"{canonical_row[canon_key]} {value}".strip()
+                canonical_row[canon_key] = _normalize_text(merged)
+            else:
+                canonical_row[canon_key] = value
+            if canon_key not in canonical_keys:
+                canonical_keys.append(canon_key)
+        if canonical_row:
+            canonical_rows.append(canonical_row)
+    return canonical_keys, canonical_rows
+
+
+def _extract_payment_detail_payload(base_text_raw: str, table_payload: dict | None) -> dict | None:
+    text = str(base_text_raw or "")
+    if not text.strip():
+        return None
+
+    metadata: dict[str, str] = {}
+    bank = _payment_detect_bank(text)
+    label_map = {
+        "fecha_archivo": ["FECHA"],
+        "hora_archivo": ["HORA"],
+        "nombre_empresa": ["NOMBRE DE EMPRESA", "EMPRESA"],
+        "nombre_archivo": ["NOMBRE DEL ARCHIVO"],
+        "folio": ["FOLIO"],
+        "nombre_contrato_scotia_linea": ["NOMBRE DE CONTRATO SCOTIA EN LINEA"],
+        "numero_contrato_scotia_linea": ["NUMERO DE CONTRATO SCOTIA EN LINEA"],
+        "numero_contrato_servicio": ["NUMERO DE CONTRATO DEL SERVICIO"],
+        "numero_lote": ["LOTE", "LOTE ID", "NO DE LOTE"],
+        "numero_archivo_en_dia": ["NUMERO DE ARCHIVO EN EL DIA"],
+        "usuario_sistema_nombre": ["NOMBRE DE USUARIO DEL SISTEMA Y NOMBRE"],
+        "fecha_hora_validacion_archivo": ["FECHA Y HORA DE VALIDACION DEL ARCHIVO"],
+        "fecha_hora_registro": ["FECHA Y HORA DE REGISTRO"],
+        "fecha_hora_proceso": ["FECHA Y HORA DE PROCESO", "FECHA DE TRANSMISION"],
+        "cantidad_total_movimientos": ["CANTIDAD TOTAL DE MOVIMIENTOS"],
+        "importe_total_movimientos": ["IMPORTE TOTAL DE MOVIMIENTOS"],
+        "cantidad_movimientos_altas": ["CANTIDAD DE MOVIMIENTO ALTAS", "CANTIDAD DE MOVIMIENTOS ALTAS"],
+        "importe_movimiento_altas": ["IMPORTE DE MOVIMIENTO ALTAS", "IMPORTE DE MOVIMIENTOS ALTAS"],
+        "cantidad_movimientos_bajas": ["CANTIDAD DE MOVIMIENTO BAJAS", "CANTIDAD DE MOVIMIENTOS BAJAS"],
+        "importe_movimientos_bajas": ["IMPORTE DE MOVIMIENTOS BAJAS"],
+        "total_registros_leidos": ["TOTAL DE REGISTROS LEIDOS"],
+    }
+    for key, labels in label_map.items():
+        value = _payment_pick_labeled_value(text, labels, max_len=180)
+        if value:
+            metadata[key] = value
+
+    if bank == "SCOTIABANK":
+        metadata.update(_extract_scotia_payment_metadata(text))
+    elif bank == "BBVA":
+        metadata.update(_extract_bbva_payment_metadata(text))
+
+    metadata = _sanitize_payment_metadata(metadata)
+
+    rows = []
+    if isinstance(table_payload, dict):
+        rows = table_payload.get("rows") if isinstance(table_payload.get("rows"), list) else []
+    row_objects = _payment_rows_to_objects(rows) if rows else []
+    canonical_columns, canonical_rows = _payment_to_canonical_rows(bank, row_objects)
+    summary_tables = _extract_scotia_summary_tables(text) if bank == "SCOTIABANK" else []
+
+    if not metadata and not row_objects and not canonical_rows and not summary_tables:
+        return None
+
+    return {
+        "source": "table_and_text" if row_objects else "text_only",
+        "bank": bank,
+        "metadata": metadata,
+        "table": {
+            "columns": rows[0] if len(rows) >= 1 else [],
+            "row_count": len(row_objects),
+            "rows": row_objects,
+            "canonical_columns": canonical_columns,
+            "canonical_row_count": len(canonical_rows),
+            "canonical_rows": canonical_rows,
+            "summary_tables": summary_tables,
+        },
+    }
+
+
+def _build_replica_layout_payload(ocr_boxes, raw_text: str) -> dict | None:
+    boxes = _boxes_with_rect(ocr_boxes)
+    if boxes:
+        pages: dict[int, list[dict]] = {}
+        for box in boxes:
+            page = int(box.get("page", 1) or 1)
+            pages.setdefault(page, []).append(box)
+
+        payload_pages: list[dict] = []
+        for page_num in sorted(pages.keys()):
+            page_boxes = pages[page_num]
+            lines = _line_groups(page_boxes, y_tol=10)
+            if not lines:
+                continue
+            max_x = max(box["rect"][2] for box in page_boxes)
+            max_y = max(box["rect"][3] for box in page_boxes)
+            line_items: list[dict] = []
+            for line in lines[:700]:
+                text = _normalize_text(line.get("text", ""))
+                if not text:
+                    continue
+                rects = [item["rect"] for item in line.get("boxes", []) if item.get("rect")]
+                if not rects:
+                    continue
+                x1 = min(r[0] for r in rects)
+                y1 = min(r[1] for r in rects)
+                x2 = max(r[2] for r in rects)
+                y2 = max(r[3] for r in rects)
+                line_items.append(
+                    {
+                        "text": text,
+                        "x": int(round(x1)),
+                        "y": int(round(y1)),
+                        "w": int(round(max(1, x2 - x1))),
+                        "h": int(round(max(1, y2 - y1))),
+                    }
+                )
+            if line_items:
+                payload_pages.append(
+                    {
+                        "page": page_num,
+                        "width": int(round(max_x)),
+                        "height": int(round(max_y)),
+                        "lines": line_items,
+                    }
+                )
+
+        if payload_pages:
+            return {"source": "layout_boxes", "pages": payload_pages}
+
+    text_lines = [line.rstrip() for line in str(raw_text or "").replace("\r\n", "\n").split("\n")]
+    text_lines = [line for line in text_lines if line.strip()]
+    if len(text_lines) < 2:
+        return None
+    fallback_lines: list[dict] = []
+    y = 24
+    for line in text_lines[:700]:
+        fallback_lines.append({"text": line, "x": 24, "y": y, "w": 1020, "h": 14})
+        y += 16
+    return {
+        "source": "text_lines",
+        "pages": [{"page": 1, "width": 1100, "height": max(600, y + 24), "lines": fallback_lines}],
     }
 
 
@@ -2525,6 +3669,17 @@ def _normalize_field_value_for_contract(key: str, value: str) -> str:
         return ""
     if key == "tabla_celdas":
         return raw.strip()
+    if key == "pago_detalle":
+        return raw.strip()
+    if key == "replica_pdf_layout":
+        return raw.strip()
+    if key == "replica_pdf_texto":
+        lines = [line.rstrip() for line in raw.replace("\r\n", "\n").split("\n")]
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        while lines and not lines[-1].strip():
+            lines.pop()
+        return "\n".join(lines).strip()
     if key in FIELD_VALUE_NORMALIZERS:
         return _normalize_value_for_key(key, raw)
     if key in {"curp", "rfc", "clave_elector", "id_cif"}:
@@ -2573,6 +3728,54 @@ def _is_valid_table_cells_payload(value: str) -> bool:
             non_empty_rows += 1
 
     return non_empty_rows >= 2
+
+
+def _is_valid_replica_layout_payload(value: str) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    try:
+        payload = json.loads(text)
+    except Exception:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    pages = payload.get("pages")
+    if not isinstance(pages, list) or not pages:
+        return False
+    line_count = 0
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        lines = page.get("lines")
+        if not isinstance(lines, list):
+            continue
+        for line in lines:
+            if not isinstance(line, dict):
+                continue
+            if str(line.get("text", "")).strip():
+                line_count += 1
+    return line_count >= 2
+
+
+def _is_valid_payment_detail_payload(value: str) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    try:
+        payload = json.loads(text)
+    except Exception:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    metadata = payload.get("metadata")
+    table = payload.get("table")
+    has_metadata = isinstance(metadata, dict) and any(str(v or "").strip() for v in metadata.values())
+    has_rows = False
+    if isinstance(table, dict):
+        rows = table.get("rows")
+        has_rows = isinstance(rows, list) and any(isinstance(item, dict) and item for item in rows)
+    return has_metadata or has_rows
 
 
 def _looks_like_person_name(value: str) -> bool:
@@ -2673,9 +3876,13 @@ _ALLOWED_FIELDS_BY_TYPE: dict[str, set[str]] = {
         "fecha_corte",
         "periodo",
         "tabla_celdas",
+        "pago_detalle",
     },
     "FACTURA": {
         "tabla_celdas",
+        "pago_detalle",
+        "replica_pdf_layout",
+        "replica_pdf_texto",
     },
     "CONSTANCIA_SITUACION_FISCAL": {
         "rfc",
@@ -2703,6 +3910,12 @@ def _is_valid_by_contract(document_type: str, key: str, value: str) -> bool:
 
     if key == "tabla_celdas":
         return _is_valid_table_cells_payload(text)
+    if key == "pago_detalle":
+        return _is_valid_payment_detail_payload(text)
+    if key == "replica_pdf_layout":
+        return _is_valid_replica_layout_payload(text)
+    if key == "replica_pdf_texto":
+        return len(text) >= 80
 
     if key == "curp":
         return bool(CURP_PATTERN.fullmatch(_normalize_alnum(upper)))
@@ -3090,13 +4303,17 @@ def _extract_acta_folio_numero_from_text(full_text: str) -> tuple[str | None, st
     if table_match:
         first_value = _normalize_value_for_key("folio", table_match.group(1))
         middle_value = _normalize_value_for_key("numero_acta", table_match.group(2))
-        last_value = _normalize_value_for_key("numero_acta", table_match.group(3))
+        last_value = _normalize_value_for_key("folio", table_match.group(3))
 
-        if first_value and last_value:
-            return (first_value, last_value)
+        # In compact table rows the first number is usually "LIBRO",
+        # then "NUMERO DE ACTA", and the last one maps better to "FOLIO".
+        if middle_value and last_value:
+            return (last_value, middle_value)
 
         fallback_folio = _normalize_value_for_key("folio", table_match.group(3))
-        fallback_numero = middle_value or last_value
+        fallback_numero = middle_value or _normalize_value_for_key("numero_acta", table_match.group(3))
+        if not fallback_folio and first_value and middle_value:
+            fallback_folio = first_value
         return (fallback_folio or None, fallback_numero or None)
 
     numero_acta = None
@@ -3459,6 +4676,41 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                     confidence=0.92,
                 )
             )
+        payment_detail = _extract_payment_detail_payload(base_text_raw, payment_table)
+        if payment_detail:
+            fields.append(
+                _make_field(
+                    "pago_detalle",
+                    "Pago detalle",
+                    json.dumps(payment_detail, ensure_ascii=False),
+                    ocr_boxes,
+                    confidence=0.9,
+                )
+            )
+        if document_type == "FACTURA":
+            replica_layout = _build_replica_layout_payload(ocr_boxes, raw_text or base_text_raw)
+            if replica_layout:
+                fields.append(
+                    _make_field(
+                        "replica_pdf_layout",
+                        "Replica PDF layout",
+                        json.dumps(replica_layout, ensure_ascii=False),
+                        ocr_boxes,
+                        confidence=1.0,
+                    )
+                )
+        if document_type == "FACTURA" and raw_text:
+            replica_text = raw_text.replace("\r\n", "\n").strip()
+            if len(replica_text) >= 80 and "\n" in replica_text:
+                fields.append(
+                    _make_field(
+                        "replica_pdf_texto",
+                        "Replica PDF texto",
+                        replica_text,
+                        ocr_boxes,
+                        confidence=1.0,
+                    )
+                )
 
     if document_type in {"ACTA_NACIMIENTO", "INE"}:
         if document_type == "ACTA_NACIMIENTO" and ocr_boxes:
@@ -4483,3 +5735,4 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
     cleaned = _postprocess_fields(document_type, fields)
     contracted = _apply_field_contracts(document_type, cleaned)
     return _dedupe_fields(contracted)
+

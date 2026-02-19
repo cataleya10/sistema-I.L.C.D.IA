@@ -381,7 +381,12 @@ async def process_document(file, document_id: str, source: str, options: str | N
             options_data = {}
     forced_doc_type = _resolve_forced_document_type(options_data)
 
-    images, extracted_text = await preprocess(file)
+    preprocess_result = await preprocess(file)
+    text_layer_boxes: list[dict] = []
+    if isinstance(preprocess_result, tuple) and len(preprocess_result) >= 3:
+        images, extracted_text, text_layer_boxes = preprocess_result
+    else:
+        images, extracted_text = preprocess_result
     ocr_text = ""
     ocr_boxes = []
     ocr_engine = "none"
@@ -403,7 +408,7 @@ async def process_document(file, document_id: str, source: str, options: str | N
             candidate_fields = await extract_fields(
                 fast_type,
                 extracted_text,
-                None,
+                text_layer_boxes,
                 extracted_text,
                 file.filename,
             )
@@ -445,7 +450,8 @@ async def process_document(file, document_id: str, source: str, options: str | N
             doc_type_warning = None
         if (ocr_text or extracted_text) and doc_type != "UNKNOWN":
             doc_confidence = max(doc_confidence, 0.85)
-        fields = await extract_fields(doc_type, ocr_text, ocr_boxes, extracted_text, file.filename)
+        extraction_boxes = ocr_boxes if ocr_boxes else text_layer_boxes
+        fields = await extract_fields(doc_type, ocr_text, extraction_boxes, extracted_text, file.filename)
         fields = await validate_fields(fields)
         fields = _normalize_fields(doc_type, fields)
         fields = _postprocess_fields(doc_type, fields)
@@ -545,7 +551,7 @@ async def process_document(file, document_id: str, source: str, options: str | N
             processing_ms=processing_ms,
         ),
         ocr_text=ocr_text if include_ocr_text else None,
-        ocr_boxes=ocr_boxes if include_boxes else None,
+        ocr_boxes=(ocr_boxes if ocr_boxes else text_layer_boxes) if include_boxes else None,
     )
 
     return response
