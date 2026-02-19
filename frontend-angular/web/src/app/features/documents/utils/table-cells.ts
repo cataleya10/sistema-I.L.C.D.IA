@@ -226,6 +226,10 @@ export interface ExcelXmlOptions {
   reportMode?: boolean;
 }
 
+export function flattenTableView(tableView: TableViewModel): string[][] {
+  return [...tableView.headerRows, ...tableView.bodyRows];
+}
+
 function columnWidths(rows: string[][], reportMode: boolean): number[] {
   const maxCols = rows.reduce((max, row) => Math.max(max, row.length), 0);
   const widths = new Array(maxCols).fill(reportMode ? 90 : 120);
@@ -307,6 +311,35 @@ export function buildExcelXml(rows: string[][], options: ExcelXmlOptions = {}): 
   ].join('');
 }
 
+export interface CsvBuildOptions {
+  delimiter?: string;
+  includeUtf8Bom?: boolean;
+}
+
+export function buildCsv(rows: string[][], options: CsvBuildOptions = {}): string {
+  const delimiter = options.delimiter ?? ',';
+  const content = rows
+    .map((row) => row.map((cell) => escapeCsvCell(cell, delimiter)).join(delimiter))
+    .join('\n');
+  if (options.includeUtf8Bom === false) {
+    return content;
+  }
+  return `\uFEFF${content}`;
+}
+
+function escapeCsvCell(value: string, delimiter: string): string {
+  const normalized = String(value ?? '');
+  const escapeRegex = new RegExp(`[\"\\n\\r${escapeRegexToken(delimiter)}]`);
+  if (escapeRegex.test(normalized)) {
+    return `"${normalized.replace(/"/g, '""')}"`;
+  }
+  return normalized;
+}
+
+function escapeRegexToken(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function escapeHtml(value: string): string {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -316,13 +349,22 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
-export function buildReportHtmlDocument(title: string, rows: string[][]): string {
-  const header = rows[0] ?? [];
-  const body = rows.slice(1);
-  const colCount = Math.max(1, header.length || (body[0]?.length ?? 1));
+export function buildReportHtmlDocument(title: string, tableView: TableViewModel): string {
+  const header = tableView.headerRows ?? [];
+  const body = tableView.bodyRows ?? [];
+  const firstHeader = header[0] ?? [];
+  const firstBody = body[0] ?? [];
+  const colCount = Math.max(
+    1,
+    firstHeader.length || firstBody.length,
+    ...header.map((row) => row.length),
+    ...body.map((row) => row.length)
+  );
 
   const thead = header.length
-    ? `<thead><tr>${header.map((cell) => `<th>${escapeHtml(cell)}</th>`).join('')}</tr></thead>`
+    ? `<thead>${header
+        .map((row) => `<tr>${row.map((cell) => `<th>${escapeHtml(cell)}</th>`).join('')}</tr>`)
+        .join('')}</thead>`
     : '';
   const tbody = body.length
     ? `<tbody>${body

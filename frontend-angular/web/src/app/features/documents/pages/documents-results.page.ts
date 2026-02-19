@@ -8,7 +8,9 @@ import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
 import {
   TableLayoutMode,
   TableViewModel,
+  buildCsv,
   buildExcelXml,
+  flattenTableView,
   buildReportHtmlDocument,
   buildTableView,
   detectTableLayoutMode,
@@ -976,8 +978,8 @@ export class DocumentsResultsPage implements OnInit {
       .replace(/\.[^/.]+$/, '')
       .trim();
     const filename = baseName ? `${baseName}-tabla.csv` : 'documento-tabla.csv';
-    const csvRows = [...this.tableView.headerRows, ...this.tableView.bodyRows];
-    const csvContent = this.buildCsv(csvRows);
+    const csvRows = flattenTableView(this.tableView);
+    const csvContent = buildCsv(csvRows);
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = window.URL.createObjectURL(blob);
     const anchor = document.createElement('a');
@@ -995,7 +997,7 @@ export class DocumentsResultsPage implements OnInit {
       .replace(/\.[^/.]+$/, '')
       .trim();
     const filename = baseName ? `${baseName}-tabla.xls` : 'documento-tabla.xls';
-    const rows = [...this.tableView.headerRows, ...this.tableView.bodyRows];
+    const rows = flattenTableView(this.tableView);
     const xml = buildExcelXml(rows, { reportMode: this.tableRenderMode === 'report' });
     const blob = new Blob([xml], { type: 'application/vnd.ms-excel;charset=utf-8;' });
     const url = window.URL.createObjectURL(blob);
@@ -1010,9 +1012,8 @@ export class DocumentsResultsPage implements OnInit {
     if (!this.document || this.tableView.bodyRows.length === 0) {
       return;
     }
-    const rows = [...this.tableView.headerRows, ...this.tableView.bodyRows];
     const title = `Reporte de tabla - ${this.document.original_filename || 'documento'}`;
-    const html = buildReportHtmlDocument(title, rows);
+    const html = buildReportHtmlDocument(title, this.tableView);
     const reportWindow = window.open('', '_blank', 'noopener,noreferrer,width=1200,height=900');
     if (!reportWindow) {
       return;
@@ -1099,21 +1100,7 @@ export class DocumentsResultsPage implements OnInit {
   }
 
   tableRenderModeLabel(): string {
-    return this.tableRenderMode === 'report' ? 'Vista cuadricula' : 'Vista reporte';
-  }
-
-  private buildCsv(rows: string[][]): string {
-    return rows
-      .map((row) => row.map((cell) => this.escapeCsvCell(cell)).join(','))
-      .join('\n');
-  }
-
-  private escapeCsvCell(value: string): string {
-    const normalized = String(value ?? '');
-    if (/[",\n\r]/.test(normalized)) {
-      return `"${normalized.replace(/"/g, '""')}"`;
-    }
-    return normalized;
+    return this.tableRenderMode === 'report' ? 'Vista cuadrícula' : 'Vista reporte';
   }
 
   private currentPresetTuning(preset: ReplicaPreset): ReplicaPresetTuning {
