@@ -398,3 +398,168 @@ export function buildReportHtmlDocument(title: string, tableView: TableViewModel
     '</html>'
   ].join('');
 }
+
+function escapePdfText(value: string): string {
+  return String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)')
+    .replace(/\r\n/g, ' ')
+    .replace(/[\r\n\t]+/g, ' ')
+    .trim();
+}
+
+function truncatePdfCell(value: string, width: number): string {
+  const normalized = String(value ?? '').replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return '';
+  }
+  const maxChars = Math.max(4, Math.floor(width / 5.3));
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(1, maxChars - 1))}…`;
+}
+
+function formatPdfDate(): string {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mi = String(now.getMinutes()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+}
+
+function toPdfDocumentBytes(objects: string[]): Uint8Array {
+  let body = '%PDF-1.4\n';
+  const offsets: number[] = [0];
+  for (let index = 0; index < objects.length; index += 1) {
+    offsets.push(body.length);
+    body += `${index + 1} 0 obj\n${objects[index]}\nendobj\n`;
+  }
+
+  const xrefOffset = body.length;
+  body += `xref\n0 ${objects.length + 1}\n`;
+  body += '0000000000 65535 f \n';
+  for (let index = 1; index <= objects.length; index += 1) {
+    body += `${String(offsets[index]).padStart(10, '0')} 00000 n \n`;
+  }
+  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+
+  return new TextEncoder().encode(body);
+}
+
+export function buildTablePdfBytes(title: string, tableView: TableViewModel): Uint8Array {
+  const rows = flattenTableView(tableView);
+  const headerCount = tableView.headerRows.length;
+  const colCount = Math.max(1, ...rows.map((row) => row.length), 1);
+  const normalizedRows = rows.map((row) => {
+    if (row.length >= colCount) {
+      return row;
+    }
+    return [...row, ...new Array(colCount - row.length).fill('')];
+  });
+
+  const pageWidth = 842;
+  const pageHeight = 595;
+  const marginLeft = 28;
+  const marginTop = 32;
+  const marginBottom = 28;
+  const titleHeight = 20;
+  const metaHeight = 14;
+  const tableTop = pageHeight - marginTop - titleHeight - metaHeight;
+  const rowHeight = 18;
+  const tableWidth = pageWidth - marginLeft * 2;
+  const colWidth = tableWidth / colCount;
+  const maxRowsPerPage = Math.max(1, Math.floor((tableTop - marginBottom) / rowHeight));
+  const pages: string[] = [];
+  const headerRows = tableView.headerRows.length ? tableView.headerRows : normalizedRows.slice(0, 1);
+  const bodyRows = tableView.headerRows.length ? tableView.bodyRows : normalizedRows.slice(1);
+
+  for (let pageIndex = 0; ; pageIndex += 1) {
+    const start = pageIndex * maxRowsPerPage;
+    const chunk = bodyRows.slice(start, start + maxRowsPerPage);
+    if (pageIndex > 0 && chunk.length === 0) {
+      break;
+    }
+    const pageRows = pageIndex === 0 ? normalizedRows.slice(0, maxRowsPerPage) : [...headerRows, ...chunk];
+    if (!pageRows.length) {
+      break;
+    }
+
+    const commands: string[] = [];
+    commands.push('BT /F1 13 Tf 28 560 Td');
+    commands.push(`(${escapePdfText(title)}) Tj`);
+    commands.push('ET');
+    commands.push('BT /F1 9 Tf 28 544 Td');
+    commands.push(`(Generado: ${escapePdfText(formatPdfDate())}) Tj`);
+    commands.push('ET');
+
+    const tableRowsOnPage = pageRows.length;
+    const tableBottom = tableTop - tableRowsOnPage * rowHeight;
+
+    commands.push('0.80 0.84 0.90 rg');
+    const drawHeaderCount = Math.min(headerRows.length || 1, tableRowsOnPage);
+    for (let headerRowIndex = 0; headerRowIndex < drawHeaderCount; headerRowIndex += 1) {
+      const y = tableTop - (headerRowIndex + 1) * rowHeight;
+      commands.push(`${marginLeft} ${y} ${tableWidth} ${rowHeight} re f`);
+    }
+    commands.push('0 g');
+
+    for (let rowLine = 0; rowLine <= tableRowsOnPage; rowLine += 1) {
+      const y = tableTop - rowLine * rowHeight;
+      commands.push(`${marginLeft} ${y} m ${marginLeft + tableWidth} ${y} l S`);
+    }
+    for (let colLine = 0; colLine <= colCount; colLine += 1) {
+      const x = marginLeft + colLine * colWidth;
+      commands.push(`${x} ${tableTop} m ${x} ${tableBottom} l S`);
+    }
+
+    for (let rowIndex = 0; rowIndex < tableRowsOnPage; rowIndex += 1) {
+      const row = pageRows[rowIndex];
+      const textY = tableTop - rowIndex * rowHeight - 12;
+      for (let colIndex = 0; colIndex < colCount; colIndex += 1) {
+        const raw = truncatePdfCell(String(row[colIndex] ?? ''), colWidth - 6);
+        if (!raw) {
+          continue;
+        }
+        const textX = marginLeft + colIndex * colWidth + 3;
+        commands.push(`BT /F1 8 Tf ${textX.toFixed(2)} ${textY.toFixed(2)} Td (${escapePdfText(raw)}) Tj ET`);
+      }
+    }
+
+    const stream = commands.join('\n');
+    pages.push(stream);
+    if (chunk.length < maxRowsPerPage) {
+      break;
+    }
+  }
+
+  const objects: string[] = [];
+  objects.push('<< /Type /Catalog /Pages 2 0 R >>');
+
+  const pageObjectRefs: number[] = [];
+  let nextObjectId = 3;
+  const fontObjectId = 3 + pages.length * 2;
+  for (let index = 0; index < pages.length; index += 1) {
+    const pageObjectId = nextObjectId;
+    const contentObjectId = nextObjectId + 1;
+    pageObjectRefs.push(pageObjectId);
+    objects.push(
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 ${fontObjectId} 0 R >> >> /Contents ${contentObjectId} 0 R >>`
+    );
+    const stream = pages[index];
+    objects.push(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
+    nextObjectId += 2;
+  }
+
+  objects.splice(
+    1,
+    0,
+    `<< /Type /Pages /Kids [${pageObjectRefs.map((id) => `${id} 0 R`).join(' ')}] /Count ${pageObjectRefs.length} >>`
+  );
+  objects.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+
+  return toPdfDocumentBytes(objects);
+}

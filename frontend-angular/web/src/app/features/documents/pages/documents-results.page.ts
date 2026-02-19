@@ -8,10 +8,10 @@ import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
 import {
   TableLayoutMode,
   TableViewModel,
+  buildTablePdfBytes,
   buildCsv,
   buildExcelXml,
   flattenTableView,
-  buildReportHtmlDocument,
   buildTableView,
   detectTableLayoutMode,
   isTableCellsField,
@@ -1012,15 +1012,21 @@ export class DocumentsResultsPage implements OnInit {
     if (!this.document || this.tableView.bodyRows.length === 0) {
       return;
     }
+    const baseName = (this.document.original_filename || 'documento')
+      .replace(/\.[^/.]+$/, '')
+      .trim();
+    const filename = baseName ? `${baseName}-tabla.pdf` : 'documento-tabla.pdf';
     const title = `Reporte de tabla - ${this.document.original_filename || 'documento'}`;
-    const html = buildReportHtmlDocument(title, this.tableView);
-    const reportWindow = window.open('', '_blank', 'noopener,noreferrer,width=1200,height=900');
-    if (!reportWindow) {
-      return;
-    }
-    reportWindow.document.open();
-    reportWindow.document.write(html);
-    reportWindow.document.close();
+    const bytes = buildTablePdfBytes(title, this.tableView);
+    const buffer = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(buffer).set(bytes);
+    const blob = new Blob([buffer], { type: 'application/pdf' });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    window.URL.revokeObjectURL(url);
   }
 
   downloadExtractionSnapshot(): void {
@@ -1071,17 +1077,7 @@ export class DocumentsResultsPage implements OnInit {
       replicaText,
       paymentDetail,
     });
-    const printWindow = window.open('', '_blank', 'noopener,noreferrer,width=1200,height=900');
-    if (!printWindow) {
-      return;
-    }
-    printWindow.document.open();
-    printWindow.document.write(html);
-    printWindow.document.close();
-    setTimeout(() => {
-      printWindow.focus();
-      printWindow.print();
-    }, 180);
+    this.openPrintableHtml(html);
   }
 
   toggleTableRenderMode(): void {
@@ -1177,5 +1173,17 @@ export class DocumentsResultsPage implements OnInit {
       };
     });
     return output;
+  }
+
+  private openPrintableHtml(html: string): void {
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const targetWindow = window.open(url, '_blank');
+    if (!targetWindow) {
+      return;
+    }
+    setTimeout(() => {
+      window.URL.revokeObjectURL(url);
+    }, 10000);
   }
 }
