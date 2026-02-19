@@ -33,3 +33,4 @@ backend-dotnet/tests/**/.dotnet-cli-home/
 backend-dotnet/tests/**/.nuget-packages/
 ai-engine-python/app/models/online_training_dataset.jsonl
 ai-engine-python/app/models/online_training_stats.json
+ai-engine-python/artifacts/
