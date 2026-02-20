@@ -7,7 +7,7 @@ from app.services import document_processor as dp
 
 
 def _field(key: str, value: str, valid: bool = True, confidence: float = 0.95) -> dict:
-    return {
+     return {
         "key": key,
         "label": key,
         "value": value,
