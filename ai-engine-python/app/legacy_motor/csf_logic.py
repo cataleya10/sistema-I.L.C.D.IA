@@ -4,7 +4,7 @@ from typing import Any
 
 
 class ProcesadorCSF:
-    def __init__(self, ocr_results):
+    def __init__(self, ocr_results: Any) -> None:
         self.bloques: list[dict[str, Any]] = []
         if ocr_results and ocr_results[0]:
             for linea in ocr_results[0]:
@@ -40,7 +40,7 @@ class ProcesadorCSF:
             "regimen_fiscal": None,
         }
 
-        self.stop_words = [
+        self.stop_words: list[str] = [
             "NOMBRE",
             "APELLIDO",
             "RFC",
@@ -71,7 +71,7 @@ class ProcesadorCSF:
             "EMISION",
         ]
 
-    def ejecutar(self):
+    def ejecutar(self) -> dict[str, str | None]:
         self._buscar_rfc()
         self._buscar_curp()
 
@@ -86,21 +86,21 @@ class ProcesadorCSF:
 
         return self.datos
 
-    def _buscar_rfc(self):
+    def _buscar_rfc(self) -> None:
         texto_unido = " ".join([b["texto_upper"] for b in self.bloques])
         match = re.search(r"[A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{3}", texto_unido)
         if match:
             self.datos["rfc"] = match.group(0)
 
-    def _buscar_curp(self):
+    def _buscar_curp(self) -> None:
         texto_unido = " ".join([b["texto_upper"] for b in self.bloques])
         match = re.search(r"[A-Z]{4}\d{6}[HM][A-Z]{2,5}[A-Z0-9]{2}", texto_unido)
         if match:
             self.datos["curp"] = match.group(0)
 
-    def _buscar_nombre_en_cif(self):
-        techo = None
-        suelo = None
+    def _buscar_nombre_en_cif(self) -> None:
+        techo: dict[str, Any] | None = None
+        suelo: dict[str, Any] | None = None
 
         for b in self.bloques:
             if "REGISTRO" in b["texto_upper"] and "FEDERAL" in b["texto_upper"]:
@@ -130,7 +130,7 @@ class ProcesadorCSF:
             if partes:
                 self.datos["nombre_completo"] = " ".join(partes)
 
-    def _reconstruir_nombre_tabla(self):
+    def _reconstruir_nombre_tabla(self) -> None:
         nombres = self._buscar_valor_tabla(["NOMBRE (S)", "NOMBRE"])
         apellido1 = self._buscar_valor_tabla(["PRIMER APELLIDO"])
         apellido2 = self._buscar_valor_tabla(["SEGUNDO APELLIDO"])
@@ -138,7 +138,7 @@ class ProcesadorCSF:
         if partes:
             self.datos["nombre_completo"] = " ".join(partes)
 
-    def _buscar_cp(self):
+    def _buscar_cp(self) -> None:
         texto_unido = " ".join([b["texto_upper"] for b in self.bloques])
         match = re.search(r"(?:CP|CODIGO|POSTAL)[\s\.:]*(\d{5})", texto_unido)
         if match:
@@ -151,7 +151,7 @@ class ProcesadorCSF:
             self.datos["codigo_postal"] = m
             break
 
-    def _buscar_fecha_emision(self):
+    def _buscar_fecha_emision(self) -> None:
         texto_unido = " ".join([b["texto_upper"] for b in self.bloques])
 
         match = re.search(r"A\s*(\d{1,2})\s*[DE]*\s*([A-Z]+)\s*[DE]*\s*(\d{4})", texto_unido)
@@ -164,13 +164,13 @@ class ProcesadorCSF:
             if match_normal:
                 self.datos["fecha_emision"] = match_normal.group(1)
 
-    def _buscar_id_cif(self):
+    def _buscar_id_cif(self) -> None:
         texto_unido = " ".join([b["texto"] for b in self.bloques])
         match = re.search(r"idCIF\s*[:\.]?\s*(\d+)", texto_unido, re.IGNORECASE)
         if match:
             self.datos["id_cif"] = match.group(1)
 
-    def _buscar_regimen(self):
+    def _buscar_regimen(self) -> None:
         # Prefer table-like extraction first, then fallback to regex over full text.
         regimen = self._buscar_valor_tabla(["REGIMEN FISCAL", "REGIMEN", "OBLIGACIONES FISCALES"])
         if not regimen:
@@ -207,17 +207,17 @@ class ProcesadorCSF:
         if regimen_limpio and not self._es_stop_word(regimen_limpio):
             self.datos["regimen_fiscal"] = regimen_limpio
 
-    def _es_stop_word(self, texto):
+    def _es_stop_word(self, texto: str) -> bool:
         for sw in self.stop_words:
             if fuzz.partial_ratio(sw, texto) > 90:
                 return True
         return False
 
-    def _buscar_valor_tabla(self, etiquetas):
+    def _buscar_valor_tabla(self, etiquetas: str | list[str]) -> str | None:
         if isinstance(etiquetas, str):
             etiquetas = [etiquetas]
 
-        etiqueta_bloque = None
+        etiqueta_bloque: dict[str, Any] | None = None
         mejor_score = 0
         for etiqueta in etiquetas:
             candidato = self._encontrar_etiqueta_fuzzy(etiqueta)
@@ -265,12 +265,12 @@ class ProcesadorCSF:
         valor = re.sub(r"\s+", " ", valor).strip(" .,:;-")
         return valor or None
 
-    def _encontrar_etiqueta_fuzzy(self, keyword):
+    def _encontrar_etiqueta_fuzzy(self, keyword: str) -> dict[str, Any] | None:
         keyword_u = str(keyword or "").upper().strip()
         if not keyword_u:
             return None
 
-        mejor_bloque = None
+        mejor_bloque: dict[str, Any] | None = None
         mejor_score = 0
         for bloque in self.bloques:
             texto = bloque["texto_upper"]
@@ -282,6 +282,6 @@ class ProcesadorCSF:
         return mejor_bloque if mejor_score >= 80 else None
 
 
-def extraer_datos_csf(ocr_results):
+def extraer_datos_csf(ocr_results: Any) -> dict[str, str | None]:
     procesador = ProcesadorCSF(ocr_results)
     return procesador.ejecutar()

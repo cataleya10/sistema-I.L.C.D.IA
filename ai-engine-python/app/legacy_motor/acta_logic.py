@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 class ProcesadorActa:
-    def __init__(self, ocr_results):
+    def __init__(self, ocr_results: Any) -> None:
         self.bloques: list[dict[str, Any]] = []
         if ocr_results and ocr_results[0]:
             for linea in ocr_results[0]:
@@ -45,7 +45,7 @@ class ProcesadorActa:
             "curp_detectada": None,
         }
 
-    def ejecutar(self):
+    def ejecutar(self) -> dict[str, str | None]:
         self._buscar_relativo(["ENTIDAD DE REGISTRO", "ENTIDAD DE REGISTRE"], "entidad_registro", direccion="abajo")
         self._buscar_relativo(["MUNICIPIO DE REGISTRO", "MUNICIPIO"], "municipio_registro", direccion="abajo")
 
@@ -61,11 +61,16 @@ class ProcesadorActa:
 
         return self.datos
 
-    def _buscar_relativo(self, etiquetas_posibles, clave_json, direccion="abajo"):
+    def _buscar_relativo(
+        self,
+        etiquetas_posibles: str | list[str],
+        clave_json: str,
+        direccion: str = "abajo",
+    ) -> None:
         if isinstance(etiquetas_posibles, str):
             etiquetas_posibles = [etiquetas_posibles]
 
-        etiqueta_bloque = None
+        etiqueta_bloque: dict[str, Any] | None = None
         mejor_score = 0
 
         for bloque in self.bloques:
@@ -78,8 +83,8 @@ class ProcesadorActa:
         if not etiqueta_bloque:
             return
 
-        candidatos = []
-        stop_words = [
+        candidatos: list[tuple[float, str]] = []
+        stop_words: list[str] = [
             "NOMBRE",
             "APELLIDO",
             "FECHA",
@@ -137,19 +142,19 @@ class ProcesadorActa:
         if candidatos:
             self.datos[clave_json] = candidatos[0][1]
 
-    def _buscar_sexo_contextual(self):
+    def _buscar_sexo_contextual(self) -> None:
         for bloque in self.bloques:
             if bloque["texto"] in ["HOMBRE", "MUJER", "MASCULINO", "FEMENINO"]:
                 self.datos["sexo"] = bloque["texto_original"]
                 return
 
-    def _buscar_fecha_nacimiento(self):
+    def _buscar_fecha_nacimiento(self) -> None:
         texto_completo = " ".join([b["texto"] for b in self.bloques])
         match = re.search(r"(\d{2}/\d{2}/\d{4})", texto_completo)
         if match:
             self.datos["fecha_nacimiento"] = match.group(1)
 
-    def _buscar_globales(self):
+    def _buscar_globales(self) -> None:
         texto_completo = " ".join([b["texto"] for b in self.bloques])
 
         match_anio = re.search(r"DE\s+(20\d{2}|19\d{2})", texto_completo)
@@ -160,7 +165,7 @@ class ProcesadorActa:
         if match_curp:
             self.datos["curp_detectada"] = match_curp.group(0)
 
-    def _procesar_curp(self):
+    def _procesar_curp(self) -> None:
         curp = self.datos["curp_detectada"]
         if not curp:
             return
@@ -217,6 +222,6 @@ class ProcesadorActa:
                 self.datos["entidad_registro"] = mapa_entidades[clave]
 
 
-def extraer_datos_acta(ocr_results):
+def extraer_datos_acta(ocr_results: Any) -> dict[str, str | None]:
     procesador = ProcesadorActa(ocr_results)
     return procesador.ejecutar()

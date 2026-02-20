@@ -2,8 +2,29 @@ from fastapi import UploadFile
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 import io
 import fitz
-from typing import Any
+from typing import Any, cast
 from app.core.config import settings
+
+_IMAGE_MODULE = cast(Any, Image)
+_RESAMPLING = getattr(_IMAGE_MODULE, "Resampling", _IMAGE_MODULE)
+_LANCZOS = getattr(_RESAMPLING, "LANCZOS", getattr(_IMAGE_MODULE, "LANCZOS", 1))
+
+
+def _word_payload(raw_word: Any) -> tuple[float, float, float, float, str] | None:
+    if not isinstance(raw_word, (list, tuple)) or len(raw_word) < 5:
+        return None
+    x0, y0, x1, y1, text = raw_word[:5]
+    try:
+        x0_val = float(x0)
+        y0_val = float(y0)
+        x1_val = float(x1)
+        y1_val = float(y1)
+    except (TypeError, ValueError):
+        return None
+    text_val = str(text or "").strip()
+    if not text_val:
+        return None
+    return x0_val, y0_val, x1_val, y1_val, text_val
 
 
 def _has_sufficient_text_layer(text: str) -> bool:
@@ -22,26 +43,24 @@ def _has_sufficient_text_layer(text: str) -> bool:
 async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dict[str, Any]]]:
     content = await file.read()
     filename = str(file.filename or "")
+    content_type = str(file.content_type or "")
 
-    if file.content_type == "application/pdf" or filename.lower().endswith(".pdf"):
+    if content_type == "application/pdf" or filename.lower().endswith(".pdf"):
         extracted_parts: list[str] = []
         text_layer_boxes: list[dict[str, Any]] = []
-        with fitz.open(stream=content, filetype="pdf") as doc:
+        with fitz.open(stream=content, filetype="pdf") as doc:  # type: ignore[attr-defined]
             max_pages = min(len(doc), settings.max_pages)
             for index in range(max_pages):
                 page = doc.load_page(index)
-                extracted_parts.append(page.get_text("text") or "")
-                words = page.get_text("words")
+                extracted_parts.append(str(page.get_text("text") or ""))
+                words: Any = page.get_text("words")
                 if not isinstance(words, list):
                     continue
                 for raw_word in words:
-                    if not isinstance(raw_word, (list, tuple)) or len(raw_word) < 5:
+                    payload = _word_payload(raw_word)
+                    if payload is None:
                         continue
-                    word = list(raw_word[:5])
-                    x0, y0, x1, y1, text = word
-                    text_str = str(text or "").strip()
-                    if not text_str:
-                        continue
+                    x0, y0, x1, y1, text_str = payload
                     text_layer_boxes.append(
                         {
                             "text": text_str,
@@ -56,7 +75,7 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
             return [], extracted_text, text_layer_boxes
 
         images: list[Image.Image] = []
-        with fitz.open(stream=content, filetype="pdf") as doc:
+        with fitz.open(stream=content, filetype="pdf") as doc:  # type: ignore[attr-defined]
             max_pages = min(len(doc), settings.max_pages)
             for index in range(max_pages):
                 page = doc.load_page(index)
@@ -72,8 +91,9 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
 
     image = Image.open(io.BytesIO(content)).convert("RGB")
     if image.width < 1200:
-        scale = 1200 / image.width
-        image = image.resize((int(image.width * scale), int(image.height * scale)), Image.Resampling.LANCZOS)
+        width = max(image.width, 1)
+        scale = 1200 / width
+        image = image.resize((int(image.width * scale), int(image.height * scale)), _LANCZOS)
     image = ImageOps.autocontrast(image)
     image = ImageEnhance.Contrast(image.convert("L")).enhance(1.8)
     image = ImageEnhance.Sharpness(image).enhance(2.0)

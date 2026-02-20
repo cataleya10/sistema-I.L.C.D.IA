@@ -6,7 +6,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def _to_legacy_ocr_results(ocr_boxes: list[dict] | None) -> list[list[list[Any]]]:
+def _to_legacy_ocr_results(ocr_boxes: list[dict[str, Any]] | None) -> list[list[list[Any]]]:
     pages: dict[int, list[list[Any]]] = {}
     for box in ocr_boxes or []:
         page = int(box.get("page", 1) or 1)
@@ -17,11 +17,11 @@ def _to_legacy_ocr_results(ocr_boxes: list[dict] | None) -> list[list[list[Any]]
     return [pages[p] for p in sorted(pages.keys())]
 
 
-def _lines_from_boxes(ocr_boxes: list[dict] | None) -> list[str]:
+def _lines_from_boxes(ocr_boxes: list[dict[str, Any]] | None) -> list[str]:
     return [str(box.get("text", "")).strip() for box in ocr_boxes or [] if str(box.get("text", "")).strip()]
 
 
-def legacy_extract_fields(document_type: str, ocr_boxes: list[dict] | None) -> dict[str, Any]:
+def legacy_extract_fields(document_type: str, ocr_boxes: list[dict[str, Any]] | None) -> dict[str, Any]:
     if not ocr_boxes:
         return {}
 

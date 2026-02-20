@@ -1,12 +1,13 @@
 import re
+from typing import Any
 
 
-def extraer_datos_bancarios(result_ocr):
-    lineas = []
+def extraer_datos_bancarios(result_ocr: Any) -> dict[str, str | None]:
+    lineas: list[str] = []
     if result_ocr and result_ocr[0]:
         lineas = [line[1][0].strip() for line in result_ocr[0]]
 
-    datos = {
+    datos: dict[str, str | None] = {
         "banco_detectado": "GENERICO",
         "titular": None,
         "clabe": None,

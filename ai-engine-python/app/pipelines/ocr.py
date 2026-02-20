@@ -13,11 +13,13 @@ try:
 except Exception:  # pragma: no cover
     RapidOCR = None
 
+from typing import Any
+
 _ocr_instance = None
 _rapid_instance = None
 
 
-def _get_ocr():
+def _get_ocr() -> Any | None:
     global _ocr_instance
     if PaddleOCR is None:
         return None
@@ -29,7 +31,7 @@ def _get_ocr():
     return _ocr_instance
 
 
-def _get_rapid():
+def _get_rapid() -> Any | None:
     global _rapid_instance
     if RapidOCR is None:
         return None
@@ -41,7 +43,7 @@ def _get_rapid():
     return _rapid_instance
 
 
-async def run_ocr(images):
+async def run_ocr(images: Any) -> tuple[str, list[dict[str, Any]]]:
     ocr = _get_ocr()
     if np is None:
         return "", []
@@ -50,11 +52,11 @@ async def run_ocr(images):
         images = [images]
 
     texts: list[str] = []
-    boxes: list[dict] = []
+    boxes: list[dict[str, Any]] = []
 
     for page_index, image in enumerate(images, start=1):
         image_array = np.array(image)
-        result = []
+        result: list[Any] = []
         if ocr is not None:
             try:
                 result = ocr.ocr(image_array, cls=True)
@@ -69,15 +71,30 @@ async def run_ocr(images):
             except Exception:  # pragma: no cover
                 continue
             for item in rapid_result or []:
-                box, text, confidence = item
+                if not isinstance(item, (list, tuple)) or len(item) < 3:
+                    continue
+                box = item[0]
+                text = item[1]
+                confidence = item[2]
                 text_str = str(text)
                 texts.append(text_str.upper())
                 boxes.append({"text": text_str, "confidence": confidence, "bbox": box, "page": page_index})
             continue
 
         for line in result:
+            if not isinstance(line, (list, tuple)):
+                continue
             for item in line:
-                box, (text, confidence) = item
+                if not isinstance(item, (list, tuple)) or len(item) < 2:
+                    continue
+                box = item[0]
+                text_payload = item[1]
+                if not isinstance(text_payload, (list, tuple)) or len(text_payload) < 2:
+                    continue
+                text = str(text_payload[0] or "")
+                confidence = text_payload[1]
+                if not text:
+                    continue
                 texts.append(text.upper())
                 boxes.append({"text": text, "confidence": confidence, "bbox": box, "page": page_index})
 

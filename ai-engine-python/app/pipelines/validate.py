@@ -16,8 +16,12 @@ from app.utils.validators import (
     validate_vigencia,
     validate_rfc_homoclave,
 )
+from typing import Any, Callable
 
-VALIDATORS = {
+Field = dict[str, Any]
+Validator = Callable[[Any], tuple[bool, list[str]]]
+
+VALIDATORS: dict[str, Validator] = {
     "curp": validate_curp,
     "rfc": validate_rfc_homoclave,
     "nss": validate_nss,
@@ -37,18 +41,21 @@ VALIDATORS = {
 }
 
 
-async def validate_fields(fields):
+async def validate_fields(fields: list[Field]) -> list[Field]:
     for field in fields:
-        if field.get("value") is None:
+        value = field.get("value")
+        key = str(field.get("key", ""))
+        if value is None:
             continue
-        if field.get("key") in {"nss", "clabe", "cp", "seccion"}:
-            raw = str(field["value"]).upper()
+        if key in {"nss", "clabe", "cp", "seccion"}:
+            raw = str(value).upper()
             raw = raw.replace("O", "0").replace("I", "1").replace("L", "1")
             field["value"] = "".join(ch for ch in raw if ch.isdigit())
-        validator = VALIDATORS.get(field["key"])
-        if validator is None or field.get("value") is None:
+            value = field.get("value")
+        validator = VALIDATORS.get(key)
+        if validator is None or value is None:
             continue
-        is_valid, errors = validator(field["value"])
+        is_valid, errors = validator(value)
         field["valid"] = is_valid
         field["validation_errors"] = errors
     return fields
