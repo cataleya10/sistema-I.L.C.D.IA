@@ -190,8 +190,10 @@ if ($fe) {
 }
 
 Write-Host "Frontend URL: http://localhost:$frontendPort" -ForegroundColor Green
-if ($OpenDiagnostics -and $aiReady) { Start-Process "http://localhost:8000/docs" }
-if ($OpenDiagnostics -and $apiReady) { Start-Process "http://localhost:5000/swagger" }
+# Keep startup focused on the frontend tab only.
+if ($OpenDiagnostics) {
+    Write-Host "OpenDiagnostics fue deshabilitado: se abre solo el frontend." -ForegroundColor Yellow
+}
 if ($feReady) { Start-Process "http://localhost:$frontendPort" }
 
 if (-not $aiReady) { Write-Host "IA Engine no responde a tiempo." -ForegroundColor Yellow }
