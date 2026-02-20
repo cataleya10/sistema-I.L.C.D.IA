@@ -599,7 +599,7 @@ def _payment_table_column_anchors(header_boxes: list[dict]) -> list[dict]:
     if not header_boxes:
         return []
     sorted_boxes = sorted(header_boxes, key=lambda b: b["rect"][0])
-    anchors: list[dict] = []
+    anchors: list[list[dict]] = []
     cluster = [sorted_boxes[0]]
     for box in sorted_boxes[1:]:
         prev = cluster[-1]
@@ -1878,9 +1878,14 @@ def _extract_payment_detail_payload(base_text_raw: str, table_payload: dict | No
 
     metadata = _sanitize_payment_metadata(metadata)
 
-    rows = []
+    rows: list[list[str]] = []
     if isinstance(table_payload, dict):
-        rows = table_payload.get("rows") if isinstance(table_payload.get("rows"), list) else []
+        raw_rows = table_payload.get("rows")
+        if isinstance(raw_rows, list):
+            for raw_row in raw_rows:
+                if not isinstance(raw_row, list):
+                    continue
+                rows.append([str(cell or "") for cell in raw_row])
     row_objects = _payment_rows_to_objects(rows) if rows else []
     canonical_columns, canonical_rows = _payment_to_canonical_rows(bank, row_objects)
     summary_tables = _extract_scotia_summary_tables(text) if bank == "SCOTIABANK" else []
@@ -1969,7 +1974,12 @@ def _build_replica_layout_payload(ocr_boxes, raw_text: str) -> dict | None:
     }
 
 
-def _extract_label_value(lines, label, stop_labels=None, value_regex=None):
+def _extract_label_value(
+    lines: list[dict],
+    label: str,
+    stop_labels: list[str] | None = None,
+    value_regex: re.Pattern[str] | None = None,
+) -> str | None:
     line = _find_label_line(lines, label)
     if not line:
         return None
@@ -2080,7 +2090,7 @@ def _extract_acta_from_boxes(ocr_boxes):
     if juez:
         result["juez"] = {"value": juez}
 
-    def _clean_name_piece(value: str) -> str | None:
+    def _clean_name_piece(value: str | None) -> str | None:
         if not value:
             return None
         cleaned = re.sub(r"[^A-Z ]", " ", value.upper()).strip()

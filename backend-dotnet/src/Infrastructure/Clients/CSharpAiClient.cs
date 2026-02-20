@@ -550,12 +550,23 @@ public sealed class CSharpAiClient : IPythonAiClient
 
         foreach (var line in lines)
         {
+            // Prefer fixed-width OCR spacing, but tolerate normalized text that keeps single spaces.
             var cells = Regex
                 .Split(line.Trim(), @"\s{2,}")
                 .Select(cell => cell.Trim())
                 .Where(cell => !string.IsNullOrWhiteSpace(cell))
                 .Take(10)
                 .ToList();
+
+            if (cells.Count < 3)
+            {
+                cells = Regex
+                    .Split(line.Trim(), @"\s+")
+                    .Select(cell => cell.Trim())
+                    .Where(cell => !string.IsNullOrWhiteSpace(cell))
+                    .Take(10)
+                    .ToList();
+            }
 
             if (cells.Count < 3)
             {
