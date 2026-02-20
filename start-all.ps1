@@ -1,7 +1,7 @@
 param(
     [switch]$OpenDiagnostics,
     [ValidateSet("static", "dev")]
-    [string]$FrontendMode = "static",
+    [string]$FrontendMode = "dev",
     [int]$AiTimeoutSeconds = 30,
     [int]$ApiTimeoutSeconds = 30,
     [int]$FrontendTimeoutSeconds = 45

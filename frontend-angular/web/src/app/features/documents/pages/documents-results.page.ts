@@ -1042,7 +1042,7 @@ export class DocumentsResultsPage implements OnInit {
     const replicaText = findRaw('replica_pdf_texto');
     const paymentDetail = parsePaymentDetail(findRaw('pago_detalle'));
     const html = buildExtractionHtmlDocument({
-      title: `Extraccion - ${this.document.original_filename || 'documento'}`,
+      title: 'BMPI',
       tableView: this.tableView,
       replicaLayout,
       replicaText,
@@ -1071,7 +1071,7 @@ export class DocumentsResultsPage implements OnInit {
     const replicaText = findRaw('replica_pdf_texto');
     const paymentDetail = parsePaymentDetail(findRaw('pago_detalle'));
     const html = buildExtractionHtmlDocument({
-      title: `Extraccion - ${this.document.original_filename || 'documento'}`,
+      title: 'BMPI',
       tableView: this.tableView,
       replicaLayout,
       replicaText,
