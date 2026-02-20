@@ -1,10 +1,11 @@
 from app.legacy_motor.fuzzy import fuzz
 import re
+from typing import Any
 
 
 class ProcesadorCSF:
     def __init__(self, ocr_results):
-        self.bloques = []
+        self.bloques: list[dict[str, Any]] = []
         if ocr_results and ocr_results[0]:
             for linea in ocr_results[0]:
                 coords = linea[0]
@@ -29,7 +30,7 @@ class ProcesadorCSF:
                     }
                 )
 
-        self.datos = {
+        self.datos: dict[str, str | None] = {
             "rfc": None,
             "curp": None,
             "nombre_completo": None,
@@ -170,7 +171,41 @@ class ProcesadorCSF:
             self.datos["id_cif"] = match.group(1)
 
     def _buscar_regimen(self):
-        return None
+        # Prefer table-like extraction first, then fallback to regex over full text.
+        regimen = self._buscar_valor_tabla(["REGIMEN FISCAL", "REGIMEN", "OBLIGACIONES FISCALES"])
+        if not regimen:
+            texto_unido = " ".join([b["texto_upper"] for b in self.bloques])
+            match = re.search(
+                r"(?:REGIMEN(?:\s+FISCAL)?|OBLIGACIONES\s+FISCALES)\s*[:\-]?\s*([A-Z0-9 /,.-]{4,120})",
+                texto_unido,
+            )
+            if match:
+                regimen = match.group(1).strip()
+
+        if not regimen:
+            return
+
+        cortes = [
+            "DOMICILIO",
+            "CODIGO",
+            "POSTAL",
+            "PAGINA",
+            "CONTACTO",
+            "SAT",
+            "HACIENDA",
+            "RFC",
+            "CURP",
+        ]
+        regimen_limpio = regimen.upper()
+        for token in cortes:
+            idx = regimen_limpio.find(token)
+            if idx > 0:
+                regimen_limpio = regimen_limpio[:idx].strip()
+                break
+
+        regimen_limpio = re.sub(r"\s+", " ", regimen_limpio).strip(" .,:;-")
+        if regimen_limpio and not self._es_stop_word(regimen_limpio):
+            self.datos["regimen_fiscal"] = regimen_limpio
 
     def _es_stop_word(self, texto):
         for sw in self.stop_words:
@@ -179,10 +214,72 @@ class ProcesadorCSF:
         return False
 
     def _buscar_valor_tabla(self, etiquetas):
-        return None
+        if isinstance(etiquetas, str):
+            etiquetas = [etiquetas]
+
+        etiqueta_bloque = None
+        mejor_score = 0
+        for etiqueta in etiquetas:
+            candidato = self._encontrar_etiqueta_fuzzy(etiqueta)
+            if not candidato:
+                continue
+            score = max(
+                fuzz.ratio(candidato["texto_upper"], etiqueta.upper()),
+                fuzz.partial_ratio(etiqueta.upper(), candidato["texto_upper"]),
+            )
+            if score > mejor_score:
+                mejor_score = score
+                etiqueta_bloque = candidato
+
+        if not etiqueta_bloque:
+            return None
+
+        candidatos: list[tuple[float, str]] = []
+        altura_ref = max(float(etiqueta_bloque.get("altura", 0) or 0), 10.0)
+        for bloque in self.bloques:
+            if bloque == etiqueta_bloque:
+                continue
+
+            texto_valor = bloque["texto_upper"].strip()
+            if not texto_valor or self._es_stop_word(texto_valor):
+                continue
+
+            dy = abs(bloque["centro_y"] - etiqueta_bloque["centro_y"])
+            # Same visual row, value usually to the right.
+            if dy <= altura_ref * 1.5 and bloque["x_min"] >= etiqueta_bloque["x_min"]:
+                distancia = abs(bloque["x_min"] - etiqueta_bloque["x_max"])
+                candidatos.append((distancia, texto_valor))
+                continue
+
+            # Value right below the label with some horizontal overlap.
+            overlap = min(bloque["x_max"], etiqueta_bloque["x_max"]) - max(bloque["x_min"], etiqueta_bloque["x_min"])
+            if overlap > 0 and bloque["y_min"] >= etiqueta_bloque["y_max"] and (bloque["y_min"] - etiqueta_bloque["y_max"]) <= altura_ref * 4:
+                distancia = (bloque["y_min"] - etiqueta_bloque["y_max"]) + 5
+                candidatos.append((distancia, texto_valor))
+
+        if not candidatos:
+            return None
+
+        candidatos.sort(key=lambda item: item[0])
+        valor = candidatos[0][1]
+        valor = re.sub(r"\s+", " ", valor).strip(" .,:;-")
+        return valor or None
 
     def _encontrar_etiqueta_fuzzy(self, keyword):
-        return None
+        keyword_u = str(keyword or "").upper().strip()
+        if not keyword_u:
+            return None
+
+        mejor_bloque = None
+        mejor_score = 0
+        for bloque in self.bloques:
+            texto = bloque["texto_upper"]
+            score = max(fuzz.ratio(texto, keyword_u), fuzz.partial_ratio(keyword_u, texto))
+            if score > mejor_score:
+                mejor_score = score
+                mejor_bloque = bloque
+
+        return mejor_bloque if mejor_score >= 80 else None
 
 
 def extraer_datos_csf(ocr_results):
