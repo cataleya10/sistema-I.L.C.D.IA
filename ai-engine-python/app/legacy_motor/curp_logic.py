@@ -1,10 +1,11 @@
 from app.legacy_motor.fuzzy import fuzz
 import re
+from typing import Any
 
 
 class ProcesadorCURP:
-    def __init__(self, ocr_results):
-        self.bloques = []
+    def __init__(self, ocr_results: Any) -> None:
+        self.bloques: list[dict[str, Any]] = []
         if ocr_results and ocr_results[0]:
             for linea in ocr_results[0]:
                 coords = linea[0]
@@ -27,14 +28,14 @@ class ProcesadorCURP:
                     }
                 )
 
-        self.datos = {
+        self.datos: dict[str, str | None] = {
             "clave_curp": None,
             "nombre": None,
             "entidad_registro": None,
             "fecha_emision": None,
         }
 
-    def ejecutar(self):
+    def ejecutar(self) -> dict[str, str | None]:
         self._buscar_curp_regex()
 
         if not self.datos["nombre"]:
@@ -45,11 +46,16 @@ class ProcesadorCURP:
 
         return self.datos
 
-    def _buscar_relativo(self, etiquetas_posibles, clave_json, direccion="abajo"):
+    def _buscar_relativo(
+        self,
+        etiquetas_posibles: str | list[str],
+        clave_json: str,
+        direccion: str = "abajo",
+    ) -> None:
         if isinstance(etiquetas_posibles, str):
             etiquetas_posibles = [etiquetas_posibles]
 
-        etiqueta_bloque = None
+        etiqueta_bloque: dict[str, Any] | None = None
         mejor_score = 0
 
         for bloque in self.bloques:
@@ -62,8 +68,18 @@ class ProcesadorCURP:
         if not etiqueta_bloque:
             return
 
-        candidatos = []
-        stop_words = ["CLAVE", "NOMBRE", "ENTIDAD", "REGISTRO", "INSCRIPCION", "FOLIO", "ESTADOS", "UNIDOS", "MEXICANOS"]
+        candidatos: list[tuple[float, str]] = []
+        stop_words: list[str] = [
+            "CLAVE",
+            "NOMBRE",
+            "ENTIDAD",
+            "REGISTRO",
+            "INSCRIPCION",
+            "FOLIO",
+            "ESTADOS",
+            "UNIDOS",
+            "MEXICANOS",
+        ]
 
         for bloque in self.bloques:
             if bloque == etiqueta_bloque:
@@ -103,13 +119,13 @@ class ProcesadorCURP:
         if candidatos:
             self.datos[clave_json] = candidatos[0][1]
 
-    def _buscar_curp_regex(self):
+    def _buscar_curp_regex(self) -> None:
         texto_completo = " ".join([b["texto"] for b in self.bloques])
         match = re.search(r"[A-Z]{4}\d{6}[HM][A-Z]{2,5}[A-Z0-9]{2}", texto_completo)
         if match:
             self.datos["clave_curp"] = match.group(0)
 
-    def _buscar_fecha_emision(self):
+    def _buscar_fecha_emision(self) -> None:
         texto_completo_original = " ".join([b["texto_original"] for b in self.bloques])
 
         patron_cdmx = r"(?i)(Ciudad de M.xico,? a\s+\d{1,2}\s+de\s+[a-zA-ZáéíóúÁÉÍÓÚñÑ]+\s+de\s+\d{4})"
@@ -125,6 +141,6 @@ class ProcesadorCURP:
             self.datos["fecha_emision"] = texto_fecha
 
 
-def extraer_datos_curp(ocr_results):
+def extraer_datos_curp(ocr_results: Any) -> dict[str, str | None]:
     procesador = ProcesadorCURP(ocr_results)
     return procesador.ejecutar()

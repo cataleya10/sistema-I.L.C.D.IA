@@ -1,13 +1,38 @@
 import asyncio
 import unittest
+from collections.abc import Coroutine
+from typing import Any, TypeVar, cast, overload
 
 from app.pipelines import classify
 from app.pipelines.extract import extract_fields
 from app.pipelines.validate import validate_fields
 
 
-def _field_by_key(fields: list[dict], key: str) -> dict | None:
+T = TypeVar("T")
+
+
+@overload
+def _run_sync(value: Coroutine[Any, Any, T]) -> T: ...
+
+
+@overload
+def _run_sync(value: T) -> T: ...
+
+
+def _run_sync(value: Coroutine[Any, Any, T] | T) -> T:
+    if asyncio.iscoroutine(value):
+        return asyncio.run(cast(Coroutine[Any, Any, T], value))
+    return value
+
+
+def _field_by_key(fields: list[dict[str, Any]], key: str) -> dict[str, Any] | None:
     return next((f for f in fields if f.get("key") == key), None)
+
+
+def _require_field(fields: list[dict[str, Any]], key: str) -> dict[str, Any]:
+    field = _field_by_key(fields, key)
+    assert field is not None, f"Missing expected field: {key}"
+    return field
 
 
 class PipelineIntegrationTests(unittest.TestCase):
@@ -25,18 +50,15 @@ class PipelineIntegrationTests(unittest.TestCase):
                 "VIGENCIA 2030",
             ]
         )
-        doc_type, _ = asyncio.run(classify.classify_document(None, text, "credencial.png"))
+        doc_type, _ = _run_sync(classify.classify_document(None, text, "credencial.png"))
         self.assertEqual(doc_type, "INE")
 
-        fields = asyncio.run(extract_fields(doc_type, text, None, raw_text=text, filename="credencial.png"))
-        validated = asyncio.run(validate_fields(fields))
+        fields = _run_sync(extract_fields(doc_type, text, None, raw_text=text, filename="credencial.png"))
+        validated = _run_sync(validate_fields(fields))
 
-        curp = _field_by_key(validated, "curp")
-        seccion = _field_by_key(validated, "seccion")
-        vigencia = _field_by_key(validated, "vigencia")
-        self.assertIsNotNone(curp)
-        self.assertIsNotNone(seccion)
-        self.assertIsNotNone(vigencia)
+        curp = _require_field(validated, "curp")
+        seccion = _require_field(validated, "seccion")
+        vigencia = _require_field(validated, "vigencia")
         self.assertEqual(curp.get("value"), "AACD900101HDFRRL09")
         self.assertTrue(bool(curp.get("valid")))
         self.assertEqual(seccion.get("value"), "1234")
@@ -54,18 +76,15 @@ class PipelineIntegrationTests(unittest.TestCase):
                 "CP 44I0O",
             ]
         )
-        doc_type, _ = asyncio.run(classify.classify_document(None, text, "telmex.pdf"))
+        doc_type, _ = _run_sync(classify.classify_document(None, text, "telmex.pdf"))
         self.assertEqual(doc_type, "COMPROBANTE_DOMICILIO")
 
-        fields = asyncio.run(extract_fields(doc_type, text, None, raw_text=text, filename="telmex.pdf"))
-        validated = asyncio.run(validate_fields(fields))
+        fields = _run_sync(extract_fields(doc_type, text, None, raw_text=text, filename="telmex.pdf"))
+        validated = _run_sync(validate_fields(fields))
 
-        cp = _field_by_key(validated, "cp")
-        referencia = _field_by_key(validated, "referencia")
-        numero_servicio = _field_by_key(validated, "numero_servicio")
-        self.assertIsNotNone(cp)
-        self.assertIsNotNone(referencia)
-        self.assertIsNotNone(numero_servicio)
+        cp = _require_field(validated, "cp")
+        referencia = _require_field(validated, "referencia")
+        numero_servicio = _require_field(validated, "numero_servicio")
         self.assertEqual(cp.get("value"), "44100")
         self.assertTrue(bool(cp.get("valid")))
         self.assertEqual(referencia.get("value"), "023451789012345678")
@@ -79,16 +98,14 @@ class PipelineIntegrationTests(unittest.TestCase):
                 "RFC XAXX010101000",
             ]
         )
-        doc_type, _ = asyncio.run(classify.classify_document(None, text, "estado_cuenta.pdf"))
+        doc_type, _ = _run_sync(classify.classify_document(None, text, "estado_cuenta.pdf"))
         self.assertEqual(doc_type, "DATOS_BANCARIOS")
 
-        fields = asyncio.run(extract_fields(doc_type, text, None, raw_text=text, filename="estado_cuenta.pdf"))
-        validated = asyncio.run(validate_fields(fields))
+        fields = _run_sync(extract_fields(doc_type, text, None, raw_text=text, filename="estado_cuenta.pdf"))
+        validated = _run_sync(validate_fields(fields))
 
-        clabe = _field_by_key(validated, "clabe")
-        rfc = _field_by_key(validated, "rfc")
-        self.assertIsNotNone(clabe)
-        self.assertIsNotNone(rfc)
+        clabe = _require_field(validated, "clabe")
+        rfc = _require_field(validated, "rfc")
         self.assertEqual(clabe.get("value"), "032180000118359719")
         self.assertTrue(bool(clabe.get("valid")))
         self.assertEqual(rfc.get("value"), "XAXX010101000")
@@ -96,14 +113,13 @@ class PipelineIntegrationTests(unittest.TestCase):
 
     def test_pipeline_nss_end_to_end(self):
         text = "NUMERO DE SEGURIDAD SOCIAL 12345678901"
-        doc_type, _ = asyncio.run(classify.classify_document(None, text, "imss.pdf"))
+        doc_type, _ = _run_sync(classify.classify_document(None, text, "imss.pdf"))
         self.assertEqual(doc_type, "NSS")
 
-        fields = asyncio.run(extract_fields(doc_type, text, None, raw_text=text, filename="imss.pdf"))
-        validated = asyncio.run(validate_fields(fields))
+        fields = _run_sync(extract_fields(doc_type, text, None, raw_text=text, filename="imss.pdf"))
+        validated = _run_sync(validate_fields(fields))
 
-        nss = _field_by_key(validated, "nss")
-        self.assertIsNotNone(nss)
+        nss = _require_field(validated, "nss")
         self.assertEqual(nss.get("value"), "12345678901")
         self.assertTrue(bool(nss.get("valid")))
 
@@ -116,16 +132,16 @@ class PipelineIntegrationTests(unittest.TestCase):
                 "56551346133    1620260115132703271255    $1,462.58    JOSE LUIS",
             ]
         )
-        doc_type, _ = asyncio.run(classify.classify_document(None, text, "PAGO FIS BMPEI.pdf"))
+        doc_type, _ = _run_sync(classify.classify_document(None, text, "PAGO FIS BMPEI.pdf"))
         self.assertEqual(doc_type, "FACTURA")
 
-        fields = asyncio.run(extract_fields(doc_type, text, None, raw_text=text, filename="PAGO FIS BMPEI.pdf"))
-        validated = asyncio.run(validate_fields(fields))
+        fields = _run_sync(extract_fields(doc_type, text, None, raw_text=text, filename="PAGO FIS BMPEI.pdf"))
+        validated = _run_sync(validate_fields(fields))
 
-        table_field = _field_by_key(validated, "tabla_celdas")
-        self.assertIsNotNone(table_field)
+        table_field = _require_field(validated, "tabla_celdas")
         self.assertTrue(bool(table_field.get("value")))
 
 
 if __name__ == "__main__":
     unittest.main()
+

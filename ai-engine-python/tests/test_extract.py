@@ -1,16 +1,41 @@
 import asyncio
 import json
 import unittest
+from collections.abc import Coroutine
+from typing import Any, TypeVar, cast, overload
 from unittest.mock import patch
 
 from app.pipelines.extract import extract_fields
 
 
-def _field_map(fields: list[dict]) -> dict[str, str]:
-    return {str(f.get("key")): str(f.get("value")) for f in fields if f.get("key") and f.get("value") is not None}
+T = TypeVar("T")
 
 
-def _box(text: str, y: int) -> dict:
+@overload
+def _run_sync(value: Coroutine[Any, Any, T]) -> T: ...
+
+
+@overload
+def _run_sync(value: T) -> T: ...
+
+
+def _run_sync(value: Coroutine[Any, Any, T] | T) -> T:
+    if asyncio.iscoroutine(value):
+        return asyncio.run(cast(Coroutine[Any, Any, T], value))
+    return value
+
+
+def _field_map(fields: list[dict[str, Any]]) -> dict[str, str]:
+    mapped: dict[str, str] = {}
+    for field in fields:
+        key = field.get("key")
+        value = field.get("value")
+        if key and value is not None:
+            mapped[str(key)] = str(value)
+    return mapped
+
+
+def _box(text: str, y: int) -> dict[str, Any]:
     return {
         "text": text,
         "page": 1,
@@ -29,7 +54,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "VIGENCIA 2030",
             ]
         )
-        fields = asyncio.run(extract_fields("INE", ocr_text, None))
+        fields = _run_sync(extract_fields("INE", ocr_text, None))
         data = _field_map(fields)
 
         self.assertEqual(data.get("curp"), "AACD900101HDFRRL09")
@@ -44,7 +69,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "RFC XAXX010101000",
             ]
         )
-        fields = asyncio.run(extract_fields("DATOS_BANCARIOS", ocr_text, None))
+        fields = _run_sync(extract_fields("DATOS_BANCARIOS", ocr_text, None))
         data = _field_map(fields)
 
         self.assertEqual(data.get("clabe"), "012345678901234567")
@@ -61,7 +86,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "CALLE FALSA 123 COL CENTRO CP 44100",
             ]
         )
-        fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
+        fields = _run_sync(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
         data = _field_map(fields)
 
         self.assertEqual(data.get("numero_servicio"), "3312345678")
@@ -78,7 +103,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "VGENCIA 2031",
             ]
         )
-        fields = asyncio.run(extract_fields("INE", ocr_text, None))
+        fields = _run_sync(extract_fields("INE", ocr_text, None))
         data = _field_map(fields)
 
         self.assertEqual(data.get("curp"), "AACD900101HDFRRL09")
@@ -92,7 +117,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "CLABE O123456789O123456L",
             ]
         )
-        fields = asyncio.run(extract_fields("DATOS_BANCARIOS", ocr_text, None))
+        fields = _run_sync(extract_fields("DATOS_BANCARIOS", ocr_text, None))
         data = _field_map(fields)
 
         self.assertEqual(data.get("clabe"), "012345678901234561")
@@ -110,7 +135,7 @@ class ExtractPipelineTests(unittest.TestCase):
             {"text": "JOSE LUIS", "page": 1, "confidence": 0.99, "bbox": [[410, 40], [510, 40], [510, 60], [410, 60]]},
         ]
 
-        fields = asyncio.run(extract_fields("DATOS_BANCARIOS", ocr_text, ocr_boxes))
+        fields = _run_sync(extract_fields("DATOS_BANCARIOS", ocr_text, ocr_boxes))
         data = _field_map(fields)
 
         self.assertIn("tabla_celdas", data)
@@ -137,7 +162,7 @@ class ExtractPipelineTests(unittest.TestCase):
             {"text": "LOPEZ", "page": 1, "confidence": 0.99, "bbox": [[550, 40], [620, 40], [620, 60], [550, 60]]},
         ]
 
-        fields = asyncio.run(extract_fields("FACTURA", ocr_text, ocr_boxes))
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, ocr_boxes))
         data = _field_map(fields)
 
         self.assertIn("tabla_celdas", data)
@@ -195,7 +220,7 @@ class ExtractPipelineTests(unittest.TestCase):
             {"text": "1", "page": 1, "confidence": 0.99, "bbox": [[1500, 40], [1630, 40], [1630, 60], [1500, 60]]},
             {"text": "PAGO35", "page": 1, "confidence": 0.99, "bbox": [[1640, 40], [1760, 40], [1760, 60], [1640, 60]]},
         ]
-        fields = asyncio.run(extract_fields("FACTURA", ocr_text, ocr_boxes))
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, ocr_boxes))
         data = _field_map(fields)
         payload = json.loads(data["tabla_celdas"])
         self.assertEqual(payload.get("source"), "ocr_boxes")
@@ -210,7 +235,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "56551346133    1620260115132703271255    $1,462.58    JOSE LUIS",
             ]
         )
-        fields = asyncio.run(extract_fields("DATOS_BANCARIOS", ocr_text, None))
+        fields = _run_sync(extract_fields("DATOS_BANCARIOS", ocr_text, None))
         data = _field_map(fields)
 
         self.assertIn("tabla_celdas", data)
@@ -225,7 +250,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "56551346133    1620260115132703271255    $1,462.58    JOSE LUIS",
             ]
         )
-        fields = asyncio.run(extract_fields("FACTURA", ocr_text, None))
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, None))
         data = _field_map(fields)
 
         self.assertIn("tabla_celdas", data)
@@ -247,7 +272,7 @@ class ExtractPipelineTests(unittest.TestCase):
             {"text": "TELEFONOS UNIDAD ESPECIALIZADA", "page": 1, "confidence": 0.99, "bbox": [[270, 40], [520, 40], [520, 60], [270, 60]]},
         ]
 
-        fields = asyncio.run(extract_fields("FACTURA", ocr_text, ocr_boxes))
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, ocr_boxes))
         data = _field_map(fields)
 
         self.assertIn("tabla_celdas", data)
@@ -273,7 +298,7 @@ class ExtractPipelineTests(unittest.TestCase):
             {"text": "$1,462.58", "page": 1, "confidence": 0.99, "bbox": [[260, 40], [340, 40], [340, 60], [260, 60]]},
         ]
 
-        fields = asyncio.run(extract_fields("FACTURA", ocr_text, ocr_boxes))
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, ocr_boxes))
         data = _field_map(fields)
 
         self.assertIn("tabla_celdas", data)
@@ -293,7 +318,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "DA ALTA    $3,000.00    15/01/2026",
             ]
         )
-        fields = asyncio.run(extract_fields("FACTURA", raw_text, None, raw_text=raw_text))
+        fields = _run_sync(extract_fields("FACTURA", raw_text, None, raw_text=raw_text))
         data = _field_map(fields)
 
         self.assertIn("replica_pdf_texto", data)
@@ -309,7 +334,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "DA ALTA    $3,000.00",
             ]
         )
-        fields = asyncio.run(extract_fields("FACTURA", raw_text, None, raw_text=raw_text))
+        fields = _run_sync(extract_fields("FACTURA", raw_text, None, raw_text=raw_text))
         data = _field_map(fields)
 
         self.assertIn("replica_pdf_layout", data)
@@ -332,7 +357,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "Concepto:Pago de Nómina",
             ]
         )
-        fields = asyncio.run(extract_fields("FACTURA", ocr_text, None))
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, None))
         data = _field_map(fields)
 
         self.assertIn("tabla_celdas", data)
@@ -364,7 +389,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "PAGO35",
             ]
         )
-        fields = asyncio.run(extract_fields("FACTURA", ocr_text, None))
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, None))
         data = _field_map(fields)
 
         self.assertIn("tabla_celdas", data)
@@ -407,7 +432,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "PAGO35",
             ]
         )
-        fields = asyncio.run(extract_fields("FACTURA", ocr_text, None))
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, None))
         data = _field_map(fields)
 
         self.assertIn("pago_detalle", data)
@@ -444,7 +469,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "DA ALTA 04 ABONO EN CUENTA $3,000.00 15/01/2026 A35 VELAZCO DIONICIO ZENON 1 00014052605935660925 14 1 PAGO35",
             ]
         )
-        fields = asyncio.run(extract_fields("FACTURA", ocr_text, None))
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, None))
         data = _field_map(fields)
         payload = json.loads(data["tabla_celdas"])
         rows = payload.get("rows", [])
@@ -474,7 +499,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "DA ALTA 04 ABONO EN CUENTA $3,000.00 15/01/2026 A35 VELAZCO DIONICIO ZENON 1 00014052605935660925 14 1 PAGO35",
             ]
         )
-        fields = asyncio.run(extract_fields("FACTURA", ocr_text, None))
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, None))
         data = _field_map(fields)
         self.assertIn("pago_detalle", data)
         payload = json.loads(data["pago_detalle"])
@@ -509,7 +534,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "$0.00",
             ]
         )
-        fields = asyncio.run(extract_fields("FACTURA", ocr_text, None))
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, None))
         data = _field_map(fields)
         payload = json.loads(data["tabla_celdas"])
         rows = payload.get("rows", [])
@@ -542,7 +567,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "Tipo de Pago: PAGO DE NOMINA",
             ]
         )
-        fields = asyncio.run(extract_fields("FACTURA", ocr_text, None))
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, None))
         data = _field_map(fields)
 
         self.assertIn("pago_detalle", data)
@@ -579,7 +604,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "Tipo de Pago: PAGO DE NOMINA",
             ]
         )
-        fields = asyncio.run(extract_fields("FACTURA", ocr_text, None))
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, None))
         data = _field_map(fields)
 
         self.assertIn("tabla_celdas", data)
@@ -624,7 +649,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "ACEPTADO",
             ]
         )
-        fields = asyncio.run(extract_fields("FACTURA", ocr_text, None))
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, None))
         data = _field_map(fields)
 
         payload = json.loads(data["tabla_celdas"])
@@ -650,7 +675,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "56551346133    1620260115132703271255    $1,462.58    JOSE LUIS",
             ]
         )
-        fields = asyncio.run(extract_fields("FACTURA", ocr_text, None))
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, None))
         data = _field_map(fields)
 
         self.assertIn("tabla_celdas", data)
@@ -667,7 +692,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "TOTAL A PAGAR $999.99",
             ]
         )
-        fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
+        fields = _run_sync(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
         data = _field_map(fields)
 
         self.assertEqual(data.get("numero_servicio"), "3312345678")
@@ -681,7 +706,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "CALLE FALSA 123 COL CENTRO CP 44I0O",
             ]
         )
-        fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
+        fields = _run_sync(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
         data = _field_map(fields)
 
         self.assertEqual(data.get("cp"), "44100")
@@ -693,7 +718,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "FOLIO I2O3",
             ]
         )
-        fields = asyncio.run(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
+        fields = _run_sync(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
         data = _field_map(fields)
 
         self.assertEqual(data.get("folio"), "1203")
@@ -708,7 +733,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "SEXO: HOMBRE",
             ]
         )
-        fields = asyncio.run(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
+        fields = _run_sync(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
         data = _field_map(fields)
         self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
 
@@ -721,7 +746,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "SEXO HOMBRE",
             ]
         )
-        fields = asyncio.run(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
+        fields = _run_sync(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
         data = _field_map(fields)
         self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
 
@@ -735,7 +760,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "SEX0: HOMBRE",
             ]
         )
-        fields = asyncio.run(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
+        fields = _run_sync(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
         data = _field_map(fields)
         self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
 
@@ -751,7 +776,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "CAMPOS",
             ]
         )
-        fields = asyncio.run(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
+        fields = _run_sync(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
         data = _field_map(fields)
         self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
 
@@ -762,7 +787,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "LINEA DE CAPTURA O2345I789OI2345678",
             ]
         )
-        fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
+        fields = _run_sync(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
         data = _field_map(fields)
 
         self.assertEqual(data.get("referencia"), "023451789012345678")
@@ -784,7 +809,7 @@ class ExtractPipelineTests(unittest.TestCase):
             _box("NO DE CUENTA 0011223344", 100),
             _box("TOTAL A PAGAR $549.00", 130),
         ]
-        fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, ocr_boxes))
+        fields = _run_sync(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, ocr_boxes))
         data = _field_map(fields)
 
         self.assertEqual(data.get("fecha_limite"), "23/01/2026")
@@ -807,7 +832,7 @@ class ExtractPipelineTests(unittest.TestCase):
             _box("NO DE CUENTA 0011223344", 100),
             _box("TOTAL A PAGAR $549.00", 130),
         ]
-        fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, ocr_boxes))
+        fields = _run_sync(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, ocr_boxes))
         data = _field_map(fields)
 
         self.assertEqual(data.get("fecha_limite"), "23/01/2026")
@@ -824,7 +849,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "DOMICILIO DE ENVIO AV INSURGENTES SUR I234 COL DEL VALLE C.P. O3I00 CDMX",
             ]
         )
-        fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None, raw_text=ocr_text, filename="telcel.jpg"))
+        fields = _run_sync(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None, raw_text=ocr_text, filename="telcel.jpg"))
         data = _field_map(fields)
 
         self.assertEqual(data.get("proveedor"), "TELCEL")
@@ -844,7 +869,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "CULIACAN SIN",
             ]
         )
-        fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
+        fields = _run_sync(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
         data = _field_map(fields)
 
         self.assertIn("CALLE PINO SUAREZ 123", data.get("domicilio", ""))
@@ -857,7 +882,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "RMU:2418013-05-22XAXX-010101002CFE",
             ]
         )
-        fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
+        fields = _run_sync(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
         data = _field_map(fields)
 
         self.assertEqual(data.get("referencia"), "24180130522010101002")
@@ -870,7 +895,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "RMU:2418013-05-22XAXX-010101002CFE",
             ]
         )
-        fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
+        fields = _run_sync(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
         data = _field_map(fields)
 
         self.assertIn("BENITO JUAREZ", data.get("referencia", ""))
@@ -885,7 +910,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "CP 24180",
             ]
         )
-        fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
+        fields = _run_sync(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
         data = _field_map(fields)
         domicilio = data.get("domicilio", "")
 
@@ -912,7 +937,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "EMISON2019MGENCA2029",
             ]
         )
-        fields = asyncio.run(extract_fields("INE", ocr_text, None))
+        fields = _run_sync(extract_fields("INE", ocr_text, None))
         data = _field_map(fields)
 
         self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
@@ -933,7 +958,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "CUENTA:29DW05A012970875",
             ]
         )
-        fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
+        fields = _run_sync(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
         data = _field_map(fields)
         referencia = data.get("referencia", "")
 
@@ -946,7 +971,7 @@ class ExtractPipelineTests(unittest.TestCase):
             _box("NUMERO DE ACTA I2O3L", 40),
         ]
         with patch("app.pipelines.extract.legacy_extract_fields", return_value={}):
-            fields = asyncio.run(
+            fields = _run_sync(
                 extract_fields("ACTA_NACIMIENTO", "ACTA DE NACIMIENTO\nNUMERO DE ACTA I2O3L", ocr_boxes)
             )
         data = _field_map(fields)
@@ -959,7 +984,7 @@ class ExtractPipelineTests(unittest.TestCase):
             _box("NUMERO DE CERTIFICADO DE NACIMIENTO OI23-45 6789L", 40),
         ]
         with patch("app.pipelines.extract.legacy_extract_fields", return_value={}):
-            fields = asyncio.run(
+            fields = _run_sync(
                 extract_fields(
                     "ACTA_NACIMIENTO",
                     "ACTA DE NACIMIENTO\nNUMERO DE CERTIFICADO DE NACIMIENTO OI23-45 6789L",
@@ -976,7 +1001,7 @@ class ExtractPipelineTests(unittest.TestCase):
             _box("IDENTIFICADOR ELECTRONICO ab-12 cd_34", 40),
         ]
         with patch("app.pipelines.extract.legacy_extract_fields", return_value={}):
-            fields = asyncio.run(
+            fields = _run_sync(
                 extract_fields(
                     "ACTA_NACIMIENTO",
                     "ACTA DE NACIMIENTO\nIDENTIFICADOR ELECTRONICO ab-12 cd_34",
@@ -995,7 +1020,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "0001 20/08/2001 3 437",
             ]
         )
-        fields = asyncio.run(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
+        fields = _run_sync(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
         data = _field_map(fields)
 
         self.assertEqual(data.get("numero_acta"), "437")
@@ -1009,7 +1034,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "FOLIO 0001",
             ]
         )
-        fields = asyncio.run(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
+        fields = _run_sync(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
         data = _field_map(fields)
 
         self.assertEqual(data.get("folio"), "0001")
@@ -1025,7 +1050,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "SEXO: HOMBRE",
             ]
         )
-        fields = asyncio.run(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
+        fields = _run_sync(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
         data = _field_map(fields)
 
         self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
@@ -1036,7 +1061,7 @@ class ExtractPipelineTests(unittest.TestCase):
             _box("ACTA DE NACIMIENTO", 10),
             _box("HOMBRE 25/04/2001 JONUTA SEXO: FECHA DE NACIMIENTO: LUGAR DE NACIMIENTO:", 40),
         ]
-        fields = asyncio.run(extract_fields("ACTA_NACIMIENTO", ocr_text, ocr_boxes))
+        fields = _run_sync(extract_fields("ACTA_NACIMIENTO", ocr_text, ocr_boxes))
         data = _field_map(fields)
 
         self.assertEqual(data.get("lugar_nacimiento"), "JONUTA")
@@ -1049,7 +1074,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "NOMBRE DEL BENEFICIARIO: JUAN PEREZ LOPEZ",
             ]
         )
-        fields = asyncio.run(extract_fields("NSS", ocr_text, None))
+        fields = _run_sync(extract_fields("NSS", ocr_text, None))
         data = _field_map(fields)
 
         self.assertEqual(data.get("nss"), "60160194696")
@@ -1063,7 +1088,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "NOMBRE DEL BENEFICIARIO: MARIA GUADALUPE LOPEZ HERNANDEZ",
             ]
         )
-        fields = asyncio.run(extract_fields("NSS", ocr_text, None))
+        fields = _run_sync(extract_fields("NSS", ocr_text, None))
         data = _field_map(fields)
 
         self.assertEqual(data.get("nss"), "60160194696")
@@ -1078,7 +1103,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "JORGE ALBERTO MENDEZ CRUZ",
             ]
         )
-        fields = asyncio.run(extract_fields("NSS", ocr_text, None))
+        fields = _run_sync(extract_fields("NSS", ocr_text, None))
         data = _field_map(fields)
 
         self.assertEqual(data.get("nss"), "60160194696")
@@ -1092,7 +1117,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "TU NUMERO DE SEGURIDAD! CAMPOS! ERWINGUSTAVOGARCIA",
             ]
         )
-        fields = asyncio.run(extract_fields("NSS", ocr_text, None))
+        fields = _run_sync(extract_fields("NSS", ocr_text, None))
         data = _field_map(fields)
 
         self.assertEqual(data.get("nss"), "60160194696")
@@ -1100,14 +1125,14 @@ class ExtractPipelineTests(unittest.TestCase):
 
     def test_field_contract_drops_invalid_legacy_curp(self):
         with patch("app.pipelines.extract.legacy_extract_fields", return_value={"curp": "ABCD123"}):
-            fields = asyncio.run(extract_fields("INE", "CREDENCIAL PARA VOTAR", None))
+            fields = _run_sync(extract_fields("INE", "CREDENCIAL PARA VOTAR", None))
         data = _field_map(fields)
 
         self.assertIsNone(data.get("curp"))
 
     def test_field_contract_drops_invalid_legacy_referencia(self):
         with patch("app.pipelines.extract.legacy_extract_fields", return_value={"referencia": "12345"}):
-            fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", "COMPROBANTE", None))
+            fields = _run_sync(extract_fields("COMPROBANTE_DOMICILIO", "COMPROBANTE", None))
         data = _field_map(fields)
 
         self.assertIsNone(data.get("referencia"))
@@ -1117,7 +1142,7 @@ class ExtractPipelineTests(unittest.TestCase):
             "app.pipelines.extract.legacy_extract_fields",
             return_value={"lugar_nacimiento": "ACTA DE NACIMIENTO SEXO FECHA DE NACIMIENTO"},
         ):
-            fields = asyncio.run(extract_fields("ACTA_NACIMIENTO", "ACTA DE NACIMIENTO", None))
+            fields = _run_sync(extract_fields("ACTA_NACIMIENTO", "ACTA DE NACIMIENTO", None))
         data = _field_map(fields)
 
         self.assertIsNone(data.get("lugar_nacimiento"))
@@ -1131,7 +1156,7 @@ class ExtractPipelineTests(unittest.TestCase):
                 "rfc": "CFE370814QI0",
             },
         ):
-            fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", "COMPROBANTE DE DOMICILIO", None))
+            fields = _run_sync(extract_fields("COMPROBANTE_DOMICILIO", "COMPROBANTE DE DOMICILIO", None))
         data = _field_map(fields)
 
         self.assertIsNone(data.get("cliente"))
@@ -1143,7 +1168,7 @@ class ExtractPipelineTests(unittest.TestCase):
             "app.pipelines.extract.legacy_extract_fields",
             return_value={"titular": "ESTE GRAFICO REFLEJA TU NIVEL DE CONSUMO"},
         ):
-            fields = asyncio.run(extract_fields("COMPROBANTE_DOMICILIO", "COMPROBANTE DE DOMICILIO", None))
+            fields = _run_sync(extract_fields("COMPROBANTE_DOMICILIO", "COMPROBANTE DE DOMICILIO", None))
         data = _field_map(fields)
 
         self.assertIsNone(data.get("titular"))
@@ -1151,3 +1176,4 @@ class ExtractPipelineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

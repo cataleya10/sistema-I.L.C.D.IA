@@ -2,6 +2,7 @@ from fastapi import UploadFile
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 import io
 import fitz
+from typing import Any
 from app.core.config import settings
 
 
@@ -18,21 +19,26 @@ def _has_sufficient_text_layer(text: str) -> bool:
     )
 
 
-async def preprocess(file: UploadFile):
+async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dict[str, Any]]]:
     content = await file.read()
+    filename = str(file.filename or "")
 
-    if file.content_type == "application/pdf" or file.filename.lower().endswith(".pdf"):
+    if file.content_type == "application/pdf" or filename.lower().endswith(".pdf"):
         extracted_parts: list[str] = []
-        text_layer_boxes: list[dict] = []
+        text_layer_boxes: list[dict[str, Any]] = []
         with fitz.open(stream=content, filetype="pdf") as doc:
-            for index, page in enumerate(doc):
-                if index >= settings.max_pages:
-                    break
+            max_pages = min(len(doc), settings.max_pages)
+            for index in range(max_pages):
+                page = doc.load_page(index)
                 extracted_parts.append(page.get_text("text") or "")
-                for word in page.get_text("words") or []:
-                    if len(word) < 5:
+                words = page.get_text("words")
+                if not isinstance(words, list):
+                    continue
+                for raw_word in words:
+                    if not isinstance(raw_word, (list, tuple)) or len(raw_word) < 5:
                         continue
-                    x0, y0, x1, y1, text = word[:5]
+                    word = list(raw_word[:5])
+                    x0, y0, x1, y1, text = word
                     text_str = str(text or "").strip()
                     if not text_str:
                         continue
@@ -51,11 +57,11 @@ async def preprocess(file: UploadFile):
 
         images: list[Image.Image] = []
         with fitz.open(stream=content, filetype="pdf") as doc:
-            for index, page in enumerate(doc):
-                if index >= settings.max_pages:
-                    break
+            max_pages = min(len(doc), settings.max_pages)
+            for index in range(max_pages):
+                page = doc.load_page(index)
                 pix = page.get_pixmap(dpi=settings.pdf_render_dpi)
-                image = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
                 image = ImageOps.autocontrast(image)
                 image = ImageEnhance.Contrast(image.convert("L")).enhance(2.0)
                 image = ImageEnhance.Sharpness(image).enhance(2.0)

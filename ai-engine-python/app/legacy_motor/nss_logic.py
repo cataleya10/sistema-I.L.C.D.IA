@@ -1,10 +1,11 @@
 from app.legacy_motor.fuzzy import fuzz
 import re
+from typing import Any
 
 
 class ProcesadorNSS:
-    def __init__(self, ocr_results):
-        self.bloques = []
+    def __init__(self, ocr_results: Any) -> None:
+        self.bloques: list[dict[str, Any]] = []
         if ocr_results and ocr_results[0]:
             for linea in ocr_results[0]:
                 coords = linea[0]
@@ -26,7 +27,7 @@ class ProcesadorNSS:
                     }
                 )
 
-        self.datos = {
+        self.datos: dict[str, str | None] = {
             "nss": None,
             "nombre": None,
             "curp": None,
@@ -34,7 +35,7 @@ class ProcesadorNSS:
             "folio_solicitud": None,
         }
 
-    def ejecutar(self):
+    def ejecutar(self) -> dict[str, str | None]:
         self._procesar_cadena_original()
 
         if not self.datos["nss"]:
@@ -44,7 +45,7 @@ class ProcesadorNSS:
 
         return self.datos
 
-    def _procesar_cadena_original(self):
+    def _procesar_cadena_original(self) -> None:
         texto_sucio = " ".join([b["texto"] for b in self.bloques])
 
         texto_limpio = texto_sucio.replace("_", " ").replace("/", " ").replace("|", " ")
@@ -88,19 +89,19 @@ class ProcesadorNSS:
         if match_nss:
             self.datos["nss"] = match_nss.group(1).strip()
 
-    def _buscar_nss_visual(self):
+    def _buscar_nss_visual(self) -> None:
         texto_completo = " ".join([b["texto_upper"] for b in self.bloques])
         match = re.search(r"\b(\d{11})\b", texto_completo)
         if match:
             self.datos["nss"] = match.group(1)
 
-    def _buscar_curp_regex(self):
+    def _buscar_curp_regex(self) -> None:
         texto_completo = " ".join([b["texto_upper"] for b in self.bloques])
         match = re.search(r"[A-Z]{4}\d{6}[HM][A-Z]{2,5}[A-Z0-9]{2}", texto_completo)
         if match:
             self.datos["curp"] = match.group(0)
 
 
-def extraer_datos_nss(ocr_results):
+def extraer_datos_nss(ocr_results: Any) -> dict[str, str | None]:
     procesador = ProcesadorNSS(ocr_results)
     return procesador.ejecutar()
