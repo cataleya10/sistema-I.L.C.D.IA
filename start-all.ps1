@@ -4,7 +4,7 @@ param(
     [string]$FrontendMode = "static",
     [int]$AiTimeoutSeconds = 30,
     [int]$ApiTimeoutSeconds = 30,
-    [int]$FrontendTimeoutSeconds = 15
+    [int]$FrontendTimeoutSeconds = 45
 )
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
