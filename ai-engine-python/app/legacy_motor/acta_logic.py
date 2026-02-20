@@ -2,13 +2,14 @@ from app.legacy_motor.fuzzy import fuzz
 import re
 from datetime import datetime
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 class ProcesadorActa:
     def __init__(self, ocr_results):
-        self.bloques = []
+        self.bloques: list[dict[str, Any]] = []
         if ocr_results and ocr_results[0]:
             for linea in ocr_results[0]:
                 coords = linea[0]
@@ -31,7 +32,7 @@ class ProcesadorActa:
                     }
                 )
 
-        self.datos = {
+        self.datos: dict[str, str | None] = {
             "entidad_registro": None,
             "municipio_registro": None,
             "nombre": None,
