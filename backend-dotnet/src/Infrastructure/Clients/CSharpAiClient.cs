@@ -400,14 +400,45 @@ public sealed class CSharpAiClient : IPythonAiClient
 
     private static IReadOnlyList<DocumentFieldResultDto> ExtractActaFields(string text)
     {
+        static string? CleanActaName(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return null;
+            }
+
+            var value = Regex.Replace(raw.Trim(), @"\s+", " ");
+            if (value.Contains(':')
+                || value.Contains("APELLIDO", StringComparison.OrdinalIgnoreCase)
+                || value.Contains("SEXO", StringComparison.OrdinalIgnoreCase)
+                || value.Contains("FECHA", StringComparison.OrdinalIgnoreCase)
+                || value.Contains("LUGAR", StringComparison.OrdinalIgnoreCase)
+                || value.Contains("NACIMIENTO", StringComparison.OrdinalIgnoreCase)
+                || value.Contains("DATOS DE LA PERSONA REGISTRADA", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            return value;
+        }
+
+        var folio = FirstRegex(
+            text,
+            new Regex(@"\bFOLIO\s*[:\-]?\s*([0-9]{1,8})\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+            1);
+        var numeroActa = FirstRegex(
+            text,
+            new Regex(@"\bNUMERO\s+DE\s+ACTA\s*[:\-]?\s*([0-9]{1,8})\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+            1);
+
         return
         [
-            Build("nombre", "Nombre completo", AfterAnyLabel(text, "NOMBRE", "NOMBRE(S)")),
+            Build("nombre", "Nombre completo", CleanActaName(AfterAnyLabel(text, "NOMBRE", "NOMBRE(S)"))),
             Build("sexo", "Sexo", FirstAny(text, "HOMBRE", "MUJER", "MASCULINO", "FEMENINO")),
             Build("fecha_nacimiento", "Fecha de nacimiento", FirstRegex(text, DateRegex), DateRegex),
             Build("lugar_nacimiento", "Lugar de nacimiento", AfterAnyLabel(text, "LUGAR DE NACIMIENTO", "LUGAR NACIMIENTO")),
-            Build("folio", "Folio", AfterAnyLabel(text, "FOLIO", "NO. DE FOLIO")),
-            Build("numero_acta", "Numero de acta", AfterAnyLabel(text, "NUMERO DE ACTA", "ACTA"))
+            Build("folio", "Folio", folio, new Regex(@"^\d{1,8}$", RegexOptions.Compiled)),
+            Build("numero_acta", "Numero de acta", numeroActa, new Regex(@"^\d{1,8}$", RegexOptions.Compiled))
         ];
     }
 

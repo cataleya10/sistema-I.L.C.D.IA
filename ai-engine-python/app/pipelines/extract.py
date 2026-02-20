@@ -3851,12 +3851,16 @@ def _normalize_numero_acta_value(value: str) -> str:
     text = str(value or "").upper().strip()
     if not text:
         return ""
+    # Ignore label-like OCR noise such as "DE NACIMIENTO".
+    if not re.search(r"\d", text):
+        return ""
     if re.search(r"\d", text) or re.fullmatch(r"[0-9OIL\s-]+", text):
         raw = _normalize_numeric_field(text)
         if re.fullmatch(r"\d{1,12}", raw):
             return raw
     normalized = _normalize_alnum(text)
-    return normalized if len(normalized) >= 3 else ""
+    digit_count = sum(1 for ch in normalized if ch.isdigit())
+    return normalized if len(normalized) >= 3 and digit_count >= 3 else ""
 
 
 def _normalize_numero_certificado_value(value: str) -> str:
@@ -4635,6 +4639,8 @@ def _extract_acta_name_from_text(raw_text: str) -> str | None:
         if not piece:
             return ""
         if len(piece) <= 1:
+            return ""
+        if any(token in piece for token in ("DATOS", "PERSONA", "REGISTRADA", "IDENTIFICADOR", "ELECTRONICO")):
             return ""
         if any(token in piece for token in ("APELLIDO", "NOMBRE(S)")):
             return ""

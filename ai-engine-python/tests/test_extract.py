@@ -1001,6 +1001,35 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertEqual(data.get("numero_acta"), "437")
         self.assertEqual(data.get("folio"), "0001")
 
+    def test_extract_acta_numero_acta_ignores_label_noise(self):
+        ocr_text = "\n".join(
+            [
+                "ACTA DE NACIMIENTO",
+                "NUMERO DE ACTA DE NACIMIENTO",
+                "FOLIO 0001",
+            ]
+        )
+        fields = asyncio.run(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("folio"), "0001")
+        self.assertIsNone(data.get("numero_acta"))
+
+    def test_extract_acta_nombre_ignores_section_header_noise(self):
+        ocr_text = "\n".join(
+            [
+                "ACTA DE NACIMIENTO",
+                "NOMBRE(S):",
+                "DATOS DE LA PERSONA REGISTRADA",
+                "ERWIN GUSTAVO GARCIA CAMPOS",
+                "SEXO: HOMBRE",
+            ]
+        )
+        fields = asyncio.run(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
+
     def test_extract_acta_lugar_nacimiento_cleans_label_noise(self):
         ocr_text = "ACTA DE NACIMIENTO\nHOMBRE 25/04/2001 JONUTA SEXO: FECHA DE NACIMIENTO: LUGAR DE NACIMIENTO:"
         ocr_boxes = [

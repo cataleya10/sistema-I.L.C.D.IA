@@ -150,4 +150,35 @@ public class CSharpAiClientTests
         Assert.DoesNotContain(response.Fields, f => f.Key == "concepto");
         Assert.DoesNotContain(response.Fields, f => f.Key == "total");
     }
+
+    [Fact]
+    public async Task ProcessTextAsync_Acta_DoesNotCaptureLabelNoiseInCriticalFields()
+    {
+        var client = new CSharpAiClient();
+        var response = await client.ProcessTextAsync(
+            Guid.NewGuid(),
+            """
+            ACTA DE NACIMIENTO
+            NOMBRE(S):
+            SEXO H
+            FECHA DE NACIMIENTO 20/08/2001
+            LUGAR DE NACIMIENTO JONUTA TABASCO
+            FOLIO JSP,CAPTURANCO EL LDENTIFICADORELECTRONICO
+            NUMERO DE ACTA DE NACIMIENTO
+            """,
+            "acta-nacimiento.pdf",
+            "python-ocr",
+            1,
+            0,
+            null,
+            CancellationToken.None);
+
+        var nombre = response.Fields.FirstOrDefault(f => f.Key == "nombre");
+        var folio = response.Fields.FirstOrDefault(f => f.Key == "folio");
+        var numeroActa = response.Fields.FirstOrDefault(f => f.Key == "numero_acta");
+
+        Assert.True(nombre is null || string.IsNullOrWhiteSpace(nombre.Value));
+        Assert.True(folio is null || string.IsNullOrWhiteSpace(folio.Value));
+        Assert.True(numeroActa is null || string.IsNullOrWhiteSpace(numeroActa.Value));
+    }
 }

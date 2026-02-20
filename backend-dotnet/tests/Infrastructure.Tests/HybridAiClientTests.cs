@@ -160,6 +160,70 @@ public class HybridAiClientTests
         }
     }
 
+    [Fact]
+    public async Task ProcessDocumentAsync_Acta_PrefersPythonWhenReady()
+    {
+        var tempFile = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}-acta.txt");
+        await File.WriteAllTextAsync(
+            tempFile,
+            """
+            ACTA DE NACIMIENTO
+            NOMBRE(S):
+            SEXO H
+            FECHA DE NACIMIENTO 20/08/2001
+            LUGAR DE NACIMIENTO JONUTA TABASCO
+            FOLIO JSP,CAPTURANCO EL LDENTIFICADORELECTRONICO
+            NUMERO DE ACTA DE NACIMIENTO
+            """);
+
+        try
+        {
+            var config = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["PythonAi:BaseUrl"] = "http://unit-test.local",
+                    ["AiEngine:Hybrid:EnablePythonFallback"] = "true",
+                    ["AiEngine:Hybrid:FallbackMinConfidence"] = "0.8",
+                    ["AiEngine:Hybrid:AlwaysMergePythonFields"] = "true"
+                })
+                .Build();
+
+            using var httpClient = new HttpClient(new ActaPreferPythonHandler())
+            {
+                BaseAddress = new Uri("http://unit-test.local")
+            };
+
+            var pythonClient = new PythonAiClient(httpClient, config);
+            var csharpClient = new CSharpAiClient();
+            var hybridClient = new HybridAiClient(
+                pythonClient,
+                csharpClient,
+                config,
+                NullLogger<HybridAiClient>.Instance);
+
+            var response = await hybridClient.ProcessDocumentAsync(
+                Guid.NewGuid(),
+                tempFile,
+                "acta-nacimiento.pdf",
+                null,
+                CancellationToken.None);
+
+            Assert.Equal(DocumentType.ActaNacimiento, response.DocumentType);
+            Assert.Equal(DocumentStatus.Ready, response.Status);
+            Assert.Contains(response.Fields, f => f.Key == "nombre" && f.Value == "ERWIN GUSTAVO GARCIA CAMPOS");
+            Assert.Contains(response.Fields, f => f.Key == "folio" && f.Value == "0001");
+            Assert.Contains(response.Fields, f => f.Key == "numero_acta" && f.Value == "437");
+            Assert.DoesNotContain(response.Fields, f => f.Key == "folio" && (f.Value?.Contains("JSP", StringComparison.OrdinalIgnoreCase) ?? false));
+        }
+        finally
+        {
+            if (File.Exists(tempFile))
+            {
+                File.Delete(tempFile);
+            }
+        }
+    }
+
     private sealed class StubPythonHandler : HttpMessageHandler
     {
         protected override async Task<HttpResponseMessage> SendAsync(
@@ -363,6 +427,108 @@ public class HybridAiClientTests
                   "confidence":0.55,
                   "valid":false,
                   "validation_errors":["Banco invalido."],
+                  "source":null
+                }
+              ],
+              "warnings":[],
+              "errors":[],
+              "meta":{
+                "pages_processed":1,
+                "ocr_engine":"paddleocr",
+                "pipeline_version":"python-extract-v1",
+                "model_version":"clf-v1",
+                "processing_ms":180
+              }
+            }
+            """;
+        }
+    }
+
+    private sealed class ActaPreferPythonHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var body = request.Content is null
+                ? string.Empty
+                : await request.Content.ReadAsStringAsync(cancellationToken);
+
+            var isOcrOnly = body.Contains("return_ocr_text", StringComparison.OrdinalIgnoreCase);
+            var payload = isOcrOnly ? BuildOcrPayload() : BuildExtractionPayload();
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(payload, Encoding.UTF8, "application/json")
+            };
+        }
+
+        private static string BuildOcrPayload()
+        {
+            return """
+            {
+              "document_id":"00000000-0000-0000-0000-000000000000",
+              "status":"NEEDS_REVIEW",
+              "document_type":"ACTA_NACIMIENTO",
+              "confidence":0.62,
+              "fields":[],
+              "warnings":[],
+              "errors":[],
+              "meta":{
+                "pages_processed":1,
+                "ocr_engine":"paddleocr",
+                "pipeline_version":"python-ocr-only-v1",
+                "model_version":"clf-v1",
+                "processing_ms":90
+              },
+              "ocr_text":"ACTA DE NACIMIENTO NOMBRE(S): FOLIO JSP,CAPTURANCO EL LDENTIFICADORELECTRONICO NUMERO DE ACTA DE NACIMIENTO"
+            }
+            """;
+        }
+
+        private static string BuildExtractionPayload()
+        {
+            return """
+            {
+              "document_id":"00000000-0000-0000-0000-000000000000",
+              "status":"READY",
+              "document_type":"ACTA_NACIMIENTO",
+              "confidence":0.95,
+              "fields":[
+                {
+                  "key":"nombre",
+                  "label":"Nombre",
+                  "value":"ERWIN GUSTAVO GARCIA CAMPOS",
+                  "confidence":0.95,
+                  "valid":true,
+                  "validation_errors":[],
+                  "source":null
+                },
+                {
+                  "key":"folio",
+                  "label":"Folio",
+                  "value":"0001",
+                  "confidence":0.95,
+                  "valid":true,
+                  "validation_errors":[],
+                  "source":null
+                },
+                {
+                  "key":"numero_acta",
+                  "label":"Numero de acta",
+                  "value":"437",
+                  "confidence":0.95,
+                  "valid":true,
+                  "validation_errors":[],
+                  "source":null
+                },
+                {
+                  "key":"fecha_nacimiento",
+                  "label":"Fecha de nacimiento",
+                  "value":"20/08/2001",
+                  "confidence":0.95,
+                  "valid":true,
+                  "validation_errors":[],
                   "source":null
                 }
               ],

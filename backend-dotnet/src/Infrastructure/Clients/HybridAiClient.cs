@@ -307,6 +307,13 @@ public sealed class HybridAiClient : IPythonAiClient
         DocumentProcessResponse csharpResponse,
         DocumentProcessResponse pythonResponse)
     {
+        if (pythonResponse.Status == DocumentStatus.Ready
+            && (csharpResponse.DocumentType == DocumentType.ActaNacimiento
+                || pythonResponse.DocumentType == DocumentType.ActaNacimiento))
+        {
+            return true;
+        }
+
         if (pythonResponse.Status == DocumentStatus.Ready && csharpResponse.Status != DocumentStatus.Ready)
         {
             return true;
