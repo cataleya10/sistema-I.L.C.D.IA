@@ -8,6 +8,12 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
+## Pruebas
+```
+pip install -r requirements-dev.txt
+.\.venv312\Scripts\python.exe -m pytest tests -q
+```
+
 ## Notas
 - PaddleOCR inicializado en `app/pipelines/ocr.py`.
 - Extractores y validadores en `app/pipelines` y `app/utils`.

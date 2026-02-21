@@ -60,8 +60,23 @@ try {
     Invoke-Step -Name "Python tests (AI engine)" -Action {
         Push-Location (Join-Path $root "ai-engine-python")
         try {
-            & .\.venv312\Scripts\python.exe -m unittest discover -s tests -p "test_*.py" -v
-            Assert-LastExitCode "Python tests failed."
+            $python = ".\.venv312\Scripts\python.exe"
+            if (-not (Test-Path $python)) {
+                throw "Python virtual environment not found at ai-engine-python/.venv312."
+            }
+
+            & $python -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('pytest') else 1)"
+            $hasPytest = $LASTEXITCODE -eq 0
+
+            if ($hasPytest) {
+                Write-Host "Using pytest..." -ForegroundColor DarkCyan
+                & $python -m pytest tests -q -p no:cacheprovider
+                Assert-LastExitCode "Python tests failed (pytest)."
+            } else {
+                Write-Host "pytest not found, falling back to unittest..." -ForegroundColor Yellow
+                & $python -m unittest discover -s tests -p "test_*.py" -v
+                Assert-LastExitCode "Python tests failed (unittest)."
+            }
         } finally {
             Pop-Location
         }

@@ -5,6 +5,12 @@ on:
     branches:
       - "**"
   pull_request:
+  workflow_dispatch:
+    inputs:
+      run_bbva_e2e:
+        description: "Run BBVA export E2E job"
+        required: false
+        default: "false"
 
 permissions:
   contents: read
@@ -101,12 +107,122 @@ jobs:
         with:
           python-version: "3.11"
           cache: "pip"
-          cache-dependency-path: ai-engine-python/requirements.txt
+          cache-dependency-path: ai-engine-python/requirements-dev.txt
       - name: Install dependencies
         working-directory: ai-engine-python
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-dev.txt
       - name: Compile check
         run: python -m compileall ai-engine-python/app
       - name: Run AI tests
         working-directory: ai-engine-python
-        run: python -m unittest discover -s tests -p "test_*.py" -v
+        run: python -m pytest tests -q
+
+  bbva-e2e:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_bbva_e2e == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      ILCDIA_E2E_USERNAME: ${{ secrets.E2E_USERNAME }}
+      ILCDIA_E2E_SECRET: ${{ secrets.E2E_SECRET }}
+      E2E_BBVA_FILE_BASE64: ${{ secrets.E2E_BBVA_FILE_BASE64 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${ILCDIA_E2E_USERNAME}" ] || [ -z "${ILCDIA_E2E_SECRET}" ] || [ -z "${E2E_BBVA_FILE_BASE64}" ]; then
+            echo "Missing secrets. Configure E2E_USERNAME, E2E_SECRET and E2E_BBVA_FILE_BASE64."
+            exit 1
+          fi
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: ai-engine-python/requirements-dev.txt
+
+      - name: Install AI dependencies
+        working-directory: ai-engine-python
+        run: pip install -r requirements-dev.txt
+
+      - name: Build API (Release)
+        run: dotnet build backend-dotnet/src/Api/Api.csproj -c Release
+
+      - name: Materialize BBVA PDF fixture from secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          data = os.environ["E2E_BBVA_FILE_BASE64"].strip()
+          out = Path(os.environ["RUNNER_TEMP"]) / "bbva-e2e.pdf"
+          out.write_bytes(base64.b64decode(data))
+          print(out)
+          PY
+          echo "BBVA_E2E_FILE=${RUNNER_TEMP}/bbva-e2e.pdf" >> "$GITHUB_ENV"
+
+      - name: Start AI and API services
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd ai-engine-python
+            nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > "${RUNNER_TEMP}/ai.log" 2>&1 &
+            echo $! > "${RUNNER_TEMP}/ai.pid"
+          )
+          nohup dotnet run --project backend-dotnet/src/Api -c Release --no-build --urls http://127.0.0.1:5000 > "${RUNNER_TEMP}/api.log" 2>&1 &
+          echo $! > "${RUNNER_TEMP}/api.pid"
+
+      - name: Wait for health endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in {1..90}; do
+            if curl -fsS "http://127.0.0.1:8000/docs" >/dev/null 2>&1 && curl -fsS "http://127.0.0.1:5000/health" >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Timed out waiting for API/AI health."
+          exit 1
+
+      - name: Run BBVA export E2E script
+        shell: pwsh
+        run: |
+          ./scripts/e2e-bbva-export.ps1 `
+            -ApiBase "http://127.0.0.1:5000" `
+            -FilePath "${env:BBVA_E2E_FILE}" `
+            -OutputDir "reports/e2e-bbva-ci"
+
+      - name: Upload BBVA E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bbva-e2e-artifacts
+          path: |
+            reports/e2e-bbva-ci
+            ${{ runner.temp }}/api.log
+            ${{ runner.temp }}/ai.log
+
+      - name: Stop services
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          if [ -f "${RUNNER_TEMP}/api.pid" ]; then
+            kill "$(cat "${RUNNER_TEMP}/api.pid")" >/dev/null 2>&1 || true
+          fi
+          if [ -f "${RUNNER_TEMP}/ai.pid" ]; then
+            kill "$(cat "${RUNNER_TEMP}/ai.pid")" >/dev/null 2>&1 || true
+          fi

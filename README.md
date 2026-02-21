@@ -31,6 +31,7 @@ Sistema web empresarial para carga, clasificacion y extraccion de documentos ofi
 ## Arranque rapido (sin BD)
 1) IA Engine
 - Instalar dependencias: `pip install -r ai-engine-python/requirements.txt`
+- Para pruebas con `pytest`: `pip install -r ai-engine-python/requirements-dev.txt`
 - Ejecutar: `uvicorn app.main:app --host 0.0.0.0 --port 8000`
 
 2) Backend API
@@ -50,14 +51,19 @@ Sistema web empresarial para carga, clasificacion y extraccion de documentos ofi
 - Ejecutar: `powershell -File scripts/smoke.ps1`
 - Con login: `powershell -File scripts/smoke.ps1 -Username "<usuario>" -Secret "<password>"`
 - Modo protegido (auto-recupera y valida botones/endpoints): `powershell -File scripts/guard-mode.ps1 -Username "<usuario>" -Secret "<password>"`
+- E2E BBVA seguro (secret por variable de entorno): `$env:ILCDIA_E2E_USERNAME="<usuario>"; $env:ILCDIA_E2E_SECRET="<password>"; powershell -File scripts/e2e-bbva-export.ps1 -ApiBase "http://localhost:5000" -FilePath "ai-engine-python/tests/fixtures/payments/<archivo>.pdf"`
+- E2E BBVA estricto (campos esperados): `powershell -File scripts/e2e-bbva-export.ps1 -ApiBase "http://localhost:5000" -FilePath "ai-engine-python/tests/fixtures/payments/<archivo>.pdf" -ExpectedBank "BBVA" -ExpectedCuenta "<cuenta>" -ExpectedReferencia "<referencia>" -ExpectedConcepto "<concepto>" -ExpectedTotal "<total>"`
 
 ## Verificacion local
 - Ejecutar: `powershell -File scripts/verify-all.ps1`
 - Rapido (sin frontend tests): `powershell -File scripts/verify-all.ps1 -SkipFrontendTests`
+- Pruebas IA directas (pytest): `cd ai-engine-python; .\.venv312\Scripts\python.exe -m pytest tests -q`
 - Validar secretos: `powershell -File scripts/validate-secrets.ps1`
 - Validar secretos + connection string DB: `powershell -File scripts/validate-secrets.ps1 -RequireDbConnectionString`
 - Preflight release: `powershell -File scripts/release-preflight.ps1 -ApiBase "http://localhost:5000" -AiBase "http://localhost:8000" -Username "<usuario>" -Secret "<password>"`
 - Preflight release con DB persistente: `powershell -File scripts/release-preflight.ps1 -RequireDbConnectionString -ApiBase "http://localhost:5000" -AiBase "http://localhost:8000" -Username "<usuario>" -Secret "<password>"`
+- Preflight release con E2E BBVA (secret en env o parametro): `powershell -File scripts/release-preflight.ps1 -ApiBase "http://localhost:5000" -AiBase "http://localhost:8000" -Username "<usuario>" -BbvaFilePath "ai-engine-python/tests/fixtures/payments/<archivo>.pdf"`
+- CI opcional E2E BBVA: ejecutar workflow `ci` por `workflow_dispatch` con `run_bbva_e2e=true` y secretos `E2E_USERNAME`, `E2E_SECRET`, `E2E_BBVA_FILE_BASE64`
 - Check de umbrales operativos: `powershell -File scripts/check-operational-thresholds.ps1 -ApiBase "http://localhost:5000" -Username "<admin>" -Secret "<password>"`
 
 ## Flujo MVP (sin BD)

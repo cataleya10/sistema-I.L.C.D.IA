@@ -550,6 +550,14 @@ _PAYMENT_TABLE_TEXT_LABELS = (
     "concepto",
 )
 
+_GENERIC_TABLE_MAX_TABLES = 20
+_GENERIC_TABLE_MAX_ROWS = 140
+_GENERIC_TABLE_MAX_COLS = 25
+_GENERIC_TABLE_MAX_CELL_TEXT = 240
+_GENERIC_TABLE_BLOCK_GAP_Y = 36
+_GENERIC_TABLE_LARGE_GAP_X = 34
+_GENERIC_TABLE_JOIN_GAP_X = 16
+
 
 def _normalize_table_cell(text: str) -> str:
     cell = _normalize_text(str(text or "")).upper()
@@ -558,6 +566,336 @@ def _normalize_table_cell(text: str) -> str:
     if len(cell) > 90:
         return cell[:90].rstrip() + "..."
     return cell
+
+
+def _normalize_table_cell_exact(text: str) -> str:
+    cell = _normalize_text(str(text or ""))
+    if not cell:
+        return ""
+    if len(cell) > _GENERIC_TABLE_MAX_CELL_TEXT:
+        return cell[:_GENERIC_TABLE_MAX_CELL_TEXT].rstrip()
+    return cell
+
+
+def _table_rows_signature(rows: list[list[str]]) -> str:
+    parts: list[str] = []
+    for row in rows[:6]:
+        if not isinstance(row, list):
+            continue
+        key = "|".join(_normalize_keyword(str(cell or "")) for cell in row[:8])
+        if key:
+            parts.append(key)
+    return "||".join(parts)
+
+
+def _table_line_gap_stats(line: dict) -> dict[str, float]:
+    boxes = [
+        box for box in line.get("boxes", [])
+        if _normalize_table_cell_exact(box.get("text", ""))
+    ]
+    if len(boxes) < 2:
+        return {"box_count": float(len(boxes)), "max_gap": 0.0, "large_gap_count": 0.0}
+
+    sorted_boxes = sorted(boxes, key=lambda item: item["rect"][0])
+    gaps: list[float] = []
+    for idx in range(len(sorted_boxes) - 1):
+        left = sorted_boxes[idx]
+        right = sorted_boxes[idx + 1]
+        gaps.append(float(right["rect"][0] - left["rect"][2]))
+
+    max_gap = max(gaps) if gaps else 0.0
+    large_gap_count = sum(1 for gap in gaps if gap >= _GENERIC_TABLE_LARGE_GAP_X)
+    return {
+        "box_count": float(len(sorted_boxes)),
+        "max_gap": float(max_gap),
+        "large_gap_count": float(large_gap_count),
+    }
+
+
+def _looks_like_generic_table_line(line: dict) -> bool:
+    stats = _table_line_gap_stats(line)
+    box_count = int(stats.get("box_count", 0))
+    max_gap = float(stats.get("max_gap", 0.0))
+    large_gap_count = int(stats.get("large_gap_count", 0))
+    return (
+        (box_count >= 2 and large_gap_count >= 1)
+        or (box_count >= 4 and max_gap >= 20.0)
+    )
+
+
+def _generic_column_anchors_from_line(line_boxes: list[dict]) -> list[dict]:
+    if not line_boxes:
+        return []
+
+    sorted_boxes = sorted(line_boxes, key=lambda box: box["rect"][0])
+    grouped: list[list[dict]] = []
+    cluster = [sorted_boxes[0]]
+    for box in sorted_boxes[1:]:
+        prev = cluster[-1]
+        gap = box["rect"][0] - prev["rect"][2]
+        if gap <= _GENERIC_TABLE_JOIN_GAP_X:
+            cluster.append(box)
+            continue
+        grouped.append(cluster)
+        cluster = [box]
+    grouped.append(cluster)
+
+    anchors: list[dict] = []
+    for idx, group in enumerate(grouped[:_GENERIC_TABLE_MAX_COLS]):
+        x1 = min(item["rect"][0] for item in group)
+        x2 = max(item["rect"][2] for item in group)
+        label = _normalize_table_cell_exact(" ".join(item.get("text", "") for item in group))
+        anchors.append(
+            {
+                "x": (x1 + x2) / 2,
+                "x1": x1,
+                "x2": x2,
+                "label": label if label else f"COLUMN_{idx + 1}",
+            }
+        )
+    return anchors
+
+
+def _generic_row_with_cells_by_anchors(
+    row_boxes: list[dict],
+    anchors: list[dict],
+) -> tuple[list[str], list[dict]]:
+    if not row_boxes or not anchors:
+        return [], []
+
+    columns: list[list[tuple[float, str, tuple[float, float, float, float]]]] = [[] for _ in anchors]
+    for box in row_boxes:
+        text = _normalize_table_cell_exact(box.get("text", ""))
+        if not text:
+            continue
+        x1, y1, x2, y2 = box["rect"]
+        center = (x1 + x2) / 2
+        best_idx = min(
+            range(len(anchors)),
+            key=lambda idx: abs(center - anchors[idx]["x"]),
+        )
+        columns[best_idx].append((x1, text, (x1, y1, x2, y2)))
+
+    row: list[str] = []
+    cells: list[dict] = []
+    for col in columns:
+        if not col:
+            row.append("")
+            cells.append({"text": "", "bbox": None})
+            continue
+        col.sort(key=lambda item: item[0])
+        text = _normalize_table_cell_exact(" ".join(item[1] for item in col))
+        rects = [item[2] for item in col]
+        bbox = [
+            int(round(min(rect[0] for rect in rects))),
+            int(round(min(rect[1] for rect in rects))),
+            int(round(max(rect[2] for rect in rects))),
+            int(round(max(rect[3] for rect in rects))),
+        ]
+        row.append(text)
+        cells.append({"text": text, "bbox": bbox})
+    return row, cells
+
+
+def _extract_generic_tables_from_boxes(ocr_boxes) -> list[dict]:
+    lines = _lines_text_from_boxes(ocr_boxes)
+    if not lines:
+        return []
+
+    table_lines: list[dict] = []
+    for idx, line in enumerate(lines):
+        boxes = [
+            box for box in line.get("boxes", [])
+            if _normalize_table_cell_exact(box.get("text", ""))
+        ]
+        if len(boxes) < 2:
+            continue
+        line_entry = {
+            "index": idx,
+            "y": float(line.get("y", 0.0) or 0.0),
+            "boxes": boxes,
+        }
+        line_entry["is_table_like"] = _looks_like_generic_table_line({"boxes": boxes})
+        if line_entry["is_table_like"]:
+            table_lines.append(line_entry)
+
+    if len(table_lines) < 2:
+        return []
+
+    blocks: list[list[dict]] = []
+    current: list[dict] = []
+    for line in table_lines:
+        if not current:
+            current = [line]
+            continue
+        gap = line["y"] - current[-1]["y"]
+        if gap > _GENERIC_TABLE_BLOCK_GAP_Y:
+            blocks.append(current)
+            current = [line]
+            continue
+        current.append(line)
+    if current:
+        blocks.append(current)
+
+    tables: list[dict] = []
+    seen_signatures: set[str] = set()
+    for block in blocks:
+        if len(block) < 2:
+            continue
+
+        ref_line = max(
+            block,
+            key=lambda item: (
+                int(_table_line_gap_stats({"boxes": item["boxes"]}).get("large_gap_count", 0)),
+                len(item["boxes"]),
+            ),
+        )
+        anchors = _generic_column_anchors_from_line(ref_line["boxes"])
+        if len(anchors) < 2:
+            continue
+
+        rows: list[list[str]] = []
+        row_cells: list[list[dict]] = []
+        for line in block[:_GENERIC_TABLE_MAX_ROWS]:
+            row, cells = _generic_row_with_cells_by_anchors(line["boxes"], anchors)
+            non_empty = sum(1 for cell in row if _normalize_table_cell_exact(cell))
+            if non_empty < 2:
+                continue
+            rows.append(row[:_GENERIC_TABLE_MAX_COLS])
+            row_cells.append(cells[:_GENERIC_TABLE_MAX_COLS])
+
+        if len(rows) < 2:
+            continue
+
+        signature = _table_rows_signature(rows)
+        if not signature or signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
+
+        rects = [
+            box["rect"]
+            for line in block
+            for box in line["boxes"]
+            if box.get("rect")
+        ]
+        if not rects:
+            continue
+        bbox = [
+            int(round(min(rect[0] for rect in rects))),
+            int(round(min(rect[1] for rect in rects))),
+            int(round(max(rect[2] for rect in rects))),
+            int(round(max(rect[3] for rect in rects))),
+        ]
+
+        tables.append(
+            {
+                "table_index": len(tables) + 1,
+                "source": "ocr_boxes",
+                "row_count": len(rows),
+                "column_count": max((len(row) for row in rows), default=0),
+                "bbox": bbox,
+                "rows": rows,
+                "cells": row_cells,
+            }
+        )
+        if len(tables) >= _GENERIC_TABLE_MAX_TABLES:
+            break
+
+    return tables
+
+
+def _extract_generic_tables_from_text(raw_text: str) -> list[dict]:
+    text = str(raw_text or "")
+    if not text.strip():
+        return []
+
+    tables: list[dict] = []
+    current_rows: list[list[str]] = []
+    seen_signatures: set[str] = set()
+
+    def flush_current():
+        nonlocal current_rows
+        if len(current_rows) < 2:
+            current_rows = []
+            return
+        signature = _table_rows_signature(current_rows)
+        if not signature or signature in seen_signatures:
+            current_rows = []
+            return
+        seen_signatures.add(signature)
+        rows = [row[:_GENERIC_TABLE_MAX_COLS] for row in current_rows[:_GENERIC_TABLE_MAX_ROWS]]
+        cells = [
+            [{"text": _normalize_table_cell_exact(cell), "bbox": None} for cell in row]
+            for row in rows
+        ]
+        tables.append(
+            {
+                "table_index": len(tables) + 1,
+                "source": "text_lines",
+                "row_count": len(rows),
+                "column_count": max((len(row) for row in rows), default=0),
+                "bbox": None,
+                "rows": rows,
+                "cells": cells,
+            }
+        )
+        current_rows = []
+
+    for raw_line in text.splitlines():
+        line = _normalize_text(raw_line)
+        if not line:
+            flush_current()
+            if len(tables) >= _GENERIC_TABLE_MAX_TABLES:
+                break
+            continue
+
+        if "\t" in line:
+            parts = [part.strip() for part in line.split("\t") if part.strip()]
+        else:
+            parts = [part.strip() for part in re.split(r"\s{2,}", line) if part.strip()]
+
+        if len(parts) < 2:
+            flush_current()
+            if len(tables) >= _GENERIC_TABLE_MAX_TABLES:
+                break
+            continue
+
+        row = [_normalize_table_cell_exact(part) for part in parts[:_GENERIC_TABLE_MAX_COLS]]
+        current_rows.append(row)
+        if len(current_rows) >= _GENERIC_TABLE_MAX_ROWS:
+            flush_current()
+            if len(tables) >= _GENERIC_TABLE_MAX_TABLES:
+                break
+
+    flush_current()
+    return tables[:_GENERIC_TABLE_MAX_TABLES]
+
+
+def _extract_all_table_payloads(base_text_raw: str, ocr_boxes) -> list[dict]:
+    tables = _extract_generic_tables_from_boxes(ocr_boxes)
+    if tables:
+        return tables
+    return _extract_generic_tables_from_text(base_text_raw)
+
+
+def _pick_primary_table_from_payloads(tables: list[dict]) -> dict | None:
+    if not tables:
+        return None
+    ranked = sorted(
+        (
+            table for table in tables
+            if isinstance(table, dict)
+            and isinstance(table.get("rows"), list)
+            and len(table.get("rows", [])) >= 2
+        ),
+        key=lambda item: (
+            int(item.get("row_count", 0)),
+            int(item.get("column_count", 0)),
+            int(item.get("row_count", 0)) * int(item.get("column_count", 0)),
+        ),
+        reverse=True,
+    )
+    return ranked[0] if ranked else None
 
 
 def _looks_like_payment_table_header(cells: list[str]) -> bool:
@@ -1457,12 +1795,14 @@ def _extract_bbva_transfer_receipt_rows(lines: list[str], raw_text: str) -> list
 
 
 def _extract_payment_table_payload(base_text_raw: str, ocr_boxes) -> dict | None:
+    all_tables = _extract_all_table_payloads(base_text_raw, ocr_boxes)
     rows_ocr = _extract_payment_table_rows_from_boxes(ocr_boxes)
     rows_text = _extract_payment_table_rows_from_text(base_text_raw)
 
     score_ocr = _payment_rows_quality_score(rows_ocr) if len(rows_ocr) >= 2 else -999
     score_text = _payment_rows_quality_score(rows_text) if len(rows_text) >= 2 else -999
 
+    selected_table_index = None
     if score_ocr >= score_text and score_ocr >= 0:
         rows = rows_ocr
         source = "ocr_boxes"
@@ -1470,7 +1810,21 @@ def _extract_payment_table_payload(base_text_raw: str, ocr_boxes) -> dict | None
         rows = rows_text
         source = "text_lines"
     else:
-        return None
+        fallback_table = _pick_primary_table_from_payloads(all_tables)
+        if not isinstance(fallback_table, dict):
+            return None
+        fallback_rows = fallback_table.get("rows")
+        if not isinstance(fallback_rows, list) or len(fallback_rows) < 2:
+            return None
+        rows = [
+            [str(cell or "") for cell in row]
+            for row in fallback_rows
+            if isinstance(row, list)
+        ]
+        if len(rows) < 2:
+            return None
+        source = "generic_table_payload"
+        selected_table_index = int(fallback_table.get("table_index", 0) or 0)
 
     if source == "ocr_boxes":
         rows = _merge_payment_rows_with_backup(rows, rows_text)
@@ -1478,10 +1832,154 @@ def _extract_payment_table_payload(base_text_raw: str, ocr_boxes) -> dict | None
         rows = _merge_payment_rows_with_backup(rows, rows_ocr)
 
     rows = _append_scotia_summary_rows_to_table(rows, base_text_raw)
-    return {
+    payload = {
         "source": source,
         "rows": rows,
     }
+    if all_tables:
+        payload["all_tables"] = all_tables
+        payload["all_table_count"] = len(all_tables)
+        row_signature = _table_rows_signature(rows)
+        matched = next(
+            (
+                int(table.get("table_index", 0) or 0)
+                for table in all_tables
+                if isinstance(table, dict)
+                and _table_rows_signature(table.get("rows", [])) == row_signature
+            ),
+            0,
+        )
+        if matched > 0:
+            payload["primary_table_index"] = matched
+        elif selected_table_index and selected_table_index > 0:
+            payload["primary_table_index"] = selected_table_index
+    return payload
+
+
+def _build_payment_mapped_fields(payment_detail: dict) -> dict[str, str]:
+    if not isinstance(payment_detail, dict):
+        return {}
+
+    mapped: dict[str, str] = {}
+    bank = _normalize_text(str(payment_detail.get("bank") or ""))
+    if bank:
+        mapped["banco"] = bank
+
+    metadata = payment_detail.get("metadata")
+    if isinstance(metadata, dict):
+        for key in (
+            "tipo_pago",
+            "fecha_hora_proceso",
+            "fecha_hora_captura",
+            "folio_internet",
+            "numero_lote",
+            "nombre_archivo",
+            "usuario_sistema_nombre",
+            "importe_detectado",
+        ):
+            value = _normalize_text(str(metadata.get(key) or ""))
+            if value:
+                mapped[key] = value
+
+    table = payment_detail.get("table")
+    if not isinstance(table, dict):
+        return mapped
+
+    canonical_rows = table.get("canonical_rows")
+    if not isinstance(canonical_rows, list):
+        return mapped
+
+    first_row = next(
+        (
+            row
+            for row in canonical_rows
+            if isinstance(row, dict)
+            and any(_normalize_text(str(cell or "")) for cell in row.values())
+        ),
+        None,
+    )
+    if not isinstance(first_row, dict):
+        return mapped
+
+    key_map = {
+        "cuenta": "cuenta",
+        "cuenta_beneficiario": "cuenta_beneficiario",
+        "cuenta_retiro": "cuenta_retiro",
+        "banco_destino": "banco_destino",
+        "referencia": "referencia",
+        "importe": "importe",
+        "concepto_pago": "concepto_pago",
+        "clave_rastreo": "clave_rastreo",
+        "nombre_beneficiario": "nombre_beneficiario",
+        "estatus": "estatus",
+        "tipo_operacion": "tipo_operacion",
+        "forma_deposito": "forma_deposito",
+        "tipo_registro": "tipo_registro",
+        "tipo_movimiento": "tipo_movimiento",
+    }
+    for source_key, target_key in key_map.items():
+        value = _normalize_text(str(first_row.get(source_key) or ""))
+        if value:
+            mapped[target_key] = value
+
+    return mapped
+
+
+def _enrich_payment_table_payload(
+    table_payload: dict | None,
+    payment_detail: dict | None,
+) -> dict | None:
+    if not isinstance(table_payload, dict):
+        return table_payload
+    if not isinstance(payment_detail, dict):
+        return table_payload
+
+    enriched = dict(table_payload)
+
+    bank = _normalize_text(str(payment_detail.get("bank") or ""))
+    if bank:
+        enriched["bank"] = bank
+
+    metadata = payment_detail.get("metadata")
+    if isinstance(metadata, dict):
+        metadata_clean: dict[str, str] = {}
+        for key, value in metadata.items():
+            text = _normalize_text(str(value or ""))
+            if text:
+                metadata_clean[str(key)] = text
+        if metadata_clean:
+            enriched["metadata"] = metadata_clean
+
+    detail_table = payment_detail.get("table")
+    if isinstance(detail_table, dict):
+        canonical_columns = detail_table.get("canonical_columns")
+        if isinstance(canonical_columns, list):
+            columns = [_normalize_text(str(column or "")) for column in canonical_columns if _normalize_text(str(column or ""))]
+            if columns:
+                enriched["canonical_columns"] = columns
+
+        canonical_rows = detail_table.get("canonical_rows")
+        if isinstance(canonical_rows, list):
+            rows: list[dict[str, str]] = []
+            for row in canonical_rows:
+                if not isinstance(row, dict):
+                    continue
+                normalized_row: dict[str, str] = {}
+                for key, value in row.items():
+                    text = _normalize_text(str(value or ""))
+                    if text:
+                        normalized_row[str(key)] = text
+                if normalized_row:
+                    rows.append(normalized_row)
+            if rows:
+                enriched["canonical_rows"] = rows
+                enriched["canonical_row_count"] = len(rows)
+
+    mapped_fields = _build_payment_mapped_fields(payment_detail)
+    if mapped_fields:
+        enriched["mapped_fields"] = mapped_fields
+
+    return enriched
 
 
 def _append_scotia_summary_rows_to_table(rows: list[list[str]], raw_text: str) -> list[list[str]]:
@@ -1832,6 +2330,17 @@ def _extract_bbva_payment_metadata(raw_text: str) -> dict[str, str]:
     )
     if process_dt:
         out["fecha_hora_proceso"] = _normalize_text(process_dt.group(1))
+    capture_dt = re.search(
+        r"FECHA\s+Y\s+HORA\s+DE\s+CAPTURA\s*:?\s*([A-Z0-9:/ .-]{8,80})",
+        text,
+    )
+    if capture_dt:
+        out["fecha_hora_captura"] = _normalize_text(capture_dt.group(1))
+    folio_internet = re.search(r"FOLIO\s+DE\s+INTERNET\s*:?\s*([0-9OIL]{4,20})", text)
+    if folio_internet:
+        normalized_folio = _normalize_numeric_field(folio_internet.group(1))
+        if re.fullmatch(r"\d{4,20}", normalized_folio):
+            out["folio_internet"] = normalized_folio
     archivo_value = _payment_pick_labeled_value(raw_text, ["NOMBRE DE ARCHIVO", "ARCHIVO"], max_len=120)
     if archivo_value and ("." in archivo_value or "_" in archivo_value or re.search(r"\d", archivo_value)):
         out["nombre_archivo"] = _normalize_text(archivo_value)
@@ -1898,12 +2407,14 @@ def _sanitize_payment_metadata(metadata: dict[str, str]) -> dict[str, str]:
         return {}
     cleaned: dict[str, str] = {}
     date_keys = {"fecha_archivo"}
-    datetime_keys = {"fecha_hora_validacion_archivo", "fecha_hora_registro", "fecha_hora_proceso"}
+    datetime_keys = {"fecha_hora_validacion_archivo", "fecha_hora_registro", "fecha_hora_proceso", "fecha_hora_captura"}
+    time_keys = {"hora_archivo"}
     amount_keys = {"importe_total_movimientos", "importe_movimiento_altas", "importe_movimientos_bajas", "importe_detectado"}
     count_keys = {"cantidad_total_movimientos", "cantidad_movimientos_altas", "cantidad_movimientos_bajas", "total_registros_leidos"}
     numeric_keys = {
         "numero_contrato_scotia_linea",
         "folio",
+        "folio_internet",
         "numero_archivo_en_dia",
         "numero_contrato_servicio",
         "numero_lote",
@@ -1924,6 +2435,11 @@ def _sanitize_payment_metadata(metadata: dict[str, str]) -> dict[str, str]:
             if normalized:
                 cleaned[key] = normalized
             continue
+        if key in time_keys:
+            time_match = re.search(r"\b\d{1,2}:\d{2}(?::\d{2})?\b", raw)
+            if time_match:
+                cleaned[key] = time_match.group(0)
+            continue
         if key in amount_keys:
             normalized = _normalize_payment_amount(raw)
             if normalized:
@@ -1936,6 +2452,8 @@ def _sanitize_payment_metadata(metadata: dict[str, str]) -> dict[str, str]:
             continue
         if key in numeric_keys:
             normalized = _normalize_numeric_field(raw)
+            if key in {"folio", "folio_internet"} and len(normalized) < 4:
+                continue
             if normalized:
                 cleaned[key] = normalized
             continue
@@ -5342,6 +5860,8 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
             fields.append(_make_field("clabe", "CLABE", _normalize_numeric_field(labeled_clabe), ocr_boxes, confidence=0.8))
 
         payment_table = _extract_payment_table_payload(base_text_raw, ocr_boxes)
+        payment_detail = _extract_payment_detail_payload(base_text_raw, payment_table)
+        payment_table = _enrich_payment_table_payload(payment_table, payment_detail)
         if payment_table:
             fields.append(
                 _make_field(
@@ -5352,7 +5872,6 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                     confidence=0.92,
                 )
             )
-        payment_detail = _extract_payment_detail_payload(base_text_raw, payment_table)
         if payment_detail:
             fields.append(
                 _make_field(
@@ -5390,6 +5909,8 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
 
     if not any(str(field.get("key", "") or "") == "tabla_celdas" for field in fields):
         payment_table = _extract_payment_table_payload(base_text_raw, ocr_boxes)
+        payment_detail = _extract_payment_detail_payload(base_text_raw, payment_table)
+        payment_table = _enrich_payment_table_payload(payment_table, payment_detail)
         if payment_table:
             fields.append(
                 _make_field(
@@ -5400,17 +5921,16 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                     confidence=0.9,
                 )
             )
-            payment_detail = _extract_payment_detail_payload(base_text_raw, payment_table)
-            if payment_detail:
-                fields.append(
-                    _make_field(
-                        "pago_detalle",
-                        "Pago detalle",
-                        json.dumps(payment_detail, ensure_ascii=False),
-                        ocr_boxes,
-                        confidence=0.88,
-                    )
+        if payment_detail:
+            fields.append(
+                _make_field(
+                    "pago_detalle",
+                    "Pago detalle",
+                    json.dumps(payment_detail, ensure_ascii=False),
+                    ocr_boxes,
+                    confidence=0.88,
                 )
+            )
 
     if document_type in {"ACTA_NACIMIENTO", "INE"}:
         if document_type == "ACTA_NACIMIENTO" and ocr_boxes:

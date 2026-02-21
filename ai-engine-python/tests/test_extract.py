@@ -173,6 +173,66 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertIn("JOSE LUIS", payload["rows"][1])
         self.assertIn("GARCIA LOPEZ", payload["rows"][1])
 
+    def test_extract_factura_payment_table_payload_includes_all_tables_with_cells(self):
+        ocr_text = "REPORTE GENERAL DE OPERACIONES"
+        ocr_boxes = [
+            {"text": "Columna A", "page": 1, "confidence": 0.99, "bbox": [[10, 10], [150, 10], [150, 30], [10, 30]]},
+            {"text": "Columna B", "page": 1, "confidence": 0.99, "bbox": [[220, 10], [360, 10], [360, 30], [220, 30]]},
+            {"text": "A1", "page": 1, "confidence": 0.99, "bbox": [[10, 40], [120, 40], [120, 60], [10, 60]]},
+            {"text": "B1", "page": 1, "confidence": 0.99, "bbox": [[220, 40], [300, 40], [300, 60], [220, 60]]},
+            {"text": "Producto", "page": 1, "confidence": 0.99, "bbox": [[10, 120], [180, 120], [180, 140], [10, 140]]},
+            {"text": "Cantidad", "page": 1, "confidence": 0.99, "bbox": [[240, 120], [380, 120], [380, 140], [240, 140]]},
+            {"text": "Precio", "page": 1, "confidence": 0.99, "bbox": [[440, 120], [560, 120], [560, 140], [440, 140]]},
+            {"text": "Lapiz", "page": 1, "confidence": 0.99, "bbox": [[10, 150], [120, 150], [120, 170], [10, 170]]},
+            {"text": "2", "page": 1, "confidence": 0.99, "bbox": [[260, 150], [280, 150], [280, 170], [260, 170]]},
+            {"text": "$10.00", "page": 1, "confidence": 0.99, "bbox": [[440, 150], [560, 150], [560, 170], [440, 170]]},
+            {"text": "Borrador", "page": 1, "confidence": 0.99, "bbox": [[10, 180], [140, 180], [140, 200], [10, 200]]},
+            {"text": "1", "page": 1, "confidence": 0.99, "bbox": [[260, 180], [280, 180], [280, 200], [260, 200]]},
+            {"text": "$5.00", "page": 1, "confidence": 0.99, "bbox": [[440, 180], [540, 180], [540, 200], [440, 200]]},
+        ]
+
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, ocr_boxes))
+        data = _field_map(fields)
+
+        self.assertIn("tabla_celdas", data)
+        payload = json.loads(data["tabla_celdas"])
+        self.assertIn("all_tables", payload)
+        tables = payload["all_tables"]
+        self.assertGreaterEqual(len(tables), 2)
+
+        first_table = tables[0]
+        self.assertEqual(first_table["rows"][0][0], "Columna A")
+        self.assertEqual(first_table["rows"][1][1], "B1")
+        self.assertEqual(first_table["cells"][1][1]["bbox"], [220, 40, 300, 60])
+
+        second_table = tables[1]
+        self.assertEqual(second_table["rows"][0][0], "Producto")
+        self.assertEqual(second_table["rows"][0][2], "Precio")
+        self.assertEqual(second_table["rows"][2][2], "$5.00")
+        self.assertEqual(second_table["cells"][2][2]["bbox"], [440, 180, 540, 200])
+
+    def test_extract_factura_payment_table_payload_falls_back_to_generic_table(self):
+        ocr_text = "RESUMEN DE MOVIMIENTOS"
+        ocr_boxes = [
+            {"text": "Producto", "page": 1, "confidence": 0.99, "bbox": [[10, 10], [180, 10], [180, 30], [10, 30]]},
+            {"text": "Cantidad", "page": 1, "confidence": 0.99, "bbox": [[240, 10], [380, 10], [380, 30], [240, 30]]},
+            {"text": "Precio", "page": 1, "confidence": 0.99, "bbox": [[440, 10], [560, 10], [560, 30], [440, 30]]},
+            {"text": "Lapiz", "page": 1, "confidence": 0.99, "bbox": [[10, 40], [120, 40], [120, 60], [10, 60]]},
+            {"text": "2", "page": 1, "confidence": 0.99, "bbox": [[260, 40], [280, 40], [280, 60], [260, 60]]},
+            {"text": "$10.00", "page": 1, "confidence": 0.99, "bbox": [[440, 40], [560, 40], [560, 60], [440, 60]]},
+        ]
+
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, ocr_boxes))
+        data = _field_map(fields)
+
+        self.assertIn("tabla_celdas", data)
+        payload = json.loads(data["tabla_celdas"])
+        self.assertEqual(payload.get("source"), "generic_table_payload")
+        self.assertEqual(payload["rows"][0][0], "Producto")
+        self.assertEqual(payload["rows"][1][2], "$10.00")
+        self.assertGreaterEqual(payload.get("all_table_count", 0), 1)
+        self.assertEqual(payload.get("primary_table_index"), 1)
+
     def test_extract_factura_scotia_ocr_boxes_also_append_bottom_summary_rows(self):
         ocr_text = "\n".join(
             [
@@ -688,6 +748,10 @@ class ExtractPipelineTests(unittest.TestCase):
                 "01",
                 "Clave de rastreo:",
                 "BNET01002601150032369465",
+                "Fecha y Hora de Captura:",
+                "15/01/2026 14:36:38",
+                "Folio de internet:",
+                "4217367106",
                 "Datos del beneficiario",
                 "Nombre:",
                 "CRUZ ESPINO CARLOS JESUS",
@@ -708,6 +772,18 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertEqual(rows[1][4], "$5,115.99")
         self.assertEqual(rows[1][7], "01")
         self.assertEqual(rows[1][8], "BNET01002601150032369465")
+        self.assertEqual(payload.get("bank"), "BBVA")
+        self.assertEqual(payload.get("metadata", {}).get("fecha_hora_captura"), "15/01/2026 14:36:38")
+        self.assertEqual(payload.get("metadata", {}).get("folio_internet"), "4217367106")
+        mapped = payload.get("mapped_fields", {})
+        self.assertEqual(mapped.get("banco"), "BBVA")
+        self.assertEqual(mapped.get("cuenta"), "014888567491511396")
+        self.assertEqual(mapped.get("cuenta_retiro"), "0123965767")
+        self.assertEqual(mapped.get("referencia"), "01")
+        self.assertEqual(mapped.get("clave_rastreo"), "BNET01002601150032369465")
+        self.assertEqual(mapped.get("nombre_beneficiario"), "CRUZ ESPINO CARLOS JESUS")
+        self.assertEqual(mapped.get("fecha_hora_captura"), "15/01/2026 14:36:38")
+        self.assertEqual(mapped.get("folio_internet"), "4217367106")
 
         self.assertIn("pago_detalle", data)
         detail = json.loads(data["pago_detalle"])
@@ -720,6 +796,11 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertEqual(canonical_rows[0].get("referencia"), "01")
         self.assertEqual(canonical_rows[0].get("concepto_pago"), "PAGO NM")
         self.assertEqual(canonical_rows[0].get("clave_rastreo"), "BNET01002601150032369465")
+        metadata = detail.get("metadata", {})
+        self.assertEqual(metadata.get("fecha_hora_captura"), "15/01/2026 14:36:38")
+        self.assertEqual(metadata.get("folio_internet"), "4217367106")
+        self.assertNotIn("hora_archivo", metadata)
+        self.assertNotIn("folio", metadata)
 
     def test_extract_factura_banorte_detail_table_keeps_all_columns(self):
         ocr_text = "\n".join(

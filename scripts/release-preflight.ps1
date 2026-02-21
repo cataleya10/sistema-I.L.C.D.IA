@@ -3,8 +3,10 @@ param(
     [string]$AiBase = "http://localhost:8000",
     [string]$Username = "",
     [string]$Secret = "",
+    [string]$BbvaFilePath = "",
     [switch]$SkipFrontendTests,
-    [switch]$RequireDbConnectionString
+    [switch]$RequireDbConnectionString,
+    [switch]$SkipBbvaE2E
 )
 
 $ErrorActionPreference = "Stop"
@@ -88,6 +90,35 @@ try {
         } finally {
             Pop-Location
         }
+    }
+
+    if (-not $SkipBbvaE2E) {
+        $bbvaUsername = if (-not [string]::IsNullOrWhiteSpace($Username)) { $Username.Trim() } else { $env:ILCDIA_E2E_USERNAME }
+        $bbvaSecret = if (-not [string]::IsNullOrWhiteSpace($Secret)) { $Secret } else { $env:ILCDIA_E2E_SECRET }
+
+        if ([string]::IsNullOrWhiteSpace($bbvaUsername) -or [string]::IsNullOrWhiteSpace($bbvaSecret) -or [string]::IsNullOrWhiteSpace($BbvaFilePath)) {
+            Write-Host "[SKIP] BBVA export E2E (define -BbvaFilePath y credenciales via -Username/-Secret o ILCDIA_E2E_USERNAME/ILCDIA_E2E_SECRET)" -ForegroundColor Yellow
+        } else {
+            Invoke-Step -Name "BBVA export E2E (process + word + excel)" -Action {
+                Push-Location $root
+                $previousUsername = $env:ILCDIA_E2E_USERNAME
+                $previousSecret = $env:ILCDIA_E2E_SECRET
+                try {
+                    $env:ILCDIA_E2E_USERNAME = $bbvaUsername
+                    $env:ILCDIA_E2E_SECRET = $bbvaSecret
+                    & powershell -File "scripts\e2e-bbva-export.ps1" `
+                        -ApiBase $ApiBase `
+                        -FilePath $BbvaFilePath
+                    Assert-LastExitCode "e2e-bbva-export.ps1 failed."
+                } finally {
+                    $env:ILCDIA_E2E_USERNAME = $previousUsername
+                    $env:ILCDIA_E2E_SECRET = $previousSecret
+                    Pop-Location
+                }
+            }
+        }
+    } else {
+        Write-Host "[SKIP] BBVA export E2E" -ForegroundColor Yellow
     }
 
     Write-Host ""
