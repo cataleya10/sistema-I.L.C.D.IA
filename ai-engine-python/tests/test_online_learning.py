@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import unittest
@@ -71,6 +72,7 @@ class OnlineLearningTests(unittest.TestCase):
             self.assertTrue(model_path.exists())
             self.assertTrue(alias_path.exists())
             self.assertTrue(stats_path.exists())
+            self.assertFalse(stats_path.with_suffix(stats_path.suffix + ".tmp").exists())
             self.assertEqual(int(stats.get("totals", {}).get("attempted", 0)), 1)
             self.assertEqual(int(stats.get("totals", {}).get("trained", 0)), 1)
             self.assertEqual(int(stats.get("totals", {}).get("skipped", 0)), 0)
@@ -226,6 +228,45 @@ class OnlineLearningTests(unittest.TestCase):
             model_data = model_path.read_text(encoding="utf-8")
             self.assertIn('"CURP"', model_data)
             self.assertIn('"NSS"', model_data)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_stats_loader_recovers_legacy_tmp_file(self):
+        temp_dir = Path("reports") / f"online_stats_recover_{uuid.uuid4().hex}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            stats_path = temp_dir / "online_training_stats.json"
+            legacy_tmp = stats_path.with_suffix(stats_path.suffix + ".tmp")
+            legacy_tmp.write_text(
+                json.dumps(
+                    {
+                        "updated_at_utc": "2026-02-21T00:00:00+00:00",
+                        "dataset_samples": 3,
+                        "totals": {"attempted": 5, "trained": 3, "skipped": 2},
+                        "by_reason": {"trained": 3},
+                        "by_document_type": {"FACTURA": {"attempted": 5, "trained": 3, "skipped": 2}},
+                        "last_event": {"document_id": "legacy-1"},
+                        "recent_events": [],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.dict(
+                os.environ,
+                {
+                    "ONLINE_TRAINING_STATS_PATH": str(stats_path),
+                },
+                clear=False,
+            ):
+                stats = get_online_learning_stats(recent=0)
+
+            self.assertTrue(stats_path.exists())
+            if legacy_tmp.exists():
+                self.assertEqual(legacy_tmp.read_text(encoding="utf-8"), "")
+            self.assertEqual(int(stats.get("dataset_samples", 0)), 3)
+            self.assertEqual(int(stats.get("totals", {}).get("attempted", 0)), 5)
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 

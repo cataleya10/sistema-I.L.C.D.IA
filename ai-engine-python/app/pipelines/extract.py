@@ -974,6 +974,9 @@ def _extract_payment_table_rows_from_compact_text(raw_text: str) -> list[list[st
     detail_rows = _extract_banorte_bbva_detail_rows(lines, raw_text)
     if detail_rows:
         return detail_rows
+    bbva_transfer_rows = _extract_bbva_transfer_receipt_rows(lines, raw_text)
+    if bbva_transfer_rows:
+        return bbva_transfer_rows
 
     full = " ".join(lines)
     values: dict[str, str] = {}
@@ -1244,6 +1247,215 @@ def _extract_banorte_bbva_detail_rows(lines: list[str], raw_text: str) -> list[l
     return [header, row]
 
 
+def _extract_bbva_transfer_receipt_rows(lines: list[str], raw_text: str) -> list[list[str]]:
+    if not lines:
+        return []
+    normalized_lines = [str(line or "").strip() for line in lines if str(line or "").strip()]
+    normalized_keys = [_normalize_keyword(_ascii_fold(line).upper()) for line in normalized_lines]
+    full = " ".join(normalized_lines)
+    full_key = " ".join(normalized_keys)
+    if "COMPROBANTE" not in full_key:
+        return []
+    if not any(
+        token in full_key
+        for token in (
+            "RESULTADODELTRASPASO",
+            "TRASPASOSAOTROSBANCOS",
+            "TRASPASOAOTROSBANCOS",
+        )
+    ):
+        return []
+    has_deposit_label = any(
+        key.startswith("CUENTADEDEPOSITO")
+        or key.startswith("CUENTADEDEPSITO")
+        or key.startswith("CUENTADESTINO")
+        for key in normalized_keys
+    )
+    if not has_deposit_label:
+        return []
+
+    def keyword_close(left: str, right: str) -> bool:
+        if left == right:
+            return True
+        if abs(len(left) - len(right)) > 1:
+            return False
+        i = 0
+        j = 0
+        mismatches = 0
+        while i < len(left) and j < len(right):
+            if left[i] == right[j]:
+                i += 1
+                j += 1
+                continue
+            mismatches += 1
+            if mismatches > 1:
+                return False
+            if len(left) > len(right):
+                i += 1
+            elif len(right) > len(left):
+                j += 1
+            else:
+                i += 1
+                j += 1
+        if i < len(left) or j < len(right):
+            mismatches += 1
+        return mismatches <= 1
+
+    def pick_line_value(labels: list[str], lookahead: int = 4, max_len: int = 120) -> str:
+        label_pairs = []
+        for label in labels:
+            key = _normalize_keyword(_ascii_fold(_normalize_text(label)).upper())
+            if key:
+                label_pairs.append((label, key))
+        for idx, line in enumerate(normalized_lines):
+            line_key = normalized_keys[idx]
+            for label, label_key in label_pairs:
+                if keyword_close(line_key, label_key):
+                    for next_idx in range(idx + 1, min(len(normalized_lines), idx + 1 + lookahead)):
+                        next_line = normalized_lines[next_idx]
+                        next_key = normalized_keys[next_idx]
+                        if not next_line:
+                            continue
+                        if any(keyword_close(next_key, candidate_key) for _, candidate_key in label_pairs):
+                            continue
+                        return _normalize_text(next_line)[:max_len]
+                if line_key.startswith(label_key):
+                    remainder = _normalize_text(line).strip(" :")
+                    prefix = _normalize_text(label)
+                    if remainder.startswith(prefix):
+                        remainder = remainder[len(prefix):].strip(" :")
+                    if remainder:
+                        return remainder[:max_len]
+        fallback = _payment_pick_labeled_value(raw_text, labels, max_len=max_len)
+        if fallback:
+            return fallback
+        return ""
+
+    cuenta_retiro = _normalize_numeric_field(
+        pick_line_value(["CUENTA DE RETIRO"], max_len=30)
+    )
+    tipo_operacion = _normalize_text(
+        pick_line_value(["TIPO DE OPERACION"], max_len=90)
+    )
+    banco_destino = _normalize_text(
+        pick_line_value(["BANCO DESTINO"], max_len=80)
+    )
+    cuenta_destino = _normalize_numeric_field(
+        pick_line_value(
+            ["CUENTA DE DEPOSITO", "CUENTA DESTINO", "CUENTA DE ABONO"],
+            max_len=40,
+        )
+    )
+    importe = _normalize_payment_amount(
+        pick_line_value(["IMPORTE"], max_len=40)
+    )
+    forma_deposito = _normalize_text(
+        pick_line_value(["FORMA DE DEPOSITO"], max_len=80)
+    )
+    concepto = _normalize_text(
+        pick_line_value(["CONCEPTO DE PAGO", "CONCEPTO"], max_len=100)
+    )
+    raw_referencia = pick_line_value(["REFERENCIA NUMERICA", "REFERENCIA"], max_len=40)
+    referencia = _normalize_value_for_key("referencia", raw_referencia)
+    if not referencia:
+        short_reference = _normalize_numeric_field(raw_referencia)
+        if re.fullmatch(r"\d{1,3}", short_reference or ""):
+            referencia = short_reference
+    if not referencia:
+        for idx, line_key in enumerate(normalized_keys):
+            if "REFERENCIA" not in line_key:
+                continue
+            for next_idx in range(idx + 1, min(len(normalized_lines), idx + 3)):
+                candidate_line = normalized_lines[next_idx]
+                candidate_key = normalized_keys[next_idx]
+                if any(
+                    token in candidate_key
+                    for token in ("CLAVE", "NOMBRE", "IMPORTE", "CONCEPTO", "BANCO", "CUENTA", "FORMA")
+                ):
+                    continue
+                candidate = _normalize_value_for_key("referencia", candidate_line)
+                if not candidate:
+                    short_candidate = _normalize_numeric_field(candidate_line)
+                    if re.fullmatch(r"\d{1,3}", short_candidate or ""):
+                        candidate = short_candidate
+                if candidate:
+                    referencia = candidate
+                    break
+            if referencia:
+                break
+    clave_rastreo = _normalize_text(
+        pick_line_value(["CLAVE DE RASTREO", "CLAVE RASTREO"], max_len=80)
+    )
+
+    nombre = ""
+    beneficiary_match = re.search(
+        r"DATOS\s+DEL\s+BENEFICIARIO\s+NOMBRE\s*:?\s*([^\n\r]{4,120})",
+        str(raw_text or ""),
+        flags=re.IGNORECASE,
+    )
+    if beneficiary_match:
+        candidate = _normalize_name(beneficiary_match.group(1))
+        if candidate and _looks_like_person_name(candidate):
+            nombre = candidate
+    if not nombre:
+        candidate_short = _normalize_name(
+            pick_line_value(["NOMBRE CORTO"])
+        )
+        if candidate_short and _looks_like_person_name(candidate_short):
+            nombre = candidate_short
+
+    estatus = ""
+    status_match = re.search(r"\b(APLICADO|ACEPTADO|TRANSMITIDO|RECHAZADO|PROCESADO)\b", full)
+    if status_match:
+        estatus = _normalize_text(status_match.group(1))
+    elif "ENPROCESODEVALIDACION" in full_key:
+        estatus = "EN PROCESO"
+
+    populated = sum(
+        1
+        for value in [
+            cuenta_retiro,
+            cuenta_destino,
+            importe,
+            banco_destino,
+            referencia,
+            clave_rastreo,
+            nombre,
+        ]
+        if value
+    )
+    if populated < 4:
+        return []
+
+    header = [
+        "CUENTA DE RETIRO",
+        "TIPO DE OPERACION",
+        "BANCO DESTINO",
+        "CUENTA DE DEPOSITO",
+        "IMPORTE",
+        "FORMA DE DEPOSITO",
+        "CONCEPTO DE PAGO",
+        "REFERENCIA NUMERICA",
+        "CLAVE DE RASTREO",
+        "NOMBRE",
+        "ESTATUS",
+    ]
+    row = [
+        cuenta_retiro,
+        tipo_operacion,
+        banco_destino,
+        cuenta_destino,
+        importe,
+        forma_deposito,
+        concepto,
+        referencia,
+        clave_rastreo,
+        nombre,
+        estatus,
+    ]
+    return [header, row]
+
+
 def _extract_payment_table_payload(base_text_raw: str, ocr_boxes) -> dict | None:
     rows_ocr = _extract_payment_table_rows_from_boxes(ocr_boxes)
     rows_text = _extract_payment_table_rows_from_text(base_text_raw)
@@ -1360,10 +1572,14 @@ def _payment_header_alias(token: str) -> str:
         "nocuentabeneficiario": "cuenta",
         "numerodecuenta": "cuenta",
         "numerodecuentadeabono": "cuenta",
+        "cuentadedeposito": "cuenta",
+        "cuentadeposito": "cuenta",
         "referenciadecarga": "referencia",
+        "referencianumerica": "referencia",
         "clavebeneficiario": "referencia",
         "nombredelbeneficiario": "nombre",
         "nombrebeneficiario": "nombre",
+        "conceptodepago": "concepto",
         "tipodemovimientopago": "concepto",
         "tipodemovimiento": "concepto",
     }
@@ -1425,6 +1641,12 @@ def _payment_detect_bank(raw_text: str) -> str:
     if "SCOTIABANK" in text:
         return "SCOTIABANK"
     if "BBVA" in text or "BANCOMER" in text or "REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS" in text:
+        return "BBVA"
+    if (
+        any(token in text for token in ("BNET", "FOLIO DE INTERNET", "RESULTADO DEL TRASPASO"))
+        and "CUENTA DE RETIRO" in text
+        and ("CUENTA DE DEPOSITO" in text or "CUENTA DESTINO" in text)
+    ):
         return "BBVA"
     if "SANTANDER" in text:
         return "SANTANDER"
@@ -1770,17 +1992,26 @@ def _canonical_payment_key(bank: str, raw_key: str) -> str:
 
     base_map = {
         "cuenta": "cuenta",
+        "cuentaderetiro": "cuenta_retiro",
         "cuentabeneficiario": "cuenta_beneficiario",
         "numerodecuentabeneficiario": "cuenta_beneficiario",
         "numerodecuenta": "cuenta",
         "nocuenta": "cuenta",
+        "cuentadedeposito": "cuenta",
+        "cuentadeposito": "cuenta",
         "referencia": "referencia",
+        "referencianumerica": "referencia",
         "importe": "importe",
         "nombre": "nombre_beneficiario",
         "nombrebeneficiario": "nombre_beneficiario",
         "estatus": "estatus",
         "concepto": "concepto_pago",
         "conceptopago": "concepto_pago",
+        "conceptodepago": "concepto_pago",
+        "tipodeoperacion": "tipo_operacion",
+        "bancodestino": "banco_destino",
+        "formadedeposito": "forma_deposito",
+        "clavederastreo": "clave_rastreo",
         "claverastreo": "clave_rastreo",
     }
     scotia_map = {
@@ -4143,6 +4374,8 @@ _ALLOWED_FIELDS_BY_TYPE: dict[str, set[str]] = {
         "fecha_limite",
         "total",
         "contrato",
+        "tabla_celdas",
+        "pago_detalle",
     },
     "DATOS_BANCARIOS": {
         "banco",
@@ -5152,6 +5385,30 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                         replica_text,
                         ocr_boxes,
                         confidence=1.0,
+                    )
+                )
+
+    if not any(str(field.get("key", "") or "") == "tabla_celdas" for field in fields):
+        payment_table = _extract_payment_table_payload(base_text_raw, ocr_boxes)
+        if payment_table:
+            fields.append(
+                _make_field(
+                    "tabla_celdas",
+                    "Tabla celdas",
+                    json.dumps(payment_table, ensure_ascii=False),
+                    ocr_boxes,
+                    confidence=0.9,
+                )
+            )
+            payment_detail = _extract_payment_detail_payload(base_text_raw, payment_table)
+            if payment_detail:
+                fields.append(
+                    _make_field(
+                        "pago_detalle",
+                        "Pago detalle",
+                        json.dumps(payment_detail, ensure_ascii=False),
+                        ocr_boxes,
+                        confidence=0.88,
                     )
                 )
 

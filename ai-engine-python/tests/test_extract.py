@@ -243,6 +243,36 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertEqual(payload.get("source"), "text_lines")
         self.assertEqual(payload["rows"][0][0], "CUENTA")
 
+    def test_extract_unknown_payment_table_from_text_lines(self):
+        ocr_text = "\n".join(
+            [
+                "Cuenta    Referencia    Importe    Nombre",
+                "56551346133    1620260115132703271255    $1,462.58    JOSE LUIS",
+            ]
+        )
+        fields = _run_sync(extract_fields("UNKNOWN", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertIn("tabla_celdas", data)
+        payload = json.loads(data["tabla_celdas"])
+        self.assertEqual(payload.get("source"), "text_lines")
+        self.assertEqual(payload["rows"][0][0], "CUENTA")
+
+    def test_extract_comprobante_payment_table_from_text_lines(self):
+        ocr_text = "\n".join(
+            [
+                "Cuenta    Referencia    Importe    Nombre",
+                "56551346133    1620260115132703271255    $1,462.58    JOSE LUIS",
+            ]
+        )
+        fields = _run_sync(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertIn("tabla_celdas", data)
+        payload = json.loads(data["tabla_celdas"])
+        self.assertEqual(payload.get("source"), "text_lines")
+        self.assertEqual(payload["rows"][0][0], "CUENTA")
+
     def test_extract_factura_payment_table_from_text_lines(self):
         ocr_text = "\n".join(
             [
@@ -628,6 +658,68 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertIn(rows[1][5], {"TRANSMITIDO", "APLICADO", "ACEPTADO"})
         self.assertEqual(rows[1][6], "00")
         self.assertIn(rows[1][7], {"ACEPTADO", "APLICADO", "TRANSMITIDO"})
+
+    def test_extract_factura_payment_table_from_bbva_transfer_receipt_text(self):
+        ocr_text = "\n".join(
+            [
+                "15/01/2026 9:10:29 AM",
+                "COMPROBANTE",
+                "Mis operaciones frecuentes - Traspasos a otros bancos",
+                "PODRIX CONSTRUCTION S DE RL DE CV",
+                "15/01/2026",
+                "Resultado del traspaso",
+                "Cuenta de retiro:",
+                "0123965767",
+                "Tipo de operación:",
+                "INTERBANCARIO CON / SIN CHEQUERA",
+                "Banco destino:",
+                "SANTANDER",
+                "Cuenta de depósito:",
+                "014888567491511396",
+                "Nombre corto:",
+                "CARLOS C E",
+                "Importe:",
+                "$5,115.99",
+                "Forma de depósito:",
+                "MISMO DIA (SPEI)",
+                "Concepto de pago:",
+                "PAGO NM",
+                "Referencia numérica:",
+                "01",
+                "Clave de rastreo:",
+                "BNET01002601150032369465",
+                "Datos del beneficiario",
+                "Nombre:",
+                "CRUZ ESPINO CARLOS JESUS",
+            ]
+        )
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertIn("tabla_celdas", data)
+        payload = json.loads(data["tabla_celdas"])
+        rows = payload.get("rows", [])
+        self.assertGreaterEqual(len(rows), 2)
+        self.assertEqual(rows[0][0], "CUENTA DE RETIRO")
+        self.assertEqual(rows[0][3], "CUENTA DE DEPOSITO")
+        self.assertEqual(rows[1][0], "0123965767")
+        self.assertEqual(rows[1][2], "SANTANDER")
+        self.assertEqual(rows[1][3], "014888567491511396")
+        self.assertEqual(rows[1][4], "$5,115.99")
+        self.assertEqual(rows[1][7], "01")
+        self.assertEqual(rows[1][8], "BNET01002601150032369465")
+
+        self.assertIn("pago_detalle", data)
+        detail = json.loads(data["pago_detalle"])
+        self.assertEqual(detail.get("bank"), "BBVA")
+        canonical_rows = detail.get("table", {}).get("canonical_rows", [])
+        self.assertGreaterEqual(len(canonical_rows), 1)
+        self.assertEqual(canonical_rows[0].get("cuenta"), "014888567491511396")
+        self.assertEqual(canonical_rows[0].get("cuenta_retiro"), "0123965767")
+        self.assertEqual(canonical_rows[0].get("banco_destino"), "SANTANDER")
+        self.assertEqual(canonical_rows[0].get("referencia"), "01")
+        self.assertEqual(canonical_rows[0].get("concepto_pago"), "PAGO NM")
+        self.assertEqual(canonical_rows[0].get("clave_rastreo"), "BNET01002601150032369465")
 
     def test_extract_factura_banorte_detail_table_keeps_all_columns(self):
         ocr_text = "\n".join(

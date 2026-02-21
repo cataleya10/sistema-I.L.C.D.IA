@@ -118,6 +118,7 @@ def _normalize_key(value: str) -> str:
 
 
 def _safe_load_json(path: Path) -> dict[str, Any]:
+    _recover_or_cleanup_legacy_temp(path)
     try:
         if not path.exists():
             return {}
@@ -129,19 +130,40 @@ def _safe_load_json(path: Path) -> dict[str, Any]:
     return {}
 
 
-def _safe_write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload_text = json.dumps(payload, ensure_ascii=False, indent=2)
-    temp = path.with_suffix(path.suffix + ".tmp")
-    temp.write_text(payload_text, encoding="utf-8")
-    try:
-        os.replace(temp, path)
-    except PermissionError:
-        path.write_text(payload_text, encoding="utf-8")
+def _legacy_temp_path(path: Path) -> Path:
+    return path.with_suffix(path.suffix + ".tmp")
+
+
+def _recover_or_cleanup_legacy_temp(path: Path) -> None:
+    legacy = _legacy_temp_path(path)
+    if not legacy.exists():
+        return
+
+    if not path.exists():
         try:
-            temp.unlink(missing_ok=True)
+            payload = legacy.read_text(encoding="utf-8")
+            if payload.strip():
+                path.write_text(payload, encoding="utf-8")
+        except OSError:
+            return
+
+    try:
+        legacy.unlink(missing_ok=True)
+    except OSError:
+        # Some Windows environments deny delete/rename in-place.
+        # Keep a harmless empty stub instead of leaving stale stats content.
+        try:
+            legacy.write_text("", encoding="utf-8")
         except OSError:
             pass
+
+
+def _safe_write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _recover_or_cleanup_legacy_temp(path)
+    payload_text = json.dumps(payload, ensure_ascii=False, indent=2)
+    path.write_text(payload_text, encoding="utf-8")
+    _recover_or_cleanup_legacy_temp(path)
 
 
 def _append_jsonl(path: Path, item: dict[str, Any]) -> None:
