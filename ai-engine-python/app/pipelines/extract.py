@@ -1045,9 +1045,118 @@ def _extract_payment_table_rows_from_boxes(ocr_boxes) -> list[list[str]]:
     return selected if len(selected) > 1 else []
 
 
+_ADVANCED_NOMINA_TABLE_HEADER = [
+    "CUENTA",
+    "REFERENCIA",
+    "IMPORTE",
+    "NOMBRE",
+    "APELLIDO PATERNO",
+    "APELLIDO MATERNO",
+    "ESTATUS",
+    "CONCEPTO",
+]
+
+
+def _split_payment_name_parts(full_name: str) -> tuple[str, str, str]:
+    normalized = _normalize_name(full_name)
+    if not normalized:
+        return "", "", ""
+    tokens = [token for token in normalized.split() if token]
+    if len(tokens) <= 2:
+        return normalized, "", ""
+    if len(tokens) == 3:
+        return tokens[0], tokens[1], tokens[2]
+    return " ".join(tokens[:-2]), tokens[-2], tokens[-1]
+
+
+def _extract_bbva_nomina_advanced_rows_from_text(raw_text: str) -> list[list[str]]:
+    folded = _ascii_fold(str(raw_text or "")).upper()
+    if "NOMINA" not in folded:
+        return []
+
+    lines = [_ascii_fold(_normalize_text(line)).upper() for line in str(raw_text or "").splitlines() if _normalize_text(line)]
+    if not lines:
+        return []
+
+    row_pattern = re.compile(
+        r"\b(?P<cuenta>\d{10,24})\s+"
+        r"(?P<referencia>\d{10,30})\s+"
+        r"(?P<importe>\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))\s+"
+        r"(?P<nombre>[A-ZÑÁÉÍÓÚÜ ]{4,120}?)"
+        r"(?=\s+\d{10,24}\s+\d{10,30}\s+\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})"
+        r"|\s+(?:PROCESADO|APLICADO|ACEPTADO|TRANSMITIDO|RECHAZADO)\b"
+        r"|\s*$)"
+    )
+    status_pattern = re.compile(r"\b(PROCESADO|APLICADO|ACEPTADO|TRANSMITIDO|RECHAZADO)\b")
+    concept_pattern = re.compile(r"\b(PAGO(?:\s+DE)?\s+NOMINA|ABONO\s+NOMINA)\b")
+
+    global_status_match = status_pattern.search(folded)
+    global_status = _normalize_table_cell(global_status_match.group(1)) if global_status_match else ""
+    global_concept_match = concept_pattern.search(folded)
+    global_concept = _normalize_table_cell(global_concept_match.group(1)) if global_concept_match else ""
+
+    rows: list[list[str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for line in lines:
+        if "CUENTA" in line and "REFERENCIA" in line and "IMPORTE" in line and "NOMBRE" in line:
+            continue
+        line_status_match = status_pattern.search(line)
+        line_status = _normalize_table_cell(line_status_match.group(1)) if line_status_match else global_status
+        line_concept_match = concept_pattern.search(line)
+        line_concept = _normalize_table_cell(line_concept_match.group(1)) if line_concept_match else global_concept
+
+        for match in row_pattern.finditer(line):
+            cuenta = _normalize_numeric_field(match.group("cuenta"))
+            referencia = _normalize_value_for_key("referencia", match.group("referencia"))
+            importe = _normalize_payment_amount(match.group("importe"))
+            full_name = _normalize_name(match.group("nombre"))
+            if not _looks_like_person_name(full_name):
+                continue
+
+            tail = line[match.end():]
+            tail_status_match = status_pattern.search(tail)
+            estatus = _normalize_table_cell(tail_status_match.group(1)) if tail_status_match else line_status
+
+            tail_concept_match = concept_pattern.search(tail)
+            concepto = _normalize_table_cell(tail_concept_match.group(1)) if tail_concept_match else line_concept
+
+            if not cuenta or not referencia or not importe:
+                continue
+
+            nombre, apellido_paterno, apellido_materno = _split_payment_name_parts(full_name)
+            if not nombre:
+                continue
+
+            dedupe_key = (cuenta, referencia, importe)
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+
+            rows.append(
+                [
+                    cuenta,
+                    referencia,
+                    importe,
+                    nombre,
+                    apellido_paterno,
+                    apellido_materno,
+                    estatus,
+                    concepto or line_concept or global_concept or "PAGO DE NOMINA",
+                ]
+            )
+
+    if len(rows) < 2:
+        return []
+
+    return [_ADVANCED_NOMINA_TABLE_HEADER, *rows[:60]]
+
+
 def _extract_payment_table_rows_from_text(raw_text: str) -> list[list[str]]:
     if not raw_text:
         return []
+    advanced_rows = _extract_bbva_nomina_advanced_rows_from_text(raw_text)
+    if advanced_rows:
+        return advanced_rows
     rows: list[list[str]] = []
     for raw_line in raw_text.splitlines():
         line = str(raw_line or "").strip()
@@ -2009,6 +2118,20 @@ def _payment_rows_look_low_quality(rows: list[list[str]]) -> bool:
     return _payment_rows_quality_score(rows) < 0
 
 
+def _header_cell_has_repeated_tokens(cell: str) -> bool:
+    tokens = [token for token in str(cell or "").strip().split() if token]
+    if len(tokens) < 2:
+        return False
+    upper_tokens = [token.upper() for token in tokens]
+    if all(token == upper_tokens[0] for token in upper_tokens):
+        return True
+    if len(upper_tokens) % 2 == 0:
+        half = len(upper_tokens) // 2
+        if upper_tokens[:half] == upper_tokens[half:]:
+            return True
+    return False
+
+
 def _payment_rows_quality_score(rows: list[list[str]]) -> int:
     if len(rows) < 2:
         return -100
@@ -2024,6 +2147,9 @@ def _payment_rows_quality_score(rows: list[list[str]]) -> int:
     score -= sum(max(0, len(cell) - 60) for cell in header) // 4
     score -= sum(max(0, len(cell) - 120) for cell in data) // 6
 
+    repeated_header_cells = sum(1 for cell in header if _header_cell_has_repeated_tokens(cell))
+    score -= repeated_header_cells * 14
+
     data_joined = " ".join(data)
     noisy_fragments = (
         "UNIDAD ESPECIALIZADA",
@@ -2034,6 +2160,13 @@ def _payment_rows_quality_score(rows: list[list[str]]) -> int:
         "LAPSO",
     )
     score -= sum(18 for fragment in noisy_fragments if fragment in data_joined)
+
+    amount_hits = len(re.findall(r"\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})\b", data_joined))
+    if amount_hits >= 2:
+        score -= 20
+    compact_number_hits = sum(1 for cell in data if len(re.findall(r"\b\d{10,24}\b", cell)) >= 2)
+    if compact_number_hits >= 1:
+        score -= 18
 
     if "CUENTA" in header_joined and data:
         account_cell = data[0] if len(data) >= 1 else ""
@@ -2517,15 +2650,23 @@ def _canonical_payment_key(bank: str, raw_key: str) -> str:
         "nocuenta": "cuenta",
         "cuentadedeposito": "cuenta",
         "cuentadeposito": "cuenta",
+        "cuentacuenta": "cuenta",
         "referencia": "referencia",
         "referencianumerica": "referencia",
+        "referenciareferencia": "referencia",
         "importe": "importe",
+        "importeimporte": "importe",
         "nombre": "nombre_beneficiario",
         "nombrebeneficiario": "nombre_beneficiario",
+        "nombrenombre": "nombre_beneficiario",
+        "apellidopaterno": "apellido_paterno",
+        "apellidomaterno": "apellido_materno",
+        "apellidopaternoapellidomaternoestatus": "apellido_combo_estatus",
         "estatus": "estatus",
         "concepto": "concepto_pago",
         "conceptopago": "concepto_pago",
         "conceptodepago": "concepto_pago",
+        "conceptoconcepto": "concepto_pago",
         "tipodeoperacion": "tipo_operacion",
         "bancodestino": "banco_destino",
         "formadedeposito": "forma_deposito",
@@ -2580,6 +2721,47 @@ def _payment_to_canonical_rows(bank: str, rows: list[dict]) -> tuple[list[str], 
                 canonical_row[canon_key] = value
             if canon_key not in canonical_keys:
                 canonical_keys.append(canon_key)
+
+        combo = _normalize_text(str(canonical_row.get("apellido_combo_estatus") or ""))
+        if combo:
+            status_match = re.search(r"\b(APLICADO|PROCESADO|ACEPTADO|TRANSMITIDO|RECHAZADO)\b", combo)
+            if status_match and not canonical_row.get("estatus"):
+                canonical_row["estatus"] = _normalize_text(status_match.group(1))
+                if "estatus" not in canonical_keys:
+                    canonical_keys.append("estatus")
+
+            combo_name = re.sub(r"\b(APLICADO|PROCESADO|ACEPTADO|TRANSMITIDO|RECHAZADO)\b", "", combo).strip()
+            combo_parts = [part for part in _normalize_name(combo_name).split() if part]
+            if combo_parts:
+                if len(combo_parts) >= 1 and not canonical_row.get("apellido_paterno"):
+                    canonical_row["apellido_paterno"] = combo_parts[0]
+                    if "apellido_paterno" not in canonical_keys:
+                        canonical_keys.append("apellido_paterno")
+                if len(combo_parts) >= 2 and not canonical_row.get("apellido_materno"):
+                    canonical_row["apellido_materno"] = combo_parts[1]
+                    if "apellido_materno" not in canonical_keys:
+                        canonical_keys.append("apellido_materno")
+
+            canonical_row.pop("apellido_combo_estatus", None)
+            if "apellido_combo_estatus" in canonical_keys:
+                canonical_keys.remove("apellido_combo_estatus")
+
+        full_name = _normalize_text(str(canonical_row.get("nombre_beneficiario") or ""))
+        if full_name:
+            nombre, apellido_paterno, apellido_materno = _split_payment_name_parts(full_name)
+            if nombre and not canonical_row.get("nombre"):
+                canonical_row["nombre"] = nombre
+                if "nombre" not in canonical_keys:
+                    canonical_keys.append("nombre")
+            if apellido_paterno and not canonical_row.get("apellido_paterno"):
+                canonical_row["apellido_paterno"] = apellido_paterno
+                if "apellido_paterno" not in canonical_keys:
+                    canonical_keys.append("apellido_paterno")
+            if apellido_materno and not canonical_row.get("apellido_materno"):
+                canonical_row["apellido_materno"] = apellido_materno
+                if "apellido_materno" not in canonical_keys:
+                    canonical_keys.append("apellido_materno")
+
         if canonical_row:
             canonical_rows.append(canonical_row)
     return canonical_keys, canonical_rows

@@ -2,6 +2,29 @@ import { DocumentField } from '../../../shared/models/document.models';
 
 const TABLE_FIELD_KEYS = new Set(['tabla_celdas', 'tabla', 'celdas', 'table_cells']);
 const HEADER_HINTS = ['TIPO', 'CUENTA', 'REFERENCIA', 'CLAVE', 'NOMBRE', 'BANCO', 'CONCEPTO', 'FECHA', 'MOVIMIENTO', 'IMPORTE'];
+const CANONICAL_TABLE_COLUMNS = [
+  'cuenta',
+  'referencia',
+  'importe',
+  'nombre',
+  'apellido_paterno',
+  'apellido_materno',
+  'estatus',
+  'concepto',
+] as const;
+
+type CanonicalKey = (typeof CANONICAL_TABLE_COLUMNS)[number];
+
+const CANONICAL_LABELS: Record<CanonicalKey, string> = {
+  cuenta: 'Cuenta',
+  referencia: 'Referencia',
+  importe: 'Importe',
+  nombre: 'Nombre',
+  apellido_paterno: 'Apellido paterno',
+  apellido_materno: 'Apellido materno',
+  estatus: 'Estatus',
+  concepto: 'Concepto',
+};
 
 function normalizeToken(value: string | null | undefined): string {
   return String(value ?? '')
@@ -20,6 +43,143 @@ function extractRows(payload: unknown): unknown[] | null {
     return Array.isArray(rows) ? rows : null;
   }
   return null;
+}
+
+function readCanonicalRoot(payload: unknown): { canonicalRows: unknown[] } | null {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const typed = payload as {
+    canonical_rows?: unknown;
+    canonical_columns?: unknown;
+    table?: {
+      canonical_rows?: unknown;
+      canonical_columns?: unknown;
+    };
+  };
+
+  const rootRows = Array.isArray(typed.canonical_rows) ? typed.canonical_rows : [];
+  const nestedRows = Array.isArray(typed.table?.canonical_rows) ? typed.table?.canonical_rows ?? [] : [];
+  const canonicalRows = rootRows.length > 0 ? rootRows : nestedRows;
+
+  if (!canonicalRows.length) {
+    return null;
+  }
+
+  return { canonicalRows };
+}
+
+function readFirstValue(row: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = String(row[key] ?? '').trim();
+    if (value) {
+      return value;
+    }
+  }
+  return '';
+}
+
+function splitNameParts(fullName: string): { nombre: string; apellidoPaterno: string; apellidoMaterno: string } {
+  const parts = String(fullName ?? '')
+    .trim()
+    .split(/\s+/)
+    .filter((part) => part.length > 0);
+
+  if (parts.length <= 2) {
+    return {
+      nombre: parts.join(' '),
+      apellidoPaterno: '',
+      apellidoMaterno: '',
+    };
+  }
+
+  if (parts.length === 3) {
+    return {
+      nombre: parts[0],
+      apellidoPaterno: parts[1],
+      apellidoMaterno: parts[2],
+    };
+  }
+
+  return {
+    nombre: parts.slice(0, parts.length - 2).join(' '),
+    apellidoPaterno: parts[parts.length - 2],
+    apellidoMaterno: parts[parts.length - 1],
+  };
+}
+
+function canonicalRowToTableRow(row: Record<string, unknown>): string[] {
+  const cuenta = readFirstValue(row, ['cuenta', 'cuenta_beneficiario', 'cuenta_retiro', 'cuenta_destino']);
+  const referencia = readFirstValue(row, ['referencia', 'referencia_numerica']);
+  const importe = readFirstValue(row, ['importe', 'importe_detectado', 'total']);
+  const estatus = readFirstValue(row, ['estatus', 'descripcion']);
+  const concepto = readFirstValue(row, ['concepto_pago', 'concepto', 'tipo_pago']);
+
+  const apellidoPaterno = readFirstValue(row, ['apellido_paterno']);
+  const apellidoMaterno = readFirstValue(row, ['apellido_materno']);
+  const fullName = readFirstValue(row, ['nombre', 'nombre_beneficiario', 'nombredelbeneficiario', 'nombrenombre']);
+  const nameParts = splitNameParts(fullName);
+
+  const nombre = readFirstValue(row, ['nombre']) || nameParts.nombre;
+  const apellidoPat = apellidoPaterno || nameParts.apellidoPaterno;
+  const apellidoMat = apellidoMaterno || nameParts.apellidoMaterno;
+
+  return [cuenta, referencia, importe, nombre, apellidoPat, apellidoMat, estatus, concepto];
+}
+
+function extractCanonicalRows(payload: unknown): string[][] {
+  const root = readCanonicalRoot(payload);
+  if (!root || root.canonicalRows.length === 0) {
+    return [];
+  }
+
+  const rows = root.canonicalRows
+    .map((item) => {
+      if (!item || typeof item !== 'object') {
+        return null;
+      }
+
+      const normalized: Record<string, unknown> = {};
+      for (const [rawKey, value] of Object.entries(item as Record<string, unknown>)) {
+        const key = normalizeToken(rawKey);
+        if (!key) {
+          continue;
+        }
+        normalized[key] = value;
+      }
+      return canonicalRowToTableRow(normalized);
+    })
+    .filter((row): row is string[] => Array.isArray(row) && row.some((value) => value.trim().length > 0));
+
+  if (!rows.length) {
+    return [];
+  }
+
+  return [CANONICAL_TABLE_COLUMNS.map((key) => CANONICAL_LABELS[key]), ...rows];
+}
+
+function collapseRepeatedHeaderCell(value: string): string {
+  const text = String(value ?? '').trim();
+  if (!text) {
+    return '';
+  }
+
+  const tokens = text.split(/\s+/).filter((token) => token.length > 0);
+  if (tokens.length >= 2 && tokens.every((token) => token.toUpperCase() === tokens[0].toUpperCase())) {
+    return tokens[0];
+  }
+
+  if (tokens.length % 2 === 0) {
+    const half = tokens.length / 2;
+    const left = tokens.slice(0, half).map((token) => token.toUpperCase()).join(' ');
+    const right = tokens.slice(half).map((token) => token.toUpperCase()).join(' ');
+    if (left === right) {
+      return tokens.slice(0, half).join(' ');
+    }
+  }
+
+  return text;
 }
 
 function tryParseJsonLike(text: string): unknown {
@@ -91,6 +251,11 @@ export function parseTableRows(rawValue: string | null | undefined): string[][] 
   }
 
   const parsed = tryParsePayload(value);
+  const canonicalRows = extractCanonicalRows(parsed);
+  if (canonicalRows.length > 1) {
+    return canonicalRows;
+  }
+
   const rows = extractRows(parsed);
   if (!rows || rows.length === 0) {
     return [];
@@ -122,6 +287,10 @@ export function parseTableRows(rawValue: string | null | undefined): string[][] 
 
   if (normalizedRows.length === 0) {
     return [];
+  }
+
+  if (normalizedRows.length > 0) {
+    normalizedRows[0] = normalizedRows[0].map((cell) => collapseRepeatedHeaderCell(cell));
   }
 
   const maxCols = normalizedRows.reduce((max, row) => Math.max(max, row.length), 0);

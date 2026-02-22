@@ -161,6 +161,66 @@ public class HybridAiClientTests
     }
 
     [Fact]
+    public async Task ProcessDocumentAsync_FacturaMerge_PrefersStructuredPythonTableWhenCSharpTableIsNoisy()
+    {
+        var tempFile = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}-factura-structured.txt");
+        await File.WriteAllTextAsync(
+            tempFile,
+            """
+            REPORTE DE OPERACIONES
+            PAGO DE NOMINA
+            CUENTA REFERENCIA IMPORTE NOMBRE
+            56783223195 1620260115134340581263 $610.44 MARLA GRISELDA MENDEZ FLORES PROCESADO
+            """);
+
+        try
+        {
+            var config = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["PythonAi:BaseUrl"] = "http://unit-test.local",
+                    ["AiEngine:Hybrid:EnablePythonFallback"] = "true",
+                    ["AiEngine:Hybrid:FallbackMinConfidence"] = "0.8",
+                    ["AiEngine:Hybrid:AlwaysMergePythonFields"] = "true"
+                })
+                .Build();
+
+            using var httpClient = new HttpClient(new FacturaStructuredTableHandler())
+            {
+                BaseAddress = new Uri("http://unit-test.local")
+            };
+
+            var pythonClient = new PythonAiClient(httpClient, config);
+            var csharpClient = new CSharpAiClient();
+            var hybridClient = new HybridAiClient(
+                pythonClient,
+                csharpClient,
+                config,
+                NullLogger<HybridAiClient>.Instance);
+
+            var response = await hybridClient.ProcessDocumentAsync(
+                Guid.NewGuid(),
+                tempFile,
+                "pago-nomina-bbva.pdf",
+                null,
+                CancellationToken.None);
+
+            var tableField = Assert.Single(response.Fields);
+            Assert.Equal("tabla_celdas", tableField.Key, ignoreCase: true);
+            Assert.NotNull(tableField.Value);
+            Assert.Contains("\"canonical_rows\":", tableField.Value!, StringComparison.Ordinal);
+            Assert.Contains("1620260115134348451388", tableField.Value!, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (File.Exists(tempFile))
+            {
+                File.Delete(tempFile);
+            }
+        }
+    }
+
+    [Fact]
     public async Task ProcessDocumentAsync_Acta_PrefersPythonWhenReady()
     {
         var tempFile = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}-acta.txt");
@@ -427,6 +487,81 @@ public class HybridAiClientTests
                   "confidence":0.55,
                   "valid":false,
                   "validation_errors":["Banco invalido."],
+                  "source":null
+                }
+              ],
+              "warnings":[],
+              "errors":[],
+              "meta":{
+                "pages_processed":1,
+                "ocr_engine":"paddleocr",
+                "pipeline_version":"python-extract-v1",
+                "model_version":"clf-v1",
+                "processing_ms":180
+              }
+            }
+            """;
+        }
+    }
+
+    private sealed class FacturaStructuredTableHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var body = request.Content is null
+                ? string.Empty
+                : await request.Content.ReadAsStringAsync(cancellationToken);
+
+            var isOcrOnly = body.Contains("return_ocr_text", StringComparison.OrdinalIgnoreCase);
+            var payload = isOcrOnly ? BuildOcrPayload() : BuildExtractionPayload();
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(payload, Encoding.UTF8, "application/json")
+            };
+        }
+
+        private static string BuildOcrPayload()
+        {
+            return """
+            {
+              "document_id":"00000000-0000-0000-0000-000000000000",
+              "status":"NEEDS_REVIEW",
+              "document_type":"FACTURA",
+              "confidence":0.60,
+              "fields":[],
+              "warnings":[],
+              "errors":[],
+              "meta":{
+                "pages_processed":1,
+                "ocr_engine":"paddleocr",
+                "pipeline_version":"python-ocr-only-v1",
+                "model_version":"clf-v1",
+                "processing_ms":90
+              },
+              "ocr_text":"REPORTE DE OPERACIONES PAGO DE NOMINA CUENTA REFERENCIA IMPORTE NOMBRE 56783223195 1620260115134340581263 $610.44 MARLA GRISELDA MENDEZ FLORES PROCESADO"
+            }
+            """;
+        }
+
+        private static string BuildExtractionPayload()
+        {
+            return """
+            {
+              "document_id":"00000000-0000-0000-0000-000000000000",
+              "status":"READY",
+              "document_type":"FACTURA",
+              "confidence":0.70,
+              "fields":[
+                {
+                  "key":"tabla_celdas",
+                  "label":"Tabla celdas",
+                  "value":"{\"source\":\"text_lines\",\"rows\":[[\"CUENTA\",\"REFERENCIA\",\"IMPORTE\",\"NOMBRE\",\"APELLIDO PATERNO\",\"APELLIDO MATERNO\",\"ESTATUS\",\"CONCEPTO\"],[\"56783223195\",\"1620260115134340581263\",\"$610.44\",\"MARLA GRISELDA\",\"MENDEZ\",\"FLORES\",\"PROCESADO\",\"PAGO DE NOMINA\"],[\"56936397470\",\"1620260115134348451388\",\"$1,537.35\",\"ROLANDO ROGERIO\",\"CONTRERAS\",\"CAMARGO\",\"PROCESADO\",\"PAGO DE NOMINA\"]],\"canonical_rows\":[{\"cuenta\":\"56783223195\",\"referencia\":\"1620260115134340581263\",\"importe\":\"$610.44\",\"nombre\":\"MARLA GRISELDA\",\"apellido_paterno\":\"MENDEZ\",\"apellido_materno\":\"FLORES\",\"estatus\":\"PROCESADO\",\"concepto_pago\":\"PAGO DE NOMINA\"},{\"cuenta\":\"56936397470\",\"referencia\":\"1620260115134348451388\",\"importe\":\"$1,537.35\",\"nombre\":\"ROLANDO ROGERIO\",\"apellido_paterno\":\"CONTRERAS\",\"apellido_materno\":\"CAMARGO\",\"estatus\":\"PROCESADO\",\"concepto_pago\":\"PAGO DE NOMINA\"}]}",
+                  "confidence":0.70,
+                  "valid":true,
+                  "validation_errors":[],
                   "source":null
                 }
               ],

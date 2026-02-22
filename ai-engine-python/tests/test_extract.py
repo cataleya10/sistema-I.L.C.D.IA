@@ -460,6 +460,102 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertIn("1,462.58", rows[1][2])
         self.assertIn("JOSE LUIS", rows[1][3])
 
+    def test_extract_factura_payment_table_from_bbva_nomina_advanced_lines(self):
+        ocr_text = "\n".join(
+            [
+                "REPORTE DE OPERACIONES",
+                "CUENTA CUENTA REFERENCIA REFERENCIA IMPORTE IMPORTE NOMBRE NOMBRE APELLIDO PATERNO APELLIDO MATERNO ESTATUS CONCEPTO CONCEPTO",
+                "56783223195 1620260115134340581263 $610.44 MARLA GRISELDA MENDEZ FLORES PROCESADO PAGO DE NOMINA",
+                "56936397470 1620260115134348451388 $1,537.35 ROLANDO ROGERIO CONTRERAS CAMARGO PROCESADO PAGO DE NOMINA",
+            ]
+        )
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertIn("tabla_celdas", data)
+        payload = json.loads(data["tabla_celdas"])
+        rows = payload.get("rows", [])
+        self.assertGreaterEqual(len(rows), 3)
+        self.assertEqual(
+            rows[0],
+            [
+                "CUENTA",
+                "REFERENCIA",
+                "IMPORTE",
+                "NOMBRE",
+                "APELLIDO PATERNO",
+                "APELLIDO MATERNO",
+                "ESTATUS",
+                "CONCEPTO",
+            ],
+        )
+        self.assertEqual(rows[1][0], "56783223195")
+        self.assertEqual(rows[1][1], "1620260115134340581263")
+        self.assertEqual(rows[1][2], "$610.44")
+        self.assertEqual(rows[1][3], "MARLA GRISELDA")
+        self.assertEqual(rows[1][4], "MENDEZ")
+        self.assertEqual(rows[1][5], "FLORES")
+        self.assertEqual(rows[1][6], "PROCESADO")
+        self.assertEqual(rows[1][7], "PAGO DE NOMINA")
+        self.assertEqual(rows[2][0], "56936397470")
+        self.assertEqual(rows[2][1], "1620260115134348451388")
+        self.assertEqual(rows[2][2], "$1,537.35")
+        self.assertEqual(rows[2][3], "ROLANDO ROGERIO")
+        self.assertEqual(rows[2][4], "CONTRERAS")
+        self.assertEqual(rows[2][5], "CAMARGO")
+
+    def test_extract_factura_payment_table_from_bbva_nomina_two_records_same_line(self):
+        ocr_text = "\n".join(
+            [
+                "REPORTE DE OPERACIONES",
+                "CUENTA CUENTA REFERENCIA REFERENCIA IMPORTE IMPORTE NOMBRE NOMBRE APELLIDO PATERNO APELLIDO MATERNO ESTATUS CONCEPTO CONCEPTO",
+                "56783223195 1620260115134340581263 $610.44 MARLA GRISELDA MENDEZ FLORES 56936397470 1620260115134348451388 $1,537.35 ROLANDO ROGERIO CONTRERAS CAMARGO PROCESADO PAGO DE NOMINA",
+            ]
+        )
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertIn("tabla_celdas", data)
+        payload = json.loads(data["tabla_celdas"])
+        rows = payload.get("rows", [])
+        self.assertGreaterEqual(len(rows), 3)
+        self.assertEqual(rows[1][0], "56783223195")
+        self.assertEqual(rows[1][1], "1620260115134340581263")
+        self.assertEqual(rows[1][3], "MARLA GRISELDA")
+        self.assertEqual(rows[1][4], "MENDEZ")
+        self.assertEqual(rows[1][5], "FLORES")
+        self.assertEqual(rows[2][0], "56936397470")
+        self.assertEqual(rows[2][1], "1620260115134348451388")
+        self.assertEqual(rows[2][3], "ROLANDO ROGERIO")
+        self.assertEqual(rows[2][4], "CONTRERAS")
+        self.assertEqual(rows[2][5], "CAMARGO")
+
+    def test_extract_factura_payment_table_from_bbva_nomina_rows_without_nomina_per_line(self):
+        ocr_text = "\n".join(
+            [
+                "REPORTE DE OPERACIONES",
+                "CUENTA REFERENCIA IMPORTE NOMBRE APELLIDO PATERNO APELLIDO MATERNO ESTATUS CONCEPTO",
+                "56783223195 1620260115134340581263 $610.44 MARLA GRISELDA MENDEZ FLORES PROCESADO",
+                "56936397470 1620260115134348451388 $1,537.35 ROLANDO ROGERIO CONTRERAS CAMARGO PROCESADO",
+                "56905029323 1620260115134344071306 $353.60 EDGAR HASSAN GUZMAN CASTRO PROCESADO",
+                "PAGO DE NOMINA",
+            ]
+        )
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertIn("tabla_celdas", data)
+        payload = json.loads(data["tabla_celdas"])
+        rows = payload.get("rows", [])
+        self.assertGreaterEqual(len(rows), 4)
+        self.assertEqual(rows[1][0], "56783223195")
+        self.assertEqual(rows[1][1], "1620260115134340581263")
+        self.assertEqual(rows[1][7], "PAGO DE NOMINA")
+        self.assertEqual(rows[2][0], "56936397470")
+        self.assertEqual(rows[2][1], "1620260115134348451388")
+        self.assertEqual(rows[3][0], "56905029323")
+        self.assertEqual(rows[3][1], "1620260115134344071306")
+
     def test_extract_factura_payment_table_from_scotia_transfer_text(self):
         ocr_text = "\n".join(
             [

@@ -3,6 +3,7 @@ using Application.Interfaces;
 using Domain.Enums;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace Infrastructure.Clients;
@@ -10,6 +11,16 @@ namespace Infrastructure.Clients;
 public sealed class HybridAiClient : IPythonAiClient
 {
     private static readonly Regex ThreeOrMoreDigitsRegex = new(@"\d{3,}", RegexOptions.Compiled);
+    private static readonly string[] StructuredTableHeaderHints =
+    [
+        "CUENTA",
+        "REFERENCIA",
+        "IMPORTE",
+        "NOMBRE",
+        "APELLIDO",
+        "ESTATUS",
+        "CONCEPTO"
+    ];
     private static readonly Dictionary<string, string> KeyAliases = new(StringComparer.OrdinalIgnoreCase)
     {
         ["direccion"] = "domicilio",
@@ -280,6 +291,16 @@ public sealed class HybridAiClient : IPythonAiClient
             return candidateErrors < currentErrors;
         }
 
+        if (IsStructuredFieldKey(current.Key) && string.Equals(current.Key, candidate.Key, StringComparison.OrdinalIgnoreCase))
+        {
+            var currentQuality = ScoreStructuredFieldValue(current.Key, current.Value);
+            var candidateQuality = ScoreStructuredFieldValue(candidate.Key, candidate.Value);
+            if (candidateQuality != currentQuality)
+            {
+                return candidateQuality > currentQuality;
+            }
+        }
+
         return preferCandidateOnTie;
     }
 
@@ -307,6 +328,20 @@ public sealed class HybridAiClient : IPythonAiClient
         DocumentProcessResponse csharpResponse,
         DocumentProcessResponse pythonResponse)
     {
+        var csharpTableQuality = GetStructuredFieldQuality(csharpResponse, "tabla_celdas");
+        var pythonTableQuality = GetStructuredFieldQuality(pythonResponse, "tabla_celdas");
+        if (pythonTableQuality > csharpTableQuality + 25)
+        {
+            return true;
+        }
+
+        var csharpDetailQuality = GetStructuredFieldQuality(csharpResponse, "pago_detalle");
+        var pythonDetailQuality = GetStructuredFieldQuality(pythonResponse, "pago_detalle");
+        if (pythonDetailQuality > csharpDetailQuality + 20)
+        {
+            return true;
+        }
+
         if (pythonResponse.Status == DocumentStatus.Ready
             && (csharpResponse.DocumentType == DocumentType.ActaNacimiento
                 || pythonResponse.DocumentType == DocumentType.ActaNacimiento))
@@ -327,6 +362,226 @@ public sealed class HybridAiClient : IPythonAiClient
         return pythonResponse.Status == DocumentStatus.Ready
             && pythonResponse.Confidence >= _fallbackMinConfidence
             && csharpResponse.Confidence < _fallbackMinConfidence;
+    }
+
+    private static bool IsStructuredFieldKey(string? key)
+    {
+        return string.Equals(key, "tabla_celdas", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(key, "pago_detalle", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int GetStructuredFieldQuality(DocumentProcessResponse response, string key)
+    {
+        var field = response.Fields.FirstOrDefault(f => string.Equals(f.Key, key, StringComparison.OrdinalIgnoreCase));
+        if (field is null)
+        {
+            return int.MinValue / 4;
+        }
+
+        return ScoreStructuredFieldValue(field.Key, field.Value);
+    }
+
+    private static int ScoreStructuredFieldValue(string key, string? rawValue)
+    {
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            return int.MinValue / 4;
+        }
+
+        if (string.Equals(key, "tabla_celdas", StringComparison.OrdinalIgnoreCase))
+        {
+            return ScoreTablaCeldasPayload(rawValue);
+        }
+
+        if (string.Equals(key, "pago_detalle", StringComparison.OrdinalIgnoreCase))
+        {
+            return ScorePagoDetallePayload(rawValue);
+        }
+
+        return 0;
+    }
+
+    private static int ScoreTablaCeldasPayload(string rawValue)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(rawValue);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return -40;
+            }
+
+            var score = 0;
+            var source = ReadString(root, "source");
+            if (string.Equals(source, "text_lines_csharp", StringComparison.OrdinalIgnoreCase))
+            {
+                score -= 30;
+            }
+
+            var canonicalRows = CountArray(root, "canonical_rows");
+            if (canonicalRows == 0 && TryGetProperty(root, "table", out var tableElement))
+            {
+                canonicalRows = CountArray(tableElement, "canonical_rows");
+            }
+            if (canonicalRows > 0)
+            {
+                score += 220 + (canonicalRows * 35);
+            }
+
+            var rowsCount = CountArray(root, "rows");
+            JsonElement rowsElement;
+            if (TryGetProperty(root, "rows", out rowsElement) && rowsElement.ValueKind == JsonValueKind.Array)
+            {
+                // no-op
+            }
+            else if (TryGetProperty(root, "table", out tableElement)
+                     && TryGetProperty(tableElement, "rows", out rowsElement)
+                     && rowsElement.ValueKind == JsonValueKind.Array)
+            {
+                rowsCount = rowsElement.GetArrayLength();
+            }
+            else
+            {
+                rowsElement = default;
+            }
+
+            if (rowsCount > 0)
+            {
+                var dataRows = Math.Max(0, rowsCount - 1);
+                score += dataRows * 12;
+            }
+
+            if (rowsElement.ValueKind == JsonValueKind.Array
+                && rowsElement.GetArrayLength() > 0
+                && rowsElement[0].ValueKind == JsonValueKind.Array)
+            {
+                var headerCells = rowsElement[0]
+                    .EnumerateArray()
+                    .Select(cell => cell.ValueKind == JsonValueKind.String ? cell.GetString() ?? string.Empty : cell.ToString())
+                    .Where(cell => !string.IsNullOrWhiteSpace(cell))
+                    .Select(cell => cell.Trim().ToUpperInvariant())
+                    .ToArray();
+
+                var joined = string.Join(" ", headerCells);
+                var hintHits = StructuredTableHeaderHints.Count(hint => joined.Contains(hint, StringComparison.Ordinal));
+                score += hintHits * 8;
+
+                var repeatedHeaderCells = headerCells.Count(IsRepeatedHeaderCell);
+                score -= repeatedHeaderCells * 12;
+            }
+
+            return score;
+        }
+        catch
+        {
+            return -40;
+        }
+    }
+
+    private static int ScorePagoDetallePayload(string rawValue)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(rawValue);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return -40;
+            }
+
+            var score = 0;
+            if (TryGetProperty(root, "metadata", out var metadataElement) && metadataElement.ValueKind == JsonValueKind.Object)
+            {
+                var metadataCount = metadataElement.EnumerateObject()
+                    .Count(property => !string.IsNullOrWhiteSpace(property.Value.ToString()));
+                score += Math.Min(40, metadataCount * 3);
+            }
+
+            if (TryGetProperty(root, "bank", out var bankElement) && bankElement.ValueKind == JsonValueKind.String)
+            {
+                var bank = bankElement.GetString();
+                if (!string.IsNullOrWhiteSpace(bank) && !string.Equals(bank, "DESCONOCIDO", StringComparison.OrdinalIgnoreCase))
+                {
+                    score += 12;
+                }
+            }
+
+            if (TryGetProperty(root, "table", out var tableElement) && tableElement.ValueKind == JsonValueKind.Object)
+            {
+                var canonicalRows = CountArray(tableElement, "canonical_rows");
+                var rows = CountArray(tableElement, "rows");
+
+                if (canonicalRows > 0)
+                {
+                    score += 180 + (canonicalRows * 30);
+                }
+
+                if (rows > 0)
+                {
+                    score += rows * 10;
+                }
+            }
+
+            return score;
+        }
+        catch
+        {
+            return -40;
+        }
+    }
+
+    private static int CountArray(JsonElement parent, string propertyName)
+    {
+        if (TryGetProperty(parent, propertyName, out var arrayElement) && arrayElement.ValueKind == JsonValueKind.Array)
+        {
+            return arrayElement.GetArrayLength();
+        }
+
+        return 0;
+    }
+
+    private static bool TryGetProperty(JsonElement parent, string propertyName, out JsonElement value)
+    {
+        value = default;
+        return parent.ValueKind == JsonValueKind.Object
+            && parent.TryGetProperty(propertyName, out value);
+    }
+
+    private static string ReadString(JsonElement parent, string propertyName)
+    {
+        if (TryGetProperty(parent, propertyName, out var value) && value.ValueKind == JsonValueKind.String)
+        {
+            return value.GetString() ?? string.Empty;
+        }
+
+        return string.Empty;
+    }
+
+    private static bool IsRepeatedHeaderCell(string value)
+    {
+        var tokens = value
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(token => token.ToUpperInvariant())
+            .ToArray();
+
+        if (tokens.Length < 2)
+        {
+            return false;
+        }
+
+        if (tokens.All(token => token == tokens[0]))
+        {
+            return true;
+        }
+
+        if (tokens.Length % 2 == 0)
+        {
+            var half = tokens.Length / 2;
+            return tokens.Take(half).SequenceEqual(tokens.Skip(half));
+        }
+
+        return false;
     }
 
     private static bool HasCriticalGapsOrSuspiciousValues(DocumentProcessResponse response)

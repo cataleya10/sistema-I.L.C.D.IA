@@ -756,9 +756,11 @@ export class DocumentsResultsPage implements OnInit {
   }
 
   private mapDisplayFields(document: DocumentDetail): DocumentField[] {
+    const onlyTableMode = this.isAdvancedNominaTableOnlyMode(document);
     const template = DOCUMENT_FIELD_TEMPLATES[document.document_type];
     if (!template) {
-      return document.fields.filter((field) => !this.isHiddenField(field.key));
+      const visibleFields = document.fields.filter((field) => !this.isHiddenField(field.key));
+      return onlyTableMode ? this.keepOnlyTableField(visibleFields) : visibleFields;
     }
     const fieldMap = new Map(document.fields.map((field) => [field.key.toLowerCase(), field]));
     const mappedFromTemplate = template.map((field) => {
@@ -776,13 +778,39 @@ export class DocumentsResultsPage implements OnInit {
       };
     });
     if (document.document_type === 'FACTURA') {
-      return mappedFromTemplate;
+      return onlyTableMode ? this.keepOnlyTableField(mappedFromTemplate) : mappedFromTemplate;
     }
     const templateKeys = new Set(template.map((field) => field.key.toLowerCase()));
     const extras = document.fields.filter(
       (field) => !templateKeys.has(field.key.toLowerCase()) && !this.isHiddenField(field.key)
     );
-    return [...mappedFromTemplate, ...extras];
+    const merged = [...mappedFromTemplate, ...extras];
+    return onlyTableMode ? this.keepOnlyTableField(merged) : merged;
+  }
+
+  private isAdvancedNominaTableOnlyMode(document: DocumentDetail): boolean {
+    const tableField = document.fields.find((field) => isTableCellsField(field));
+    if (!tableField) {
+      return false;
+    }
+
+    const rawValue = String(tableField.corrected_value ?? tableField.value ?? '').trim();
+    if (!rawValue) {
+      return false;
+    }
+
+    const rows = parseTableRows(rawValue);
+    if (rows.length < 3) {
+      return false;
+    }
+
+    const tableView = buildTableView(rows);
+    return detectTableLayoutMode(tableView) === 'advanced_nomina' && tableView.bodyRows.length >= 2;
+  }
+
+  private keepOnlyTableField(fields: DocumentField[]): DocumentField[] {
+    const tableFields = fields.filter((field) => this.isTableField(field));
+    return tableFields.length ? tableFields : fields;
   }
 
   private isHiddenField(key: string | null | undefined): boolean {

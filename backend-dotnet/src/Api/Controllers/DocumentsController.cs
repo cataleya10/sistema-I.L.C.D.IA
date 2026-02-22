@@ -799,8 +799,14 @@ public class DocumentsController : ControllerBase
             using var document = JsonDocument.Parse(raw);
             var root = document.RootElement;
             var tables = new List<StructuredExportTable>();
+            var canonicalTable = TryBuildCanonicalStructuredTable(root);
+            if (canonicalTable is not null)
+            {
+                tables.Add(canonicalTable);
+            }
 
-            if (root.ValueKind == JsonValueKind.Object
+            if (tables.Count == 0
+                && root.ValueKind == JsonValueKind.Object
                 && root.TryGetProperty("all_tables", out var allTablesElement)
                 && allTablesElement.ValueKind == JsonValueKind.Array)
             {
@@ -852,6 +858,209 @@ public class DocumentsController : ControllerBase
         }
     }
 
+    private static StructuredExportTable? TryBuildCanonicalStructuredTable(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        var columns = ReadCanonicalColumns(root);
+        var rowMaps = ReadCanonicalRowMaps(root);
+        if (rowMaps.Count == 0)
+        {
+            return null;
+        }
+
+        if (columns.Count == 0)
+        {
+            columns = rowMaps
+                .SelectMany(item => item.Keys)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        var orderedColumns = OrderCanonicalColumns(columns);
+        if (orderedColumns.Count == 0)
+        {
+            return null;
+        }
+
+        var tableRows = new List<List<string>>
+        {
+            orderedColumns.Select(ResolveCanonicalColumnLabel).ToList()
+        };
+
+        foreach (var rowMap in rowMaps)
+        {
+            var row = orderedColumns
+                .Select(column => rowMap.TryGetValue(column, out var value) ? NormalizeStructuredCellText(value) : string.Empty)
+                .ToList();
+            if (row.Any(value => !string.IsNullOrWhiteSpace(value)))
+            {
+                tableRows.Add(row);
+            }
+        }
+
+        if (tableRows.Count <= 1)
+        {
+            return null;
+        }
+
+        var normalizedRows = CleanStructuredRows(tableRows);
+        if (normalizedRows.Count <= 1)
+        {
+            return null;
+        }
+
+        var tableIndex = ReadPositiveInt(root, "primary_table_index") ?? 1;
+        var source = ReadStringValue(root, "source");
+        var sourceLabel = string.IsNullOrWhiteSpace(source) ? "canonical_rows" : $"{source}_canonical";
+        return new StructuredExportTable(tableIndex, sourceLabel, normalizedRows);
+    }
+
+    private static List<string> ReadCanonicalColumns(JsonElement root)
+    {
+        if (!TryReadArrayProperty(root, "canonical_columns", out var canonicalColumnsElement))
+        {
+            return new List<string>();
+        }
+
+        return canonicalColumnsElement.EnumerateArray()
+            .Select(ReadStructuredCellText)
+            .Select(NormalizeCanonicalColumnKey)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static bool TryReadArrayProperty(JsonElement root, string propertyName, out JsonElement propertyValue)
+    {
+        propertyValue = default;
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty(propertyName, out propertyValue)
+            || propertyValue.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+        return true;
+    }
+
+    private static List<Dictionary<string, string>> ReadCanonicalRowMaps(JsonElement root)
+    {
+        if (!TryReadArrayProperty(root, "canonical_rows", out var canonicalRowsElement))
+        {
+            return new List<Dictionary<string, string>>();
+        }
+
+        var rows = new List<Dictionary<string, string>>();
+        foreach (var rowElement in canonicalRowsElement.EnumerateArray())
+        {
+            if (rowElement.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var rowMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var property in rowElement.EnumerateObject())
+            {
+                var key = NormalizeCanonicalColumnKey(property.Name);
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    continue;
+                }
+
+                var value = NormalizeStructuredCellText(ReadStructuredCellText(property.Value));
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    rowMap[key] = value;
+                }
+            }
+
+            if (rowMap.Count > 0)
+            {
+                rows.Add(rowMap);
+            }
+        }
+
+        return rows;
+    }
+
+    private static string NormalizeCanonicalColumnKey(string? key)
+    {
+        var normalized = string.IsNullOrWhiteSpace(key)
+            ? string.Empty
+            : key.Trim().Replace("-", "_").Replace(" ", "_");
+
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return string.Empty;
+        }
+
+        return normalized.ToLowerInvariant() switch
+        {
+            "cuentacuenta" => "cuenta",
+            "referenciareferencia" => "referencia",
+            "importeimporte" => "importe",
+            "nombrenombre" => "nombre",
+            "conceptoconcepto" => "concepto",
+            "nombre_beneficiario" => "nombre",
+            "concepto_pago" => "concepto",
+            _ => normalized.ToLowerInvariant()
+        };
+    }
+
+    private static IReadOnlyList<string> OrderCanonicalColumns(List<string> columns)
+    {
+        var preferredOrder = new[]
+        {
+            "cuenta",
+            "referencia",
+            "importe",
+            "nombre",
+            "apellido_paterno",
+            "apellido_materno",
+            "estatus",
+            "concepto",
+        };
+
+        var ordered = new List<string>();
+        foreach (var preferred in preferredOrder)
+        {
+            if (columns.Any(column => string.Equals(column, preferred, StringComparison.OrdinalIgnoreCase))
+                && !ordered.Any(existing => string.Equals(existing, preferred, StringComparison.OrdinalIgnoreCase)))
+            {
+                ordered.Add(preferred);
+            }
+        }
+
+        foreach (var column in columns)
+        {
+            if (!ordered.Any(existing => string.Equals(existing, column, StringComparison.OrdinalIgnoreCase)))
+            {
+                ordered.Add(column);
+            }
+        }
+
+        return ordered;
+    }
+
+    private static string ResolveCanonicalColumnLabel(string key)
+    {
+        return key.ToLowerInvariant() switch
+        {
+            "cuenta" => "Cuenta",
+            "referencia" => "Referencia",
+            "importe" => "Importe",
+            "nombre" => "Nombre",
+            "apellido_paterno" => "Apellido paterno",
+            "apellido_materno" => "Apellido materno",
+            "estatus" => "Estatus",
+            "concepto" => "Concepto",
+            _ => ResolveExportLabel(key)
+        };
+    }
+
     private static IReadOnlyList<IReadOnlyList<string>> ReadStructuredRows(JsonElement element)
     {
         List<List<string>> rows;
@@ -876,10 +1085,67 @@ public class DocumentsController : ControllerBase
             return Array.Empty<IReadOnlyList<string>>();
         }
 
+        return CleanStructuredRows(rows);
+    }
+
+    private static IReadOnlyList<IReadOnlyList<string>> CleanStructuredRows(List<List<string>> rows)
+    {
         var normalizedRows = rows
             .Select(row => row.Select(NormalizeStructuredCellText).ToList())
             .Where(row => row.Any(value => !string.IsNullOrWhiteSpace(value)))
             .ToList();
+        if (normalizedRows.Count == 0)
+        {
+            return Array.Empty<IReadOnlyList<string>>();
+        }
+
+        var maxUsefulColumn = -1;
+        foreach (var row in normalizedRows)
+        {
+            for (var col = row.Count - 1; col >= 0; col--)
+            {
+                if (!string.IsNullOrWhiteSpace(row[col]))
+                {
+                    maxUsefulColumn = Math.Max(maxUsefulColumn, col);
+                    break;
+                }
+            }
+        }
+
+        if (maxUsefulColumn < 0)
+        {
+            return Array.Empty<IReadOnlyList<string>>();
+        }
+
+        var targetColumnCount = maxUsefulColumn + 1;
+        foreach (var row in normalizedRows)
+        {
+            if (row.Count > targetColumnCount)
+            {
+                row.RemoveRange(targetColumnCount, row.Count - targetColumnCount);
+            }
+            while (row.Count < targetColumnCount)
+            {
+                row.Add(string.Empty);
+            }
+        }
+
+        normalizedRows = normalizedRows
+            .Where(row => !IsStructuredNoiseRow(row))
+            .ToList();
+        if (normalizedRows.Count == 0)
+        {
+            return Array.Empty<IReadOnlyList<string>>();
+        }
+
+        if (normalizedRows.Count > 1)
+        {
+            var header = normalizedRows[0];
+            normalizedRows = normalizedRows
+                .Where((row, index) => index == 0 || !RowsAreEquivalent(header, row))
+                .ToList();
+        }
+
         if (normalizedRows.Count == 0)
         {
             return Array.Empty<IReadOnlyList<string>>();
@@ -893,6 +1159,7 @@ public class DocumentsController : ControllerBase
                 row.Add(string.Empty);
             }
         }
+
         return normalizedRows;
     }
 
@@ -983,6 +1250,86 @@ public class DocumentsController : ControllerBase
             .Trim();
     }
 
+    private static bool IsStructuredNoiseRow(IReadOnlyList<string> row)
+    {
+        var nonEmptyValues = row
+            .Select(value => value.Trim())
+            .Where(value => value.Length > 0)
+            .ToList();
+        if (nonEmptyValues.Count == 0)
+        {
+            return true;
+        }
+
+        if (nonEmptyValues.All(IsSeparatorToken))
+        {
+            return true;
+        }
+
+        return nonEmptyValues.Count == 1 && LooksLikeSerializedPayload(nonEmptyValues[0]);
+    }
+
+    private static bool IsSeparatorToken(string value)
+    {
+        if (value.Length < 3)
+        {
+            return false;
+        }
+
+        foreach (var ch in value)
+        {
+            if (ch == '-' || ch == '_' || ch == '=' || ch == '.' || ch == ':' || ch == '*' || ch == '/' || ch == '|')
+            {
+                continue;
+            }
+
+            if (!char.IsWhiteSpace(ch))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool LooksLikeSerializedPayload(string value)
+    {
+        if (value.Length < 40)
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        var looksJsonLike = (trimmed.StartsWith("{", StringComparison.Ordinal) && trimmed.Contains(":", StringComparison.Ordinal))
+            || (trimmed.StartsWith("[", StringComparison.Ordinal) && trimmed.Contains(":", StringComparison.Ordinal));
+        if (!looksJsonLike)
+        {
+            return false;
+        }
+
+        return trimmed.Contains("\"", StringComparison.Ordinal)
+            || trimmed.Contains("{", StringComparison.Ordinal)
+            || trimmed.Contains("[", StringComparison.Ordinal);
+    }
+
+    private static bool RowsAreEquivalent(IReadOnlyList<string> left, IReadOnlyList<string> right)
+    {
+        if (left.Count != right.Count)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < left.Count; i++)
+        {
+            if (!string.Equals(left[i], right[i], StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static int? ReadPositiveInt(JsonElement element, string propertyName)
     {
         if (element.ValueKind != JsonValueKind.Object
@@ -1030,9 +1377,14 @@ public class DocumentsController : ControllerBase
         var cellWidth = Math.Max(800, tableWidth / columnCount);
         for (var rowIndex = 0; rowIndex < rows.Count; rowIndex++)
         {
-            target.Append("\\trowd\\trgaph108");
+            target.Append("\\trowd\\trgaph108\\trleft0\\trftsWidth3\\trwWidth9000");
+            if (rowIndex == 0)
+            {
+                target.Append("\\trhdr");
+            }
             for (var colIndex = 0; colIndex < columnCount; colIndex++)
             {
+                target.Append("\\clvertalc\\clpadl80\\clpadr80\\clpadfl3\\clpadfr3");
                 target.Append("\\clbrdrt\\brdrs\\brdrw10\\clbrdrl\\brdrs\\brdrw10\\clbrdrb\\brdrs\\brdrw10\\clbrdrr\\brdrs\\brdrw10");
                 target.Append("\\cellx").Append((colIndex + 1) * cellWidth);
             }
