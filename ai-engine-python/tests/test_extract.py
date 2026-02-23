@@ -587,6 +587,91 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertEqual(rows[3][1], "1620260115134344071306")
         self.assertEqual(rows[3][2], "$353.60")
 
+    def test_extract_factura_bbva_nomina_multipage_ocr_boxes(self):
+        """Simula PDF multi-página donde OCR devuelve cada celda como un box separado.
+        Las filas de distintas páginas con el mismo Y no deben mezclarse entre sí.
+        """
+        from app.pipelines.extract import _extract_payment_table_rows_from_boxes
+
+        def _box(text, x1, y1, x2, y2, page):
+            return {"text": text, "confidence": 0.99, "bbox": [[x1, y1], [x2, y1], [x2, y2], [x1, y2]], "page": page}
+
+        # Página 1: header + resumen (1 fila)
+        p1_header_y = (10, 20)
+        p1_row1_y = (30, 42)
+        # Página 2: header repetido + 3 filas de pago
+        p2_header_y = (10, 20)   # mismo Y que página 1 — sin page-aware grouping se mezclaría
+        p2_row1_y = (30, 42)
+        p2_row2_y = (50, 62)
+        p2_row3_y = (70, 82)
+
+        boxes = [
+            # P1 header
+            _box("CUENTA",           0, p1_header_y[0], 120, p1_header_y[1], 1),
+            _box("REFERENCIA",     130, p1_header_y[0], 310, p1_header_y[1], 1),
+            _box("IMPORTE",        320, p1_header_y[0], 420, p1_header_y[1], 1),
+            _box("NOMBRE",         430, p1_header_y[0], 600, p1_header_y[1], 1),
+            _box("APELLIDO PATERNO", 610, p1_header_y[0], 750, p1_header_y[1], 1),
+            _box("APELLIDO MATERNO", 760, p1_header_y[0], 900, p1_header_y[1], 1),
+            _box("ESTATUS",        910, p1_header_y[0], 1010, p1_header_y[1], 1),
+            _box("CONCEPTO",      1020, p1_header_y[0], 1150, p1_header_y[1], 1),
+            # P1 fila resumen (total)
+            _box("56783223195",      0, p1_row1_y[0], 120, p1_row1_y[1], 1),
+            _box("1620260115134340581263", 130, p1_row1_y[0], 310, p1_row1_y[1], 1),
+            _box("$140,948.59",    320, p1_row1_y[0], 420, p1_row1_y[1], 1),
+            _box("MARLA GRISELDA", 430, p1_row1_y[0], 600, p1_row1_y[1], 1),
+            _box("MENDEZ",         610, p1_row1_y[0], 750, p1_row1_y[1], 1),
+            _box("FLORES",         760, p1_row1_y[0], 900, p1_row1_y[1], 1),
+            _box("PROCESADO",      910, p1_row1_y[0], 1010, p1_row1_y[1], 1),
+            _box("PAGO DE NOMINA",1020, p1_row1_y[0], 1150, p1_row1_y[1], 1),
+            # P2 header (repetido)
+            _box("CUENTA",           0, p2_header_y[0], 120, p2_header_y[1], 2),
+            _box("REFERENCIA",     130, p2_header_y[0], 310, p2_header_y[1], 2),
+            _box("IMPORTE",        320, p2_header_y[0], 420, p2_header_y[1], 2),
+            _box("NOMBRE",         430, p2_header_y[0], 600, p2_header_y[1], 2),
+            _box("APELLIDO PATERNO", 610, p2_header_y[0], 750, p2_header_y[1], 2),
+            _box("APELLIDO MATERNO", 760, p2_header_y[0], 900, p2_header_y[1], 2),
+            _box("ESTATUS",        910, p2_header_y[0], 1010, p2_header_y[1], 2),
+            _box("CONCEPTO",      1020, p2_header_y[0], 1150, p2_header_y[1], 2),
+            # P2 fila 1
+            _box("56783223195",      0, p2_row1_y[0], 120, p2_row1_y[1], 2),
+            _box("1620260115134340581263", 130, p2_row1_y[0], 310, p2_row1_y[1], 2),
+            _box("$610.44",        320, p2_row1_y[0], 420, p2_row1_y[1], 2),
+            _box("MARLA GRISELDA", 430, p2_row1_y[0], 600, p2_row1_y[1], 2),
+            _box("MENDEZ",         610, p2_row1_y[0], 750, p2_row1_y[1], 2),
+            _box("FLORES",         760, p2_row1_y[0], 900, p2_row1_y[1], 2),
+            _box("PROCESADO",      910, p2_row1_y[0], 1010, p2_row1_y[1], 2),
+            _box("PAGO DE NOMINA",1020, p2_row1_y[0], 1150, p2_row1_y[1], 2),
+            # P2 fila 2
+            _box("56936397470",      0, p2_row2_y[0], 120, p2_row2_y[1], 2),
+            _box("1620260115134348451388", 130, p2_row2_y[0], 310, p2_row2_y[1], 2),
+            _box("$1,537.35",      320, p2_row2_y[0], 420, p2_row2_y[1], 2),
+            _box("ROLANDO ROGERIO",430, p2_row2_y[0], 600, p2_row2_y[1], 2),
+            _box("CONTRERAS",      610, p2_row2_y[0], 750, p2_row2_y[1], 2),
+            _box("CAMARGO",        760, p2_row2_y[0], 900, p2_row2_y[1], 2),
+            _box("PROCESADO",      910, p2_row2_y[0], 1010, p2_row2_y[1], 2),
+            _box("PAGO DE NOMINA",1020, p2_row2_y[0], 1150, p2_row2_y[1], 2),
+            # P2 fila 3
+            _box("56905029323",      0, p2_row3_y[0], 120, p2_row3_y[1], 2),
+            _box("1620260115134344071306", 130, p2_row3_y[0], 310, p2_row3_y[1], 2),
+            _box("$353.60",        320, p2_row3_y[0], 420, p2_row3_y[1], 2),
+            _box("EDGAR HASSAN",   430, p2_row3_y[0], 600, p2_row3_y[1], 2),
+            _box("GUZMAN",         610, p2_row3_y[0], 750, p2_row3_y[1], 2),
+            _box("CASTRO",         760, p2_row3_y[0], 900, p2_row3_y[1], 2),
+            _box("PROCESADO",      910, p2_row3_y[0], 1010, p2_row3_y[1], 2),
+            _box("PAGO DE NOMINA",1020, p2_row3_y[0], 1150, p2_row3_y[1], 2),
+        ]
+
+        rows = _extract_payment_table_rows_from_boxes(boxes)
+        # Debe extraer header + 4 filas de datos (1 de p1 + 3 de p2), no mezclar páginas
+        self.assertGreaterEqual(len(rows), 4, "Debe extraer filas de ambas páginas sin mezclarlas")
+        data_rows = [r for r in rows[1:] if r[0] not in ("CUENTA",)]
+        self.assertGreaterEqual(len(data_rows), 3, "Debe tener al menos las 3 filas de página 2")
+        # Las cuentas deben ser individuales, no concatenadas
+        all_accounts = [r[0] for r in data_rows]
+        for acct in all_accounts:
+            self.assertLessEqual(len(acct), 15, f"Cuenta '{acct}' no debe ser una mezcla de varias páginas")
+
     def test_extract_factura_payment_table_from_scotia_transfer_text(self):
         ocr_text = "\n".join(
             [

@@ -528,11 +528,22 @@ def _boxes_with_rect(ocr_boxes):
 
 
 def _line_groups(boxes, y_tol=12):
+    """Agrupa boxes en líneas por proximidad en Y.
+
+    Cuando los boxes tienen el campo "page" (documentos multi-página),
+    se respeta la frontera de página: celdas de páginas distintas nunca
+    se mezclan en la misma línea, evitando que filas de tabla de diferentes
+    páginas a la misma coordenada Y se fundan en un único grupo.
+    """
     lines = []
-    for box in sorted(boxes, key=lambda b: (b["rect"][1], b["rect"][0])):
+    # Ordena por (página, Y, X) para procesar cada página en secuencia
+    for box in sorted(boxes, key=lambda b: (b.get("page") or 0, b["rect"][1], b["rect"][0])):
         x1, y1, x2, y2 = box["rect"]
+        page = box.get("page") or 0
         placed = False
         for line in lines:
+            if (line.get("page") or 0) != page:
+                continue
             ly = line["y"]
             if abs(y1 - ly) <= y_tol:
                 line["boxes"].append(box)
@@ -540,7 +551,7 @@ def _line_groups(boxes, y_tol=12):
                 placed = True
                 break
         if not placed:
-            lines.append({"y": y1, "boxes": [box]})
+            lines.append({"y": y1, "page": page, "boxes": [box]})
     for line in lines:
         line["boxes"].sort(key=lambda b: b["rect"][0])
         line["text"] = " ".join(b.get("text", "").strip() for b in line["boxes"] if b.get("text"))
@@ -1028,7 +1039,7 @@ def _extract_payment_table_rows_from_boxes(ocr_boxes) -> list[list[str]]:
 
     header_idx = next((idx for idx, row in enumerate(rows) if _looks_like_payment_table_header(row)), None)
     if header_idx is None:
-        return [row for row in rows if _looks_like_payment_table_data(row)][:12]
+        return [row for row in rows if _looks_like_payment_table_data(row)][:500]
 
     header_boxes = [
         box for box in lines[header_idx].get("boxes", [])
@@ -1053,8 +1064,10 @@ def _extract_payment_table_rows_from_boxes(ocr_boxes) -> list[list[str]]:
             row = _payment_table_row_by_anchors(row_boxes, anchors)[:10]
             if _is_payment_table_footer(row) and len(structured_rows) > 1:
                 break
-            if _looks_like_payment_table_header(row) and len(structured_rows) <= 2:
-                structured_rows.append(row)
+            if _looks_like_payment_table_header(row):
+                # Solo incluir el header una vez; headers repetidos (páginas 2-N) se saltan
+                if not structured_rows:
+                    structured_rows.append(row)
                 continue
             if _looks_like_payment_table_data(row):
                 structured_rows.append(row)
@@ -1068,8 +1081,8 @@ def _extract_payment_table_rows_from_boxes(ocr_boxes) -> list[list[str]]:
             break
         if _is_payment_table_footer(row) and len(selected) > 1:
             break
-        if _looks_like_payment_table_header(row) and len(selected) <= 2:
-            selected.append(row)
+        if _looks_like_payment_table_header(row):
+            # Headers repetidos de páginas siguientes: saltar silenciosamente
             continue
         if _looks_like_payment_table_data(row):
             selected.append(row)
