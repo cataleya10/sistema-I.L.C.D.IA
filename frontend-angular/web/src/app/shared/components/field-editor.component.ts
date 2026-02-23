@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, EventEmitter, Input, Output } from '@angular/core';
+import { Component, EventEmitter, Input, OnChanges, Output } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
 @Component({
@@ -46,7 +46,7 @@ import { FormsModule } from '@angular/forms';
     `
   ]
 })
-export class FieldEditorComponent {
+export class FieldEditorComponent implements OnChanges {
   @Input() label = '';
   @Input() value: string | null = null;
   @Input() valid = true;

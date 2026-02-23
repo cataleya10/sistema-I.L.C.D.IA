@@ -127,7 +127,7 @@ function Compare-Baseline([array]$Details, [string]$Path) {
         throw "Baseline not found: $Path"
     }
     $baseline = Get-Content -Raw -Path $Path | ConvertFrom-Json
-    $current = Build-Baseline -Details $Details
+    $current = New-Baseline -Details $Details
     $diffs = @()
     foreach ($cur in $current.summary) {
         $base = $baseline.summary | Where-Object { $_.document_name -eq $cur.document_name } | Select-Object -First 1

@@ -1,6 +1,7 @@
-import { Component } from '@angular/core';
+import { Component, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { Subscription } from 'rxjs';
 import { AuthService } from '../services/auth.service';
 import { SystemService, SystemInfo } from '../services/system.service';
 import { NotificationService } from '../services/notification.service';
@@ -134,9 +135,10 @@ import { ToastNotificationComponent } from '../../shared/components/toast-notifi
     `
   ]
 })
-export class AppShellComponent {
+export class AppShellComponent implements OnDestroy {
   systemInfo: SystemInfo | null = null;
   toastMessage: string | null = null;
+  private readonly subscriptions: Subscription[] = [];
 
   constructor(
     private readonly auth: AuthService,
@@ -144,14 +146,22 @@ export class AppShellComponent {
     private readonly system: SystemService,
     private readonly notifications: NotificationService
   ) {
-    this.system.getInfo().subscribe({
-      next: (info) => (this.systemInfo = info),
-      error: () => (this.systemInfo = null)
-    });
+    this.subscriptions.push(
+      this.system.getInfo().subscribe({
+        next: (info) => (this.systemInfo = info),
+        error: () => (this.systemInfo = null)
+      })
+    );
 
-    this.notifications.message$.subscribe((message) => {
-      this.toastMessage = message;
-    });
+    this.subscriptions.push(
+      this.notifications.message$.subscribe((message) => {
+        this.toastMessage = message;
+      })
+    );
+  }
+
+  ngOnDestroy(): void {
+    this.subscriptions.forEach((s) => s.unsubscribe());
   }
 
   isAuthenticated(): boolean {

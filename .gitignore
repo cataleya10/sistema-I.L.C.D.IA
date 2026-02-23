@@ -40,6 +40,9 @@ ai-engine-python/artifacts/
 pytest-cache-files-*/
 
 # Claude Code temp artifacts
-tmpclaude-*-cwd/
+**/tmpclaude-*-cwd/
 deleteme.tmp
 restore-diag.log
+app-restore-diag.log
+build-diag.log
+nul

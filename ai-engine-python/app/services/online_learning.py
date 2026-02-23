@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import threading
@@ -8,6 +9,8 @@ import math
 from pathlib import Path
 from typing import Any
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 _LOCK = threading.Lock()
 
@@ -126,6 +129,7 @@ def _safe_load_json(path: Path) -> dict[str, Any]:
         if isinstance(data, dict):
             return data
     except Exception:
+        logger.warning("Failed to load JSON from %s", path, exc_info=True)
         return {}
     return {}
 
@@ -186,6 +190,7 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
                 if isinstance(payload, dict):
                     items.append(payload)
     except Exception:
+        logger.warning("Failed to load JSONL from %s", path, exc_info=True)
         return []
     return items
 

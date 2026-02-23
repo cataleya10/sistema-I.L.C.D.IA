@@ -1,7 +1,11 @@
 import json
+import logging
+import math
 import os
 import re
 import unicodedata
+
+logger = logging.getLogger(__name__)
 
 MODEL_PATH = os.getenv("DOC_MODEL_PATH", os.path.join(os.path.dirname(__file__), "..", "models", "doc_type_nb.json"))
 
@@ -25,6 +29,7 @@ def _load_model():
         with open(MODEL_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
+        logger.warning("Failed to load classification model from %s", MODEL_PATH, exc_info=True)
         return None
 
 
@@ -44,14 +49,14 @@ def _predict_nb(model, text: str):
     for cls in classes:
         prior = (class_counts.get(cls, 0) + 1) / (total_docs + len(classes))
         score = 0.0
-        score += float(__import__("math").log(prior))
+        score += math.log(prior)
         cls_tokens = token_counts.get(cls, {})
         cls_total = sum(cls_tokens.values()) + vocab_size
         for tok in tokens:
             if tok not in vocab:
                 continue
             count = cls_tokens.get(tok, 0) + 1
-            score += float(__import__("math").log(count / cls_total))
+            score += math.log(count / cls_total)
         if best_score is None or score > best_score:
             best_score = score
             best_cls = cls

@@ -1,8 +1,8 @@
 param(
-    [string]$labelsJson = "C:\Users\100156643\Documents\IA\labels_template.json",
-    [string]$docsPath = "C:\Users\100156643\Documents\IA",
-    [string]$outputJson = "C:\Users\100156643\Documents\IA\labels_prefilled.json",
-    [string]$outputCsv = "C:\Users\100156643\Documents\IA\labels_prefilled.csv",
+    [string]$labelsJson = (Join-Path $env:USERPROFILE "Documents\IA\labels_template.json"),
+    [string]$docsPath = (Join-Path $env:USERPROFILE "Documents\IA"),
+    [string]$outputJson = (Join-Path $env:USERPROFILE "Documents\IA\labels_prefilled.json"),
+    [string]$outputCsv = (Join-Path $env:USERPROFILE "Documents\IA\labels_prefilled.csv"),
     [string]$aiUrl = "http://localhost:8000/process-document"
 )
 

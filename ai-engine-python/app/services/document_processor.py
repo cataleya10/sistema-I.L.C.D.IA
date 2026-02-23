@@ -231,6 +231,7 @@ if _critical_path.exists():
         if isinstance(loaded, dict) and loaded:
             CRITICAL_FIELDS = loaded
     except Exception:
+        logger.warning("Failed to load critical_fields.json, using defaults", exc_info=True)
         CRITICAL_FIELDS = DEFAULT_CRITICAL_FIELDS.copy()
 
 CRITICAL_KEY_ALIASES: dict[str, dict[str, list[str]]] = {
@@ -378,6 +379,7 @@ async def process_document(file, document_id: str, source: str, options: str | N
         try:
             options_data = json.loads(options)
         except json.JSONDecodeError:
+            logger.warning("Invalid JSON in options parameter: %s", options)
             options_data = {}
     forced_doc_type = _resolve_forced_document_type(options_data)
 

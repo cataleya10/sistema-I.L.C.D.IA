@@ -1,10 +1,10 @@
 param(
-    [string]$PythonExe = "c:\xampp\htdocs\Sistema I.L.C.D.IA\ai-engine-python\.venv312\Scripts\python.exe",
-    [string]$AiRoot = "c:\xampp\htdocs\Sistema I.L.C.D.IA\ai-engine-python",
-    [string]$DatasetJsonl = "C:\Users\100156643\Documents\IA\training_dataset.jsonl",
-    [string]$LabelsJson = "C:\Users\100156643\Documents\IA\labels_prefilled.json",
-    [string]$BaselineReportJson = "C:\Users\100156643\Documents\IA\evaluation_report.json",
-    [string]$OutDir = "c:\xampp\htdocs\Sistema I.L.C.D.IA\ai-engine-python\artifacts\replay-eval",
+    [string]$PythonExe = (Join-Path $PSScriptRoot "..\ai-engine-python\.venv312\Scripts\python.exe"),
+    [string]$AiRoot = (Join-Path $PSScriptRoot "..\ai-engine-python"),
+    [string]$DatasetJsonl = (Join-Path $env:USERPROFILE "Documents\IA\training_dataset.jsonl"),
+    [string]$LabelsJson = (Join-Path $env:USERPROFILE "Documents\IA\labels_prefilled.json"),
+    [string]$BaselineReportJson = (Join-Path $env:USERPROFILE "Documents\IA\evaluation_report.json"),
+    [string]$OutDir = (Join-Path $PSScriptRoot "..\ai-engine-python\artifacts\replay-eval"),
     [switch]$OpenOutDir
 )
 

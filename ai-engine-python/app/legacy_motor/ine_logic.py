@@ -1,5 +1,8 @@
+import logging
 import re
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 try:
     from .fuzzy import process, fuzz
@@ -16,13 +19,14 @@ try:
 except Exception:
     SepomexLoader = None
 
-print("--- Cargando Recursos de IA ---")
+logger.info("Cargando Recursos de IA")
 try:
     if NameDataset is not None:
         GLOBAL_NAME_DATASET: Optional[Any] = NameDataset()
     else:
         GLOBAL_NAME_DATASET = None
 except Exception:
+    logger.warning("NameDataset initialization failed", exc_info=True)
     GLOBAL_NAME_DATASET = None
 
 try:
@@ -31,8 +35,9 @@ try:
     else:
         GLOBAL_SEPOMEX = None
 except Exception:
+    logger.warning("SepomexLoader initialization failed", exc_info=True)
     GLOBAL_SEPOMEX = None
-print("--- Recursos Listos ---")
+logger.info("Recursos de IA listos")
 
 
 class ProcesadorINE:

@@ -1,9 +1,14 @@
 from fastapi import UploadFile
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 import io
+import logging
 import fitz
 from typing import Any, cast
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
+
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
 
 _IMAGE_MODULE = cast(Any, Image)
 _RESAMPLING = getattr(_IMAGE_MODULE, "Resampling", _IMAGE_MODULE)
@@ -42,6 +47,8 @@ def _has_sufficient_text_layer(text: str) -> bool:
 
 async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dict[str, Any]]]:
     content = await file.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise ValueError(f"File too large ({len(content)} bytes, max {MAX_UPLOAD_BYTES})")
     filename = str(file.filename or "")
     content_type = str(file.content_type or "")
 

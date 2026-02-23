@@ -1,3 +1,5 @@
+import logging
+
 try:
     from paddleocr import PaddleOCR
 except Exception:  # pragma: no cover
@@ -15,6 +17,8 @@ except Exception:  # pragma: no cover
 
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 _ocr_instance = None
 _rapid_instance = None
 
@@ -27,6 +31,7 @@ def _get_ocr() -> Any | None:
         try:
             _ocr_instance = PaddleOCR(use_angle_cls=True, lang="es")
         except Exception:  # pragma: no cover
+            logger.warning("PaddleOCR initialization failed", exc_info=True)
             _ocr_instance = None
     return _ocr_instance
 
@@ -39,6 +44,7 @@ def _get_rapid() -> Any | None:
         try:
             _rapid_instance = RapidOCR()
         except Exception:  # pragma: no cover
+            logger.warning("RapidOCR initialization failed", exc_info=True)
             _rapid_instance = None
     return _rapid_instance
 
@@ -61,6 +67,7 @@ async def run_ocr(images: Any) -> tuple[str, list[dict[str, Any]]]:
             try:
                 result = ocr.ocr(image_array, cls=True)
             except Exception:  # pragma: no cover
+                logger.warning("PaddleOCR failed on page %d", page_index, exc_info=True)
                 result = []
         if not result:
             rapid = _get_rapid()
@@ -69,6 +76,7 @@ async def run_ocr(images: Any) -> tuple[str, list[dict[str, Any]]]:
             try:
                 rapid_result, _ = rapid(image_array)
             except Exception:  # pragma: no cover
+                logger.warning("RapidOCR failed on page %d", page_index, exc_info=True)
                 continue
             for item in rapid_result or []:
                 if not isinstance(item, (list, tuple)) or len(item) < 3:
