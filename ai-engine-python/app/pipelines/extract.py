@@ -1037,17 +1037,17 @@ _STATUS_PREFIX_PAT = re.compile(r"^(PROCESADO|APLICADO|ACEPTADO|TRANSMITIDO|RECH
 def _fix_payment_ocr_column_errors(structured_rows: list[list[str]]) -> list[list[str]]:
     """Post-proceso para el path de OCR boxes.
 
-    Corrige tres errores comunes de alineación de columnas en PDFs BBVA:
-    1. Monto en columna NOMBRE (caja de texto asignada al anchor equivocado por proximidad X):
-       extrae el monto a IMPORTE si está vacío y limpia NOMBRE.
-    2. Fila con NOMBRE inválido (solo monto, sin nombre real): descarta la fila.
-    3. ESTATUS embebido en CONCEPTO ("PROCESADO PAGO DE NOMINA"):
-       separa la palabra de estado a la columna ESTATUS.
+    Corrige cuatro errores comunes de alineación de columnas en PDFs BBVA:
+    1. Monto en columna NOMBRE: extrae a IMPORTE si está vacío y limpia NOMBRE.
+    2. Fila con NOMBRE inválido (solo monto): descarta la fila.
+    3. ESTATUS embebido en CONCEPTO ("PROCESADO PAGO DE NOMINA"): separa estatus.
+       Si el header OCR no tiene columna ESTATUS, se inyecta automáticamente.
+    4. Nombres en mixed-case: uniforma a MAYÚSCULAS.
     """
     if len(structured_rows) < 2:
         return structured_rows
 
-    header = structured_rows[0]
+    header = list(structured_rows[0])
     keys = [_normalize_keyword(h).lower() for h in header]
 
     def _ci(name: str) -> int:
@@ -1061,9 +1061,30 @@ def _fix_payment_ocr_column_errors(structured_rows: list[list[str]]) -> list[lis
     estatus_idx = _ci("estatus") if _ci("estatus") != -1 else _ci("estado")
     concepto_idx = _ci("concepto")
 
+    # Fix pre-loop: inyectar columna ESTATUS si el header OCR no la incluye.
+    # En algunos PDFs BBVA el OCR no detecta la cabecera "ESTATUS" y toda la
+    # celda "PROCESADO PAGO DE NOMINA" cae en la columna CONCEPTO.
+    col_injected = False
+    if estatus_idx < 0 and concepto_idx >= 0:
+        insert_pos = concepto_idx
+        header.insert(insert_pos, "ESTATUS")
+        keys.insert(insert_pos, "estatus")
+        estatus_idx = insert_pos
+        concepto_idx += 1
+        if importe_idx >= insert_pos:
+            importe_idx += 1
+        if nombre_idx >= insert_pos:
+            nombre_idx += 1
+        col_injected = True
+
     fixed: list[list[str]] = [header]
     for orig_row in structured_rows[1:]:
-        row = list(orig_row)
+        # Expandir fila con ESTATUS vacío cuando la columna fue inyectada
+        if col_injected:
+            ins = estatus_idx
+            row = list(orig_row[:ins]) + [""] + list(orig_row[ins:])
+        else:
+            row = list(orig_row)
 
         # Fix 1: monto en columna nombre
         if 0 <= nombre_idx < len(row):
@@ -1076,29 +1097,30 @@ def _fix_payment_ocr_column_errors(structured_rows: list[list[str]]) -> list[lis
                     row[importe_idx] = amount_str
                 row[nombre_idx] = name_after
 
-        # Fix 2: validar nombre — descartar fila si tiene un valor inválido.
-        # Si nombre_original estaba vacío (sin caja OCR asignada), se deja pasar para
-        # que el pipeline lo complete desde el texto. Si tenía un valor no-nombre
-        # (ej. monto), se descarta.
+        # Fix 2: validar nombre — descartar si tiene un valor inválido no-vacío.
+        # Nombre vacío (sin caja OCR asignada) se deja pasar para completar desde texto.
         if 0 <= nombre_idx < len(row):
             nombre_original = orig_row[nombre_idx].strip() if nombre_idx < len(orig_row) else ""
             nombre_after_fix = row[nombre_idx].strip()
             if not _looks_like_person_name(nombre_after_fix):
                 if nombre_original:
-                    # Tenía algo (ej. un monto) pero no es un nombre válido → descartar
                     continue
-                # Estaba vacío desde el inicio → dejar pasar (completar desde texto)
 
         # Fix 3: estatus embebido en concepto
         if 0 <= concepto_idx < len(row) and estatus_idx >= 0:
             concepto_val = row[concepto_idx].strip()
             sm = _STATUS_PREFIX_PAT.match(concepto_val)
             if sm:
-                while len(row) <= estatus_idx:
+                while len(row) <= max(estatus_idx, concepto_idx):
                     row.append("")
                 if not row[estatus_idx].strip():
                     row[estatus_idx] = sm.group(1)
                     row[concepto_idx] = concepto_val[sm.end():].strip() or "PAGO DE NOMINA"
+
+        # Fix 4: uniformar nombres a MAYÚSCULAS (OCR puede devolver mixed-case)
+        for col_idx in [nombre_idx, _ci("apellido")]:
+            if 0 <= col_idx < len(row) and row[col_idx]:
+                row[col_idx] = row[col_idx].upper()
 
         fixed.append(row)
     return fixed
@@ -2027,6 +2049,50 @@ def _extract_bbva_transfer_receipt_rows(lines: list[str], raw_text: str) -> list
     return [header, row]
 
 
+def _normalize_payment_table_rows(rows: list[list[str]]) -> list[list[str]]:
+    """Normalización final aplicada a las filas ya fusionadas (OCR + texto).
+
+    1. Si CONCEPTO empieza con palabra de estatus y ESTATUS está vacío → separa.
+    2. Uniforma NOMBRE y APELLIDO* a MAYÚSCULAS.
+    """
+    if len(rows) < 2:
+        return rows
+
+    header = rows[0]
+    keys = [_normalize_keyword(h).lower() for h in header]
+
+    def _ci(name: str) -> int:
+        for i, k in enumerate(keys):
+            if name in k:
+                return i
+        return -1
+
+    estatus_idx = _ci("estatus") if _ci("estatus") != -1 else _ci("estado")
+    concepto_idx = _ci("concepto")
+    nombre_idx = _ci("nombre")
+    apellido_idxs = [i for i, k in enumerate(keys) if "apellido" in k]
+
+    result: list[list[str]] = [header]
+    for orig_row in rows[1:]:
+        row = list(orig_row)
+
+        # Extraer estatus embebido en concepto (aplica a cualquier source)
+        if 0 <= concepto_idx < len(row) and 0 <= estatus_idx < len(row):
+            concepto_val = row[concepto_idx].strip()
+            sm = _STATUS_PREFIX_PAT.match(concepto_val)
+            if sm and not row[estatus_idx].strip():
+                row[estatus_idx] = sm.group(1)
+                row[concepto_idx] = concepto_val[sm.end():].strip() or "PAGO DE NOMINA"
+
+        # Uniformar nombre y apellidos a MAYÚSCULAS
+        for col_idx in ([nombre_idx] + apellido_idxs):
+            if 0 <= col_idx < len(row) and row[col_idx]:
+                row[col_idx] = row[col_idx].upper()
+
+        result.append(row)
+    return result
+
+
 def _extract_payment_table_payload(base_text_raw: str, ocr_boxes) -> dict | None:
     all_tables = _extract_all_table_payloads(base_text_raw, ocr_boxes)
     rows_ocr = _extract_payment_table_rows_from_boxes(ocr_boxes)
@@ -2065,6 +2131,7 @@ def _extract_payment_table_payload(base_text_raw: str, ocr_boxes) -> dict | None
         rows = _merge_payment_rows_with_backup(rows, rows_ocr)
 
     rows = _append_scotia_summary_rows_to_table(rows, base_text_raw)
+    rows = _normalize_payment_table_rows(rows)
     payload = {
         "source": source,
         "rows": rows,
