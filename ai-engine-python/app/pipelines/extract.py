@@ -1062,10 +1062,11 @@ def _fix_payment_ocr_column_errors(structured_rows: list[list[str]]) -> list[lis
     concepto_idx = _ci("concepto")
 
     # Fix pre-loop: inyectar columna ESTATUS si el header OCR no la incluye.
-    # En algunos PDFs BBVA el OCR no detecta la cabecera "ESTATUS" y toda la
-    # celda "PROCESADO PAGO DE NOMINA" cae en la columna CONCEPTO.
+    # Solo aplica a tablas de nómina BBVA (tienen columna APELLIDO); tablas tipo
+    # Scotia/Scotiabank tienen estructura diferente y no deben modificarse.
+    _has_apellido = any("apellido" in k for k in keys)
     col_injected = False
-    if estatus_idx < 0 and concepto_idx >= 0:
+    if estatus_idx < 0 and concepto_idx >= 0 and _has_apellido:
         insert_pos = concepto_idx
         header.insert(insert_pos, "ESTATUS")
         keys.insert(insert_pos, "estatus")
@@ -1183,7 +1184,9 @@ def _extract_payment_table_rows_from_boxes(ocr_boxes) -> list[list[str]]:
         if _looks_like_payment_table_data(row):
             selected.append(row)
 
-    return selected if len(selected) > 1 else []
+    if len(selected) > 1:
+        return _fix_payment_ocr_column_errors(selected)
+    return []
 
 
 _ADVANCED_NOMINA_TABLE_HEADER = [
@@ -2053,12 +2056,13 @@ def _normalize_payment_table_rows(rows: list[list[str]]) -> list[list[str]]:
     """Normalización final aplicada a las filas ya fusionadas (OCR + texto).
 
     1. Si CONCEPTO empieza con palabra de estatus y ESTATUS está vacío → separa.
+       Si el header no tiene columna ESTATUS, se inyecta antes de CONCEPTO.
     2. Uniforma NOMBRE y APELLIDO* a MAYÚSCULAS.
     """
     if len(rows) < 2:
         return rows
 
-    header = rows[0]
+    header = list(rows[0])  # copia mutable para poder inyectar columna
     keys = [_normalize_keyword(h).lower() for h in header]
 
     def _ci(name: str) -> int:
@@ -2072,9 +2076,29 @@ def _normalize_payment_table_rows(rows: list[list[str]]) -> list[list[str]]:
     nombre_idx = _ci("nombre")
     apellido_idxs = [i for i, k in enumerate(keys) if "apellido" in k]
 
+    # Red de seguridad: inyectar ESTATUS si el header no lo tiene pero sí CONCEPTO.
+    # Solo aplica a tablas BBVA nomina (tienen columna APELLIDO); tablas tipo Scotia
+    # tienen estructura diferente y su CONCEPTO no lleva prefijo de estatus.
+    _has_apellido = bool(apellido_idxs)
+    col_injected = False
+    if estatus_idx < 0 and concepto_idx >= 0 and _has_apellido:
+        insert_pos = concepto_idx
+        header.insert(insert_pos, "ESTATUS")
+        keys.insert(insert_pos, "estatus")
+        estatus_idx = insert_pos
+        concepto_idx += 1
+        if nombre_idx >= insert_pos:
+            nombre_idx += 1
+        apellido_idxs = [i + 1 if i >= insert_pos else i for i in apellido_idxs]
+        col_injected = True
+
     result: list[list[str]] = [header]
     for orig_row in rows[1:]:
-        row = list(orig_row)
+        if col_injected:
+            ins = estatus_idx
+            row = list(orig_row[:ins]) + [""] + list(orig_row[ins:])
+        else:
+            row = list(orig_row)
 
         # Extraer estatus embebido en concepto (aplica a cualquier source)
         if 0 <= concepto_idx < len(row) and 0 <= estatus_idx < len(row):
