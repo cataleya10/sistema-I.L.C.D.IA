@@ -1,16 +1,141 @@
 {
-  "curp": ["CURP", "CLAVE UNICA DE REGISTRO DE POBLACION"],
-  "nombre": ["NOMBRE", "NOMBRES", "NOMBRE COMPLETO"],
-  "fecha_nacimiento": ["FECHA DE NACIMIENTO", "FECHA NACIMIENTO", "F NACIMIENTO", "NACIMIENTO"],
-  "rfc": ["RFC", "R.F.C.", "REGISTRO FEDERAL DE CONTRIBUYENTES"],
-  "nss": ["NSS", "NUMERO DE SEGURIDAD SOCIAL", "NO. SEGURIDAD SOCIAL", "SEGURIDAD SOCIAL"],
-  "clabe": ["CLABE", "CLAVE BANCARIA ESTANDARIZADA"],
-  "domicilio": ["DOMICILIO", "DIRECCION"],
-  "cuenta": ["CUENTA", "NO. CUENTA", "NUMERO DE CUENTA", "NO CUENTA"],
-  "titular": ["TITULAR", "NOMBRE DEL TITULAR"],
-  "banco": ["BANCO", "INSTITUCION BANCARIA"],
-  "fecha_limite": ["FECHA LIMITE", "PAGAR ANTES DE", "F LIMITE", "VENCE"],
-  "total": ["TOTAL", "TOTAL A PAGAR", "IMPORTE TOTAL"],
-  "cp": ["CODIGO POSTAL", "C.P.", "CP"],
-  "numero_servicio": ["NUMERO DE SERVICIO", "NO. DE SERVICIO", "NO SERVICIO"]
+  "curp": [
+    "CURP",
+    "CLAVE UNICA DE REGISTRO DE POBLACION",
+    "CLAVE"
+  ],
+  "nombre": [
+    "NOMBRE",
+    "NOMBRES",
+    "NOMBRE COMPLETO"
+  ],
+  "fecha_nacimiento": [
+    "FECHA DE NACIMIENTO",
+    "FECHA NACIMIENTO",
+    "F NACIMIENTO",
+    "NACIMIENTO"
+  ],
+  "rfc": [
+    "RFC",
+    "R.F.C.",
+    "REGISTRO FEDERAL DE CONTRIBUYENTES"
+  ],
+  "nss": [
+    "NSS",
+    "NUMERO DE SEGURIDAD SOCIAL",
+    "NO. SEGURIDAD SOCIAL",
+    "SEGURIDAD SOCIAL"
+  ],
+  "clabe": [
+    "CLABE",
+    "CLAVE BANCARIA ESTANDARIZADA"
+  ],
+  "domicilio": [
+    "DOMICILIO",
+    "DIRECCION"
+  ],
+  "cuenta": [
+    "CUENTA",
+    "NO. CUENTA",
+    "NUMERO DE CUENTA",
+    "NO CUENTA"
+  ],
+  "titular": [
+    "TITULAR",
+    "NOMBRE DEL TITULAR"
+  ],
+  "banco": [
+    "BANCO",
+    "INSTITUCION BANCARIA"
+  ],
+  "fecha_limite": [
+    "FECHA LIMITE",
+    "PAGAR ANTES DE",
+    "F LIMITE",
+    "VENCE"
+  ],
+  "total": [
+    "TOTAL",
+    "TOTAL A PAGAR",
+    "IMPORTE TOTAL"
+  ],
+  "cp": [
+    "CODIGO POSTAL",
+    "C.P.",
+    "CP"
+  ],
+  "numero_servicio": [
+    "NUMERO DE SERVICIO",
+    "NO. DE SERVICIO",
+    "NO SERVICIO"
+  ],
+  "sexo": [
+    "SEXO",
+    "GENERO",
+    "GEN"
+  ],
+  "apellido_paterno": [
+    "APELLIDO PATERNO",
+    "PRIMER APELLIDO",
+    "PATERNO"
+  ],
+  "apellido_materno": [
+    "APELLIDO MATERNO",
+    "SEGUNDO APELLIDO",
+    "MATERNO"
+  ],
+  "entidad_nacimiento": [
+    "ENTIDAD DE NACIMIENTO",
+    "ENTIDAD NACIMIENTO",
+    "ENTIDAD FEDERATIVA"
+  ],
+  "clave_elector": [
+    "CLAVE DE ELECTOR",
+    "CLAVE ELECTOR"
+  ],
+  "vigencia": [
+    "VIGENCIA",
+    "VIGENTE HASTA",
+    "VENCE"
+  ],
+  "seccion": [
+    "SECCION",
+    "SECC"
+  ],
+  "regimen": [
+    "REGIMEN FISCAL",
+    "REGIMEN",
+    "REGIMENES"
+  ],
+  "folio": [
+    "FOLIO",
+    "FOLIO FISCAL",
+    "NO FOLIO"
+  ],
+  "numero_acta": [
+    "NUMERO DE ACTA",
+    "NUMERO ACTA",
+    "NO ACTA",
+    "NRO ACTA"
+  ],
+  "fecha_emision": [
+    "FECHA DE EMISION",
+    "FECHA EMISION",
+    "EMISION"
+  ],
+  "referencia": [
+    "REFERENCIA",
+    "NO. REFERENCIA",
+    "NUMERO DE REFERENCIA"
+  ],
+  "proveedor": [
+    "PROVEEDOR",
+    "EMPRESA",
+    "RAZON SOCIAL"
+  ],
+  "periodo": [
+    "PERIODO",
+    "PERIODO FACTURADO",
+    "PERIODO DE FACTURACION"
+  ]
 }

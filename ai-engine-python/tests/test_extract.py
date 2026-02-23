@@ -285,8 +285,8 @@ class ExtractPipelineTests(unittest.TestCase):
         payload = json.loads(data["tabla_celdas"])
         self.assertEqual(payload.get("source"), "ocr_boxes")
         rows = payload.get("rows", [])
-        self.assertIn(["CANTIDAD DE MOVIMIENTOS ALTAS", "IMPORTE DE MOVIMIENTO ALTAS", "CANTIDAD DE MOVIMIENTOS BAJAS", "IMPORTE DE MOVIMIENTOS BAJAS"], rows)
-        self.assertIn(["TOTAL CANTIDAD DE MOVIMIENTOS ALTAS", "TOTAL IMPORTE DE MOVIMIENTO ALTAS", "TOTAL CANTIDAD DE MOVIMIENTOS BAJAS", "TOTAL IMPORTE DE MOVIMIENTOS BAJAS"], rows)
+        self.assertTrue(any(row[:4] == ["CANTIDAD DE MOVIMIENTOS ALTAS", "IMPORTE DE MOVIMIENTO ALTAS", "CANTIDAD DE MOVIMIENTOS BAJAS", "IMPORTE DE MOVIMIENTOS BAJAS"] for row in rows))
+        self.assertTrue(any(row[:4] == ["TOTAL CANTIDAD DE MOVIMIENTOS ALTAS", "TOTAL IMPORTE DE MOVIMIENTO ALTAS", "TOTAL CANTIDAD DE MOVIMIENTOS BAJAS", "TOTAL IMPORTE DE MOVIMIENTOS BAJAS"] for row in rows))
 
     def test_extract_datos_bancarios_payment_table_from_text_lines(self):
         ocr_text = "\n".join(
@@ -841,19 +841,17 @@ class ExtractPipelineTests(unittest.TestCase):
         payload = json.loads(data["tabla_celdas"])
         rows = payload.get("rows", [])
         self.assertGreaterEqual(len(rows), 6)
-        self.assertIn(
-            ["CANTIDAD DE MOVIMIENTOS ALTAS", "IMPORTE DE MOVIMIENTO ALTAS", "CANTIDAD DE MOVIMIENTOS BAJAS", "IMPORTE DE MOVIMIENTOS BAJAS"],
-            rows,
+        self.assertTrue(
+            any(row[:4] == ["CANTIDAD DE MOVIMIENTOS ALTAS", "IMPORTE DE MOVIMIENTO ALTAS", "CANTIDAD DE MOVIMIENTOS BAJAS", "IMPORTE DE MOVIMIENTOS BAJAS"] for row in rows),
         )
-        self.assertIn(["6", "$18,000.00", "0", "$0.00"], rows)
-        self.assertIn(
-            [
+        self.assertTrue(any(row[:4] == ["6", "$18,000.00", "0", "$0.00"] for row in rows))
+        self.assertTrue(
+            any(row[:4] == [
                 "TOTAL CANTIDAD DE MOVIMIENTOS ALTAS",
                 "TOTAL IMPORTE DE MOVIMIENTO ALTAS",
                 "TOTAL CANTIDAD DE MOVIMIENTOS BAJAS",
                 "TOTAL IMPORTE DE MOVIMIENTOS BAJAS",
-            ],
-            rows,
+            ] for row in rows),
         )
 
     def test_extract_factura_payment_detail_payload_canonical_for_bbva(self):

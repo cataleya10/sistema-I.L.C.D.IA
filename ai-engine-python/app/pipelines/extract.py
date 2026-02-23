@@ -51,7 +51,7 @@ DATE_FLEX_PATTERN = re.compile(
     r"\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}(?:\s+|[-/])[A-Z]{3,9}(?:\s+|[-/])\d{2,4})\b"
 )
 NAME_PATTERN = re.compile(r"\b[A-Z]{2,}(?:\s+[A-Z]{2,}){1,4}\b")
-RFC_WITH_HOMOCLAVE = re.compile(r"\b[A-Z&]{3,4}\d{6}[A-Z0-9]{3}\b")
+RFC_WITH_HOMOCLAVE = RFC_PATTERN  # alias — same regex, single compiled instance
 CP_PATTERN = re.compile(r"\b\d{5}\b")
 
 LABEL_MAP = {
@@ -1111,6 +1111,7 @@ def _fix_payment_ocr_column_errors(structured_rows: list[list[str]]) -> list[lis
         if 0 <= concepto_idx < len(row) and estatus_idx >= 0:
             concepto_val = row[concepto_idx].strip()
             sm = _STATUS_PREFIX_PAT.match(concepto_val)
+            logger.debug("[FIX3] concepto_idx=%d estatus_idx=%d len=%d concepto_val=%r sm=%s", concepto_idx, estatus_idx, len(row), concepto_val, bool(sm))
             if sm:
                 while len(row) <= max(estatus_idx, concepto_idx):
                     row.append("")
@@ -2113,6 +2114,10 @@ def _normalize_payment_table_rows(rows: list[list[str]]) -> list[list[str]]:
             if 0 <= col_idx < len(row) and row[col_idx]:
                 row[col_idx] = row[col_idx].upper()
 
+        # Asegurar que la fila tenga al menos tantas columnas como el header
+        while len(row) < len(header):
+            row.append("")
+
         result.append(row)
     return result
 
@@ -2124,6 +2129,7 @@ def _extract_payment_table_payload(base_text_raw: str, ocr_boxes) -> dict | None
 
     score_ocr = _payment_rows_quality_score(rows_ocr) if len(rows_ocr) >= 2 else -999
     score_text = _payment_rows_quality_score(rows_text) if len(rows_text) >= 2 else -999
+    logger.debug("[DIAG] ocr_rows=%d score=%s | text_rows=%d score=%s", len(rows_ocr), score_ocr, len(rows_text), score_text)
 
     selected_table_index = None
     if score_ocr >= score_text and score_ocr >= 0:
@@ -2177,6 +2183,15 @@ def _extract_payment_table_payload(base_text_raw: str, ocr_boxes) -> dict | None
             payload["primary_table_index"] = matched
         elif selected_table_index and selected_table_index > 0:
             payload["primary_table_index"] = selected_table_index
+    # DIAG: log first data row Estado/Concepto
+    if len(payload.get("rows", [])) >= 2:
+        r = payload["rows"][1]
+        hdr = payload["rows"][0]
+        _ci_diag = {_normalize_keyword(h).lower(): i for i, h in enumerate(hdr)}
+        ei = next((i for k, i in _ci_diag.items() if "estatus" in k or "estado" in k), -1)
+        ci = next((i for k, i in _ci_diag.items() if "concepto" in k), -1)
+        logger.debug("[DIAG] source=%s header=%s", payload.get("source"), hdr)
+        logger.debug("[DIAG] row1 Estado[%d]=%s Concepto[%d]=%s", ei, r[ei] if 0 <= ei < len(r) else "N/A", ci, r[ci] if 0 <= ci < len(r) else "N/A")
     return payload
 
 
@@ -5470,7 +5485,8 @@ def _extract_curp_birth_date(curps: list[str]) -> str | None:
     dd = curp[8:10]
     if not (yy.isdigit() and mm.isdigit() and dd.isdigit()):
         return None
-    return f"{dd}/{mm}/19{yy}" if int(yy) >= 30 else f"{dd}/{mm}/20{yy}"
+    pivot = (datetime.now().year % 100) + 5
+    return f"{dd}/{mm}/19{yy}" if int(yy) >= pivot else f"{dd}/{mm}/20{yy}"
 
 
 def _extract_curp_sex(curps: list[str]) -> str | None:
@@ -5492,7 +5508,7 @@ def _guess_name(text: str) -> str | None:
         if any(word in blacklist for word in name.split()):
             continue
         return name
-    return candidates[0] if candidates else None
+    return None
 
 
 def _find_labeled_value(lines: list[str], label: str) -> str | None:
@@ -5979,8 +5995,17 @@ def _dedupe_fields(fields: list[dict]) -> list[dict]:
     return list(best.values())
 
 
-async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text: str = "", filename: str | None = None):
-    fields = []
+async def extract_fields(document_type: str, ocr_text: str, ocr_boxes: list[dict] | None = None, raw_text: str = "", filename: str | None = None) -> list[dict]:
+    """Main extraction entry point with graceful error recovery."""
+    try:
+        return await _extract_fields_impl(document_type, ocr_text, ocr_boxes, raw_text, filename)
+    except Exception:
+        logger.exception("Unhandled error in extract_fields for document_type=%s", document_type)
+        return []
+
+
+async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: list[dict] | None = None, raw_text: str = "", filename: str | None = None) -> list[dict]:
+    fields: list[dict] = []
     base_text_raw = "\n".join(part for part in [raw_text, ocr_text] if part)
     base_text = _normalize_text(base_text_raw)
     text = base_text.upper()
@@ -6208,8 +6233,6 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
         entidad = _find_value_after_keyword(lines, ["NOMBRE DE LA ENTIDAD FEDERATIVA", "ENTIDAD FEDERATIVA"])
         if entidad:
             entidad = entidad.strip()
-            if len(entidad) > 4:
-                entidad = entidad[:4]
         domicilio_parts = [p for p in [colonia, localidad or municipio, entidad] if p]
         if cp:
             normalized_cp = _normalize_value_for_key("cp", cp)
