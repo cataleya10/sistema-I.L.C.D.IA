@@ -63,5 +63,3 @@ ai-engine:
   script:
     - python -m compileall app
     - python -m unittest discover -s tests -p "test_*.py" -v
-
-# gitlab-ci fix 2026-02-12T13:14:51
