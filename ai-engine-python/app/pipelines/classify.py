@@ -100,6 +100,16 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         "REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS",
         "TIPO DE MOVIMIENTO (PAGO)",
         "ABONO NOMINA",
+        # SPEI / transferencias interbancarias
+        "TRANSFERENCIA SPEI",
+        "SPEI ENVIADO",
+        "SPEI RECIBIDO",
+        "FOLIO SPEI",
+        "COMPROBANTE DE TRANSFERENCIA",
+        "ENVIO DE DINERO INTERBANCARIO",
+        "NUMERO DE RASTREO",
+        "REFERENCIA NUMERICA",
+        "OPERACION INTERBANCARIA",
     )
     payment_markers_compact = (
         "DISPERSIONDEPAGODENOMINA",
@@ -111,6 +121,15 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         "REPORTEDETRANSMISIONDEARCHIVODEPAGOS",
         "TIPODEMOVIMIENTOPAGO",
         "ABONONOMINA",
+        # SPEI compact
+        "TRANSFERENCIASPEI",
+        "SPEIENVIADO",
+        "SPEIRECIBIDO",
+        "FOLIOSPEI",
+        "COMPROBANTDETRANSFERENCIA",
+        "NUMERODERASTREO",
+        "REFERENCIANUMERICA",
+        "OPERACIONINTERBANCARIA",
     )
 
     if (
@@ -120,15 +139,6 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         or "CREDENCIALPARAVOTAR" in compact_text
     ):
         return "INE", 0.88
-    if (
-        "NUMERO DE SEGURIDAD SOCIAL" in text
-        or "NSS" in text
-        or "IMSS" in text
-        or "SEGURIDAD SOCIAL" in text
-        or "NUMERODESEGURIDADSOCIAL" in compact_text
-        or "SEGURIDADSOCIAL" in compact_text
-    ):
-        return "NSS", 0.85
     if (
         "CONSTANCIA DE LA CLAVE UNICA" in text
         or "CONSTANCIA DE LA CLAVE UNICA DE REGISTRO DE POBLACION" in text
@@ -156,8 +166,8 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         or "TOMO" in text
     ):
         return "ACTA_NACIMIENTO", 0.85
-    # Nómina/pago keywords tienen prioridad sobre service_markers
-    # (una nómina BBVA puede tener "TOTAL A PAGAR" que dispara COMPROBANTE_DOMICILIO incorrectamente)
+    # Nómina/SPEI/pago keywords tienen prioridad sobre service_markers Y sobre NSS
+    # (una nómina BBVA puede tener "TOTAL A PAGAR" o "NSS" que dispara clasificación incorrecta)
     if (
         any(marker in text for marker in payment_markers)
         or any(marker in compact_text for marker in payment_markers_compact)
@@ -165,6 +175,16 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         return "FACTURA", 0.9
     if any(marker in text for marker in service_markers) or any(marker in compact_text for marker in service_markers_compact):
         return "COMPROBANTE_DOMICILIO", 0.86
+    # NSS check después de FACTURA para evitar que nóminas con "NSS"/"IMSS" se clasifiquen mal
+    if (
+        "NUMERO DE SEGURIDAD SOCIAL" in text
+        or "NSS" in text
+        or "IMSS" in text
+        or "SEGURIDAD SOCIAL" in text
+        or "NUMERODESEGURIDADSOCIAL" in compact_text
+        or "SEGURIDADSOCIAL" in compact_text
+    ):
+        return "NSS", 0.85
     if (
         "CONSTANCIA DE SITUACION FISCAL" in text
         or "CEDULA DE IDENTIFICACION FISCAL" in text

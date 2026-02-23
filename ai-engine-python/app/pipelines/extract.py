@@ -3,12 +3,44 @@ import json
 import os
 import logging
 import unicodedata
+from datetime import datetime
 
 from app.pipelines.legacy_adapter import legacy_extract_fields
 
 logger = logging.getLogger(__name__)
 
 CURP_PATTERN = re.compile(r"\b[A-Z][AEIOUX][A-Z]{2}\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])[HM][A-Z]{5}[A-Z0-9]\d\b")
+
+# Posiciones de letras y dígitos en un CURP de 18 caracteres (índice 0)
+_CURP_LETTER_POS = frozenset({0, 1, 2, 3, 10, 11, 12, 13, 14, 15, 16})
+_CURP_DIGIT_POS = frozenset({4, 5, 6, 7, 8, 9, 17})
+_CURP_OCR_DIGIT_TO_LETTER = {"0": "O", "1": "I", "5": "S", "8": "B"}
+_CURP_OCR_LETTER_TO_DIGIT = {"O": "0", "I": "1", "L": "1", "S": "5", "B": "8"}
+
+
+def _try_fix_curp_ocr(candidate: str) -> str:
+    """Corrige confusiones OCR comunes en un candidato de 18 chars que podría ser CURP."""
+    if len(candidate) != 18:
+        return candidate
+    chars = list(candidate.upper())
+    for i, ch in enumerate(chars):
+        if i in _CURP_LETTER_POS and ch in _CURP_OCR_DIGIT_TO_LETTER:
+            chars[i] = _CURP_OCR_DIGIT_TO_LETTER[ch]
+        elif i in _CURP_DIGIT_POS and ch in _CURP_OCR_LETTER_TO_DIGIT:
+            chars[i] = _CURP_OCR_LETTER_TO_DIGIT[ch]
+    return "".join(chars)
+
+
+def _search_curp(text: str) -> str | None:
+    """Busca CURP en texto; si no encuentra match directo, intenta corrección OCR."""
+    m = CURP_PATTERN.search(text.upper())
+    if m:
+        return m.group(0)
+    for candidate in re.findall(r"[A-Z0-9]{18}", text.upper()):
+        fixed = _try_fix_curp_ocr(candidate)
+        if CURP_PATTERN.fullmatch(fixed):
+            return fixed
+    return None
 RFC_PATTERN = re.compile(r"\b[A-Z&]{3,4}\d{6}[A-Z0-9]{3}\b")
 NSS_PATTERN = re.compile(r"\b\d{11}\b")
 CLABE_PATTERN = re.compile(r"\b\d{18}\b")
@@ -1145,7 +1177,7 @@ def _extract_bbva_nomina_advanced_rows_from_text(raw_text: str) -> list[list[str
                 ]
             )
 
-    if len(rows) < 2:
+    if len(rows) < 1:
         return []
 
     return [_ADVANCED_NOMINA_TABLE_HEADER, *rows[:500]]
@@ -2955,6 +2987,13 @@ def _extract_curp_from_boxes(ocr_boxes):
         return None, None
 
     curp_value, curp_box = find_pattern_in_boxes(CURP_PATTERN)
+    if not curp_value:
+        # Fallback: intenta corrección OCR sobre el texto concatenado de todos los boxes
+        full_box_text = " ".join(b.get("text", "") for b in boxes).upper()
+        fixed_curp = _search_curp(full_box_text)
+        if fixed_curp:
+            curp_value = fixed_curp
+            curp_box = None
     if curp_value:
         result["curp"] = {"value": curp_value, "source": curp_box}
 
@@ -4751,7 +4790,8 @@ def _normalize_vigencia(value: str) -> str:
         return year_range.group(1).replace(" ", "")
     years = [int(y) for y in re.findall(r"\b(19\d{2}|20\d{2})\b", value)]
     if years:
-        plausible = [year for year in years if 2020 <= year <= 2055]
+        _max_vig_year = datetime.now().year + 30
+        plausible = [year for year in years if 2020 <= year <= _max_vig_year]
         selected = max(plausible) if plausible else max(years)
         return str(selected)
     date_match = re.search(r"(\d{2}/\d{2}/(\d{4}))", value)
@@ -5869,7 +5909,7 @@ async def extract_fields(document_type: str, ocr_text: str, ocr_boxes, raw_text:
                     current_year = int(current_digits[-4:])
             if current_year < 2020:
                 year_candidates = [int(year) for year in re.findall(r"(20\d{2})", text)]
-                plausible_years = [year for year in year_candidates if 2020 <= year <= 2055]
+                plausible_years = [year for year in year_candidates if 2020 <= year <= datetime.now().year + 30]
                 if plausible_years:
                     fields.append(_make_field("vigencia", "Vigencia", str(max(plausible_years)), ocr_boxes, confidence=0.97))
             surname_line = next((line for line in text_lines if "<" in line and "<<" not in line and not re.search(r"\d", line)), "")
