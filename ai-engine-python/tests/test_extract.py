@@ -1558,6 +1558,49 @@ class ExtractPipelineTests(unittest.TestCase):
 
         self.assertIsNone(data.get("titular"))
 
+    # ------------------------------------------------------------------
+    # Tests para _fix_payment_ocr_column_errors
+    # ------------------------------------------------------------------
+
+    def test_fix_ocr_amount_in_nombre_moves_to_importe(self):
+        """Si nombre empieza con monto e importe está vacío, el monto pasa a importe."""
+        from app.pipelines.extract import _fix_payment_ocr_column_errors
+
+        rows = [
+            ["CUENTA", "REFERENCIA", "IMPORTE", "NOMBRE", "APELLIDO PATERNO", "APELLIDO MATERNO", "ESTATUS", "CONCEPTO"],
+            ["56936397470", "1620260115134348451388", "", "$557.74 ROLANDO ROGERIO", "CONTRERAS", "CAMARGO", "", "PAGO DE NOMINA"],
+        ]
+        result = _fix_payment_ocr_column_errors(rows)
+        self.assertEqual(len(result), 2, "Debe conservar la fila corregida")
+        self.assertIn("557", result[1][2], "El importe debe contener el monto extraído")
+        self.assertNotIn("$", result[1][3], "El nombre no debe contener el símbolo de moneda")
+        self.assertIn("ROLANDO", result[1][3], "El nombre debe contener la parte de texto")
+
+    def test_fix_ocr_invalid_nombre_discards_row(self):
+        """Si nombre es solo un monto (sin nombre real), la fila se descarta."""
+        from app.pipelines.extract import _fix_payment_ocr_column_errors
+
+        rows = [
+            ["CUENTA", "REFERENCIA", "IMPORTE", "NOMBRE", "APELLIDO PATERNO", "APELLIDO MATERNO", "ESTATUS", "CONCEPTO"],
+            ["56783223195", "1620260115134340581263", "$140948.59", "$610.44", "MENDEZ", "FLORES", "", "PAGO DE NOMINA"],
+        ]
+        result = _fix_payment_ocr_column_errors(rows)
+        self.assertEqual(len(result), 1, "Fila con nombre inválido debe descartarse (solo queda header)")
+
+    def test_fix_ocr_status_extracted_from_concepto(self):
+        """Si concepto empieza con palabra de estado y estatus está vacío, se separa."""
+        from app.pipelines.extract import _fix_payment_ocr_column_errors
+
+        rows = [
+            ["CUENTA", "REFERENCIA", "IMPORTE", "NOMBRE", "APELLIDO PATERNO", "APELLIDO MATERNO", "ESTATUS", "CONCEPTO"],
+            ["56936397470", "1620260115134348451388", "$1537.35", "ROLANDO ROGERIO", "CONTRERAS", "CAMARGO", "", "PROCESADO PAGO DE NOMINA"],
+        ]
+        result = _fix_payment_ocr_column_errors(rows)
+        self.assertEqual(len(result), 2, "Debe conservar la fila")
+        self.assertEqual(result[1][6], "PROCESADO", "ESTATUS debe extraerse de CONCEPTO")
+        self.assertNotIn("PROCESADO", result[1][7], "CONCEPTO no debe contener el estatus")
+        self.assertIn("PAGO", result[1][7], "CONCEPTO debe conservar el concepto")
+
 
 if __name__ == "__main__":
     unittest.main()

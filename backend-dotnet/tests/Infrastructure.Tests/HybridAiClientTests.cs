@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using Domain.Enums;
 using Infrastructure.Clients;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -10,6 +11,11 @@ namespace Infrastructure.Tests;
 
 public class HybridAiClientTests
 {
+    private sealed class NullHttpContextAccessor : IHttpContextAccessor
+    {
+        public HttpContext? HttpContext { get => null; set { } }
+    }
+
     [Fact]
     public async Task ProcessDocumentAsync_MergesPythonFieldsIntoPreferredResponse()
     {
@@ -39,7 +45,7 @@ public class HybridAiClientTests
                 BaseAddress = new Uri("http://unit-test.local")
             };
 
-            var pythonClient = new PythonAiClient(httpClient, config);
+            var pythonClient = new PythonAiClient(httpClient, config, new NullHttpContextAccessor());
             var csharpClient = new CSharpAiClient();
             var hybridClient = new HybridAiClient(
                 pythonClient,
@@ -85,7 +91,7 @@ public class HybridAiClientTests
             BaseAddress = new Uri("http://unit-test.local")
         };
 
-        var pythonClient = new PythonAiClient(httpClient, config);
+        var pythonClient = new PythonAiClient(httpClient, config, new NullHttpContextAccessor());
         var csharpClient = new CSharpAiClient();
         var hybridClient = new HybridAiClient(
             pythonClient,
@@ -132,7 +138,7 @@ public class HybridAiClientTests
                 BaseAddress = new Uri("http://unit-test.local")
             };
 
-            var pythonClient = new PythonAiClient(httpClient, config);
+            var pythonClient = new PythonAiClient(httpClient, config, new NullHttpContextAccessor());
             var csharpClient = new CSharpAiClient();
             var hybridClient = new HybridAiClient(
                 pythonClient,
@@ -190,7 +196,7 @@ public class HybridAiClientTests
                 BaseAddress = new Uri("http://unit-test.local")
             };
 
-            var pythonClient = new PythonAiClient(httpClient, config);
+            var pythonClient = new PythonAiClient(httpClient, config, new NullHttpContextAccessor());
             var csharpClient = new CSharpAiClient();
             var hybridClient = new HybridAiClient(
                 pythonClient,
@@ -253,7 +259,7 @@ public class HybridAiClientTests
                 BaseAddress = new Uri("http://unit-test.local")
             };
 
-            var pythonClient = new PythonAiClient(httpClient, config);
+            var pythonClient = new PythonAiClient(httpClient, config, new NullHttpContextAccessor());
             var csharpClient = new CSharpAiClient();
             var hybridClient = new HybridAiClient(
                 pythonClient,

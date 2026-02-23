@@ -1030,6 +1030,80 @@ def _payment_table_row_by_anchors(row_boxes: list[dict], anchors: list[dict]) ->
     return row
 
 
+_AMOUNT_IN_CELL_PAT = re.compile(r"^\$?\s*(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))\b")
+_STATUS_PREFIX_PAT = re.compile(r"^(PROCESADO|APLICADO|ACEPTADO|TRANSMITIDO|RECHAZADO)\b\s*")
+
+
+def _fix_payment_ocr_column_errors(structured_rows: list[list[str]]) -> list[list[str]]:
+    """Post-proceso para el path de OCR boxes.
+
+    Corrige tres errores comunes de alineación de columnas en PDFs BBVA:
+    1. Monto en columna NOMBRE (caja de texto asignada al anchor equivocado por proximidad X):
+       extrae el monto a IMPORTE si está vacío y limpia NOMBRE.
+    2. Fila con NOMBRE inválido (solo monto, sin nombre real): descarta la fila.
+    3. ESTATUS embebido en CONCEPTO ("PROCESADO PAGO DE NOMINA"):
+       separa la palabra de estado a la columna ESTATUS.
+    """
+    if len(structured_rows) < 2:
+        return structured_rows
+
+    header = structured_rows[0]
+    keys = [_normalize_keyword(h).lower() for h in header]
+
+    def _ci(name: str) -> int:
+        for i, k in enumerate(keys):
+            if name in k:
+                return i
+        return -1
+
+    importe_idx = _ci("importe")
+    nombre_idx = _ci("nombre")
+    estatus_idx = _ci("estatus") if _ci("estatus") != -1 else _ci("estado")
+    concepto_idx = _ci("concepto")
+
+    fixed: list[list[str]] = [header]
+    for orig_row in structured_rows[1:]:
+        row = list(orig_row)
+
+        # Fix 1: monto en columna nombre
+        if 0 <= nombre_idx < len(row):
+            nombre_val = row[nombre_idx].strip()
+            m = _AMOUNT_IN_CELL_PAT.match(nombre_val)
+            if m:
+                amount_str = m.group(0).strip()
+                name_after = nombre_val[m.end():].strip()
+                if 0 <= importe_idx < len(row) and not row[importe_idx].strip():
+                    row[importe_idx] = amount_str
+                row[nombre_idx] = name_after
+
+        # Fix 2: validar nombre — descartar fila si tiene un valor inválido.
+        # Si nombre_original estaba vacío (sin caja OCR asignada), se deja pasar para
+        # que el pipeline lo complete desde el texto. Si tenía un valor no-nombre
+        # (ej. monto), se descarta.
+        if 0 <= nombre_idx < len(row):
+            nombre_original = orig_row[nombre_idx].strip() if nombre_idx < len(orig_row) else ""
+            nombre_after_fix = row[nombre_idx].strip()
+            if not _looks_like_person_name(nombre_after_fix):
+                if nombre_original:
+                    # Tenía algo (ej. un monto) pero no es un nombre válido → descartar
+                    continue
+                # Estaba vacío desde el inicio → dejar pasar (completar desde texto)
+
+        # Fix 3: estatus embebido en concepto
+        if 0 <= concepto_idx < len(row) and estatus_idx >= 0:
+            concepto_val = row[concepto_idx].strip()
+            sm = _STATUS_PREFIX_PAT.match(concepto_val)
+            if sm:
+                while len(row) <= estatus_idx:
+                    row.append("")
+                if not row[estatus_idx].strip():
+                    row[estatus_idx] = sm.group(1)
+                    row[concepto_idx] = concepto_val[sm.end():].strip() or "PAGO DE NOMINA"
+
+        fixed.append(row)
+    return fixed
+
+
 def _extract_payment_table_rows_from_boxes(ocr_boxes) -> list[list[str]]:
     lines = _lines_text_from_boxes(ocr_boxes)
     rows = _payment_rows_plain_from_lines(lines)
@@ -1073,7 +1147,7 @@ def _extract_payment_table_rows_from_boxes(ocr_boxes) -> list[list[str]]:
                 structured_rows.append(row)
 
         if len(structured_rows) > 1:
-            return structured_rows
+            return _fix_payment_ocr_column_errors(structured_rows)
 
     selected = [rows[header_idx]]
     for row in rows[header_idx + 1:]:
