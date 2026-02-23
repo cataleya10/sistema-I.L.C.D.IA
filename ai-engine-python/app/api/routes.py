@@ -2,7 +2,12 @@ from fastapi import APIRouter, UploadFile, File, Form, Header, HTTPException, De
 from app.schemas.process import ProcessResponse
 from app.schemas.online_learning import OnlineLearningFeedbackRequest, OnlineLearningRetrainRequest
 from app.services.document_processor import process_document
-from app.services.online_learning import get_online_learning_stats, record_feedback_document, run_feedback_retraining
+from app.services.online_learning import (
+    get_online_learning_stats,
+    get_precision_metrics,
+    record_feedback_document,
+    run_feedback_retraining,
+)
 from app.core.config import settings
 
 router = APIRouter()
@@ -54,3 +59,17 @@ async def online_learning_retrain_endpoint(payload: OnlineLearningRetrainRequest
         max_accuracy_drop=payload.max_accuracy_drop,
         promote=payload.promote,
     )
+
+
+@router.get("/health")
+async def health_endpoint():
+    return {
+        "status": "ok",
+        "version": settings.pipeline_version,
+        "env": settings.app_env,
+    }
+
+
+@router.get("/metrics", dependencies=[Depends(verify_api_key)])
+async def metrics_endpoint():
+    return get_precision_metrics()

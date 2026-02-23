@@ -238,6 +238,8 @@ def _update_stats_unlocked(
     trained: bool,
     reason: str,
     labels: int,
+    processing_ms: float = 0.0,
+    field_coverage: dict | None = None,
 ) -> None:
     stats = _load_stats(path)
     totals = stats["totals"]
@@ -260,6 +262,33 @@ def _update_stats_unlocked(
         bucket["trained"] = int(bucket.get("trained", 0)) + 1
     else:
         bucket["skipped"] = int(bucket.get("skipped", 0)) + 1
+
+    # READY / NEEDS_REVIEW counters
+    if str(status).upper() == "READY":
+        bucket["ready_count"] = int(bucket.get("ready_count", 0)) + 1
+    else:
+        bucket["needs_review_count"] = int(bucket.get("needs_review_count", 0)) + 1
+
+    # Accumulated confidence
+    bucket["confidence_sum"] = float(bucket.get("confidence_sum", 0.0)) + float(confidence or 0)
+    bucket["confidence_count"] = int(bucket.get("confidence_count", 0)) + 1
+
+    # Accumulated processing time
+    if processing_ms and processing_ms > 0:
+        bucket["processing_ms_sum"] = float(bucket.get("processing_ms_sum", 0.0)) + processing_ms
+        bucket["processing_ms_count"] = int(bucket.get("processing_ms_count", 0)) + 1
+
+    # Field coverage: {"curp": {"present": 12, "total": 15}, ...}
+    if field_coverage:
+        cov = bucket.get("field_coverage") or {}
+        for field_key, present in field_coverage.items():
+            entry = cov.get(field_key) or {"present": 0, "total": 0}
+            entry["total"] = int(entry["total"]) + 1
+            if present:
+                entry["present"] = int(entry["present"]) + 1
+            cov[field_key] = entry
+        bucket["field_coverage"] = cov
+
     by_type[document_type] = bucket
 
     event = {
@@ -592,8 +621,15 @@ def learn_from_processed_document(
     confidence: float,
     ocr_text: str,
     fields: list[dict[str, Any]],
+    processing_ms: float = 0.0,
+    critical_keys: list[str] | None = None,
 ) -> dict[str, Any]:
     stats_path = _stats_path()
+    # Field coverage: which critical fields were found in this document
+    _field_coverage: dict[str, bool] = {
+        key: any(f.get("key") == key and f.get("value") for f in (fields or []))
+        for key in (critical_keys or [])
+    }
 
     if not _env_bool("ONLINE_TRAINING_ENABLED", True):
         with _LOCK:
@@ -606,6 +642,8 @@ def learn_from_processed_document(
                 trained=False,
                 reason="disabled",
                 labels=0,
+                processing_ms=processing_ms,
+                field_coverage=_field_coverage,
             )
         return {"trained": False, "reason": "disabled"}
 
@@ -621,6 +659,8 @@ def learn_from_processed_document(
                 trained=False,
                 reason="unknown_document_type",
                 labels=0,
+                processing_ms=processing_ms,
+                field_coverage=_field_coverage,
             )
         return {"trained": False, "reason": "unknown_document_type"}
     if str(status or "").upper() != "READY":
@@ -634,6 +674,8 @@ def learn_from_processed_document(
                 trained=False,
                 reason="status_not_ready",
                 labels=0,
+                processing_ms=processing_ms,
+                field_coverage=_field_coverage,
             )
         return {"trained": False, "reason": "status_not_ready"}
 
@@ -649,6 +691,8 @@ def learn_from_processed_document(
                 trained=False,
                 reason="low_document_confidence",
                 labels=0,
+                processing_ms=processing_ms,
+                field_coverage=_field_coverage,
             )
         return {"trained": False, "reason": "low_document_confidence"}
 
@@ -664,6 +708,8 @@ def learn_from_processed_document(
                 trained=False,
                 reason="insufficient_text",
                 labels=0,
+                processing_ms=processing_ms,
+                field_coverage=_field_coverage,
             )
         return {"trained": False, "reason": "insufficient_text"}
 
@@ -679,6 +725,8 @@ def learn_from_processed_document(
                 trained=False,
                 reason="no_reliable_labels",
                 labels=0,
+                processing_ms=processing_ms,
+                field_coverage=_field_coverage,
             )
         return {"trained": False, "reason": "no_reliable_labels"}
 
@@ -703,9 +751,83 @@ def learn_from_processed_document(
             trained=True,
             reason="trained",
             labels=len(labels),
+            processing_ms=processing_ms,
+            field_coverage=_field_coverage,
         )
 
     return {"trained": True, "labels": len(labels)}
+
+
+def get_precision_metrics() -> dict[str, Any]:
+    """Returns per-document-type precision metrics: READY rate, avg confidence, field coverage, and alerts."""
+    path = _stats_path()
+    with _LOCK:
+        stats = _load_stats(path)
+
+    needs_review_threshold = float(os.getenv("METRICS_ALERT_NEEDS_REVIEW_THRESHOLD", "0.30"))
+    min_confidence = float(os.getenv("METRICS_ALERT_MIN_CONFIDENCE", "0.70"))
+    min_coverage = float(os.getenv("METRICS_ALERT_MIN_FIELD_COVERAGE", "0.60"))
+
+    by_type = stats.get("by_document_type") or {}
+    result: dict[str, Any] = {}
+    alerts: list[dict[str, Any]] = []
+
+    for doc_type, bucket in by_type.items():
+        if not isinstance(bucket, dict):
+            continue
+        total = int(bucket.get("attempted", 0))
+        ready = int(bucket.get("ready_count", 0))
+        needs_review = int(bucket.get("needs_review_count", 0))
+        needs_review_rate = round(needs_review / total, 4) if total > 0 else None
+
+        conf_sum = float(bucket.get("confidence_sum", 0.0))
+        conf_count = int(bucket.get("confidence_count", 0))
+        avg_confidence = round(conf_sum / conf_count, 4) if conf_count > 0 else None
+
+        ms_sum = float(bucket.get("processing_ms_sum", 0.0))
+        ms_count = int(bucket.get("processing_ms_count", 0))
+        avg_processing_ms = round(ms_sum / ms_count, 1) if ms_count > 0 else None
+
+        raw_cov = bucket.get("field_coverage") or {}
+        field_coverage: dict[str, Any] = {
+            k: {
+                "present": int(v.get("present", 0)),
+                "total": int(v.get("total", 0)),
+                "rate": round(int(v.get("present", 0)) / int(v.get("total", 1)), 4)
+                if int(v.get("total", 0)) > 0
+                else None,
+            }
+            for k, v in raw_cov.items()
+            if isinstance(v, dict)
+        }
+
+        type_alerts: list[str] = []
+        if needs_review_rate is not None and needs_review_rate > needs_review_threshold:
+            type_alerts.append(
+                f"needs_review_rate={needs_review_rate:.1%} > {needs_review_threshold:.0%}"
+            )
+        if avg_confidence is not None and avg_confidence < min_confidence:
+            type_alerts.append(f"avg_confidence={avg_confidence:.2f} < {min_confidence:.2f}")
+        for field_key, cov_entry in field_coverage.items():
+            rate = cov_entry.get("rate")
+            if rate is not None and rate < min_coverage:
+                type_alerts.append(
+                    f"field_coverage[{field_key}]={rate:.1%} < {min_coverage:.0%}"
+                )
+        if type_alerts:
+            alerts.append({"document_type": doc_type, "alerts": type_alerts})
+
+        result[doc_type] = {
+            "total_processed": total,
+            "ready_count": ready,
+            "needs_review_count": needs_review,
+            "needs_review_rate": needs_review_rate,
+            "avg_confidence": avg_confidence,
+            "avg_processing_ms": avg_processing_ms,
+            "field_coverage": field_coverage,
+        }
+
+    return {"by_document_type": result, "alerts": alerts}
 
 
 def record_feedback_document(

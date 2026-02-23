@@ -518,6 +518,8 @@ async def process_document(file, document_id: str, source: str, options: str | N
             confidence=doc_confidence,
             ocr_text=ocr_text,
             fields=fields,
+            processing_ms=(time.time() - start) * 1000,
+            critical_keys=list(CRITICAL_FIELDS.get(doc_type, [])),
         )
     except Exception:
         logger.exception("Online learning failed for document_id=%s", document_id)
