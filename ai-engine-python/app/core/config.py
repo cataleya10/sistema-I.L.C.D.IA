@@ -19,7 +19,7 @@ class Settings(BaseModel):
     model_version: str = os.getenv("MODEL_VERSION", "clf-v1.0.0")
     api_key: str | None = os.getenv("API_KEY")
     app_env: str = os.getenv("APP_ENV", "development").strip().lower()
-    max_pages: int = int(os.getenv("MAX_PAGES", "10"))
+    max_pages: int = int(os.getenv("MAX_PAGES", "100"))
     pdf_render_dpi: int = int(os.getenv("PDF_RENDER_DPI", "300"))
     min_text_layer_chars: int = int(os.getenv("MIN_TEXT_LAYER_CHARS", "180"))
     min_text_layer_words: int = int(os.getenv("MIN_TEXT_LAYER_WORDS", "25"))

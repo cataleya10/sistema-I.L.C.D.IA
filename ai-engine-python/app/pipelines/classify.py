@@ -156,6 +156,13 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         or "TOMO" in text
     ):
         return "ACTA_NACIMIENTO", 0.85
+    # Nómina/pago keywords tienen prioridad sobre service_markers
+    # (una nómina BBVA puede tener "TOTAL A PAGAR" que dispara COMPROBANTE_DOMICILIO incorrectamente)
+    if (
+        any(marker in text for marker in payment_markers)
+        or any(marker in compact_text for marker in payment_markers_compact)
+    ):
+        return "FACTURA", 0.9
     if any(marker in text for marker in service_markers) or any(marker in compact_text for marker in service_markers_compact):
         return "COMPROBANTE_DOMICILIO", 0.86
     if (
@@ -181,11 +188,6 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         )
     ):
         return "CONSTANCIA_SITUACION_FISCAL", 0.86
-    if (
-        any(marker in text for marker in payment_markers)
-        or any(marker in compact_text for marker in payment_markers_compact)
-    ):
-        return "FACTURA", 0.9
     if "CLAVE UNICA DE REGISTRO DE POBLACION" in text or "CURP" in text:
         return "CURP", 0.9
     if "NSS" in text or "IMSS" in text or "SEGURIDAD SOCIAL" in text:

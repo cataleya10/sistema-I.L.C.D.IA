@@ -76,12 +76,14 @@ public sealed class HybridAiClient : IPythonAiClient
         CancellationToken cancellationToken)
     {
         DocumentProcessResponse csharpResponse;
+        PythonOcrResult? ocr = null;
         try
         {
-            var ocr = await _pythonClient.ExtractOcrAsync(
+            ocr = await _pythonClient.ExtractOcrAsync(
                 documentId,
                 filePath,
                 originalFilename,
+                optionsJson,
                 cancellationToken);
 
             if (string.IsNullOrWhiteSpace(ocr.OcrText))
@@ -123,21 +125,38 @@ public sealed class HybridAiClient : IPythonAiClient
                 cancellationToken);
         }
 
-        var shouldFetchPython = _alwaysMergePythonFields
-            || (_enablePythonFallback && ShouldFallbackToPython(csharpResponse));
-        if (!shouldFetchPython)
+        // Usar la respuesta Python ya obtenida en el primer call (si tiene campos extraídos)
+        DocumentProcessResponse? pythonResponse =
+            ocr?.PythonResponse?.Fields.Count > 0 ? ocr.PythonResponse : null;
+
+        // Solo hacer una segunda llamada a Python si el primer call no retornó campos
+        if (pythonResponse is null)
         {
-            return ApplyDocumentTypeFieldPolicy(csharpResponse);
+            var shouldFetchPython = _alwaysMergePythonFields
+                || (_enablePythonFallback && ShouldFallbackToPython(csharpResponse));
+            if (shouldFetchPython)
+            {
+                try
+                {
+                    pythonResponse = await _pythonClient.ProcessDocumentAsync(
+                        documentId,
+                        filePath,
+                        originalFilename,
+                        optionsJson,
+                        cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Hybrid fallback Python extraction failed for {DocumentId}. Keeping C# extraction.",
+                        documentId);
+                }
+            }
         }
 
-        try
+        if (pythonResponse is not null)
         {
-            var pythonResponse = await _pythonClient.ProcessDocumentAsync(
-                documentId,
-                filePath,
-                originalFilename,
-                optionsJson,
-                cancellationToken);
             var shouldPreferPython = _enablePythonFallback && ShouldPreferPython(csharpResponse, pythonResponse);
             var preferred = shouldPreferPython ? pythonResponse : csharpResponse;
             var secondary = shouldPreferPython ? csharpResponse : pythonResponse;
@@ -157,13 +176,6 @@ public sealed class HybridAiClient : IPythonAiClient
             }
 
             return ApplyDocumentTypeFieldPolicy(preferred);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(
-                ex,
-                "Hybrid fallback Python extraction failed for {DocumentId}. Keeping C# extraction.",
-                documentId);
         }
 
         return ApplyDocumentTypeFieldPolicy(csharpResponse);

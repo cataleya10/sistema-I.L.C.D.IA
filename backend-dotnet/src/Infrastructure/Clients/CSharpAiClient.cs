@@ -574,10 +574,12 @@ public sealed class CSharpAiClient : IPythonAiClient
             }
 
             var joined = string.Join(" ", cells).ToUpperInvariant();
-            var headerLike = joined.Contains("CUENTA")
-                && (joined.Contains("REFERENCIA") || joined.Contains("IMPORTE"));
+            var headerLike = (joined.Contains("CUENTA") && (joined.Contains("REFERENCIA") || joined.Contains("IMPORTE")))
+                || (joined.Contains("BENEFICIARIO") && joined.Contains("IMPORTE"))
+                || (joined.Contains("CLAVE") && joined.Contains("RASTREO"));
             var dataLike = Regex.IsMatch(joined, @"\d{8,}")
-                && (joined.Contains("$") || joined.Contains("PROCESADO") || joined.Contains("APLICADO") || joined.Contains("ACEPTADO"));
+                && (joined.Contains("$") || joined.Contains("PROCESADO") || joined.Contains("APLICADO")
+                    || joined.Contains("ACEPTADO") || joined.Contains("TRANSMITIDO"));
 
             if (headerLike || dataLike)
             {
@@ -670,23 +672,57 @@ public sealed class CSharpAiClient : IPythonAiClient
         return null;
     }
 
+    private static readonly HashSet<string> _knownLabelKeywords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "NOMBRE", "NOMBRE(S)", "CURP", "RFC", "NSS", "CLABE", "DOMICILIO", "DIRECCION",
+        "FECHA DE NACIMIENTO", "SEXO", "VIGENCIA", "SECCION", "CLAVE DE ELECTOR",
+        "APELLIDO PATERNO", "APELLIDO MATERNO", "LUGAR DE NACIMIENTO", "BANCO",
+        "TITULAR", "FECHA LIMITE", "TOTAL", "TOTAL A PAGAR", "PAGAR ANTES DE",
+        "NUMERO DE SEGURIDAD SOCIAL", "FOLIO", "NUMERO DE ACTA", "RAZON SOCIAL",
+        "REGIMEN", "CODIGO POSTAL"
+    };
+
     private static string? AfterLabel(string text, string label)
     {
-        var pattern = new Regex($@"{Regex.Escape(label)}\s*[:\-]?\s*(.+)", RegexOptions.IgnoreCase);
-        var match = pattern.Match(text);
-        if (!match.Success)
+        // 1. Intento en la misma línea: LABEL: valor
+        var sameLine = new Regex($@"{Regex.Escape(label)}\s*[:\-]?\s*(.+)", RegexOptions.IgnoreCase);
+        var match = sameLine.Match(text);
+        if (match.Success)
         {
-            return null;
+            var value = match.Groups[1].Value.Trim();
+            var stop = value.IndexOfAny(['\r', '\n']);
+            if (stop >= 0)
+            {
+                value = value[..stop];
+            }
+
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value.Trim();
+            }
         }
 
-        var value = match.Groups[1].Value.Trim();
-        var stop = value.IndexOfAny(['\r', '\n']);
-        if (stop >= 0)
+        // 2. Intento en la línea siguiente: label en su propia línea, valor en la siguiente
+        var nextLine = new Regex(
+            $@"(?:^|\n)\s*{Regex.Escape(label)}\s*[:\-]?\s*\r?\n\s*(.+)",
+            RegexOptions.IgnoreCase);
+        match = nextLine.Match(text);
+        if (match.Success)
         {
-            value = value[..stop];
+            var value = match.Groups[1].Value.Trim();
+            var stop = value.IndexOfAny(['\r', '\n']);
+            if (stop >= 0)
+            {
+                value = value[..stop];
+            }
+
+            if (!string.IsNullOrWhiteSpace(value) && !_knownLabelKeywords.Contains(value))
+            {
+                return value.Trim();
+            }
         }
 
-        return value.Trim();
+        return null;
     }
 
     private static string? FirstAny(string text, params string[] options)

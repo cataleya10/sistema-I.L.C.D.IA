@@ -1010,7 +1010,7 @@ def _extract_payment_table_rows_from_boxes(ocr_boxes) -> list[list[str]]:
             structured_rows.append(header_row[:10])
 
         for line in lines[header_idx + 1:]:
-            if len(structured_rows) >= 20:
+            if len(structured_rows) >= 500:
                 break
             row_boxes = [
                 box for box in line.get("boxes", [])
@@ -1032,7 +1032,7 @@ def _extract_payment_table_rows_from_boxes(ocr_boxes) -> list[list[str]]:
 
     selected = [rows[header_idx]]
     for row in rows[header_idx + 1:]:
-        if len(selected) >= 20:
+        if len(selected) >= 500:
             break
         if _is_payment_table_footer(row) and len(selected) > 1:
             break
@@ -1148,7 +1148,7 @@ def _extract_bbva_nomina_advanced_rows_from_text(raw_text: str) -> list[list[str
     if len(rows) < 2:
         return []
 
-    return [_ADVANCED_NOMINA_TABLE_HEADER, *rows[:60]]
+    return [_ADVANCED_NOMINA_TABLE_HEADER, *rows[:500]]
 
 
 def _extract_payment_table_rows_from_text(raw_text: str) -> list[list[str]]:
@@ -1171,7 +1171,7 @@ def _extract_payment_table_rows_from_text(raw_text: str) -> list[list[str]]:
             continue
         if _looks_like_payment_table_header(cells) or _looks_like_payment_table_data(cells):
             rows.append(cells[:10])
-        if len(rows) >= 12:
+        if len(rows) >= 500:
             break
     if rows:
         return rows

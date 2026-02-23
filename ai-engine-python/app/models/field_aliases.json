@@ -1,90 +1,16 @@
 {
-  "curp": [
-    "CURP",
-    "CLAVE"
-  ],
-  "clave_elector": [
-    "CLAVEDEELECTOR"
-  ],
-  "fecha_nacimiento": [
-    "GARCIA",
-    "HOMBRE"
-  ],
-  "sexo": [
-    "GACE010425",
-    "FEC"
-  ],
-  "seccion": [
-    "EX1934045026"
-  ],
-  "vigencia": [
-    "EMISON2019MGENCA"
-  ],
-  "nombre": [
-    "NOMBRE"
-  ],
-  "entidad_nacimiento": [
-    "REGISTRO",
-    "ENTIDAD REGISTRO"
-  ],
-  "folio": [
-    "27011"
-  ],
-  "numero_acta": [
-    "3"
-  ],
-  "fecha_registro": [
-    "0001"
-  ],
-  "municipio_registro": [
-    "REGISTRO",
-    "MUNICIPIO REGISTRO"
-  ],
-  "entidad_registro": [
-    "NACIMIENTO",
-    "ACTA NACIMIENTO"
-  ],
-  "nss": [
-    "ES",
-    "SOCIAL ES"
-  ],
-  "numero_servicio": [
-    "DESERVICIO",
-    "SERVICIOS",
-    "OTROS SERVICIOS",
-    "TELMEX OTROS SERVICIOS"
-  ],
-  "cuenta": [
-    "CUENTA",
-    "014052",
-    "CERTIFICADO CSD",
-    "SERIE CERTIFICADO CSD"
-  ],
-  "cp": [
-    "P",
-    "BENITOJUAREZFC P",
-    "SSL BENITOJUAREZFC P"
-  ],
-  "total": [
-    "PAGAR",
-    "TOTALA PAGAR"
-  ],
-  "clabe": [
-    "CLABE"
-  ],
-  "titular": [
-    "NOMBRE"
-  ],
-  "rfc": [
-    "FISCAL",
-    "SITUACION FISCAL",
-    "CONSTANCIA SITUACION FISCAL",
-    "IDENTIFICACION FISCAL",
-    "CEDULA IDENTIFICACION FISCAL"
-  ],
-  "referencia": [
-    "SERVICIOS",
-    "OTROS SERVICIOS",
-    "TELMEX OTROS SERVICIOS"
-  ]
+  "curp": ["CURP", "CLAVE UNICA DE REGISTRO DE POBLACION"],
+  "nombre": ["NOMBRE", "NOMBRES", "NOMBRE COMPLETO"],
+  "fecha_nacimiento": ["FECHA DE NACIMIENTO", "FECHA NACIMIENTO", "F NACIMIENTO", "NACIMIENTO"],
+  "rfc": ["RFC", "R.F.C.", "REGISTRO FEDERAL DE CONTRIBUYENTES"],
+  "nss": ["NSS", "NUMERO DE SEGURIDAD SOCIAL", "NO. SEGURIDAD SOCIAL", "SEGURIDAD SOCIAL"],
+  "clabe": ["CLABE", "CLAVE BANCARIA ESTANDARIZADA"],
+  "domicilio": ["DOMICILIO", "DIRECCION"],
+  "cuenta": ["CUENTA", "NO. CUENTA", "NUMERO DE CUENTA", "NO CUENTA"],
+  "titular": ["TITULAR", "NOMBRE DEL TITULAR"],
+  "banco": ["BANCO", "INSTITUCION BANCARIA"],
+  "fecha_limite": ["FECHA LIMITE", "PAGAR ANTES DE", "F LIMITE", "VENCE"],
+  "total": ["TOTAL", "TOTAL A PAGAR", "IMPORTE TOTAL"],
+  "cp": ["CODIGO POSTAL", "C.P.", "CP"],
+  "numero_servicio": ["NUMERO DE SERVICIO", "NO. DE SERVICIO", "NO SERVICIO"]
 }

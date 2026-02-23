@@ -94,20 +94,33 @@ public class PythonAiClient : IPythonAiClient
         Guid documentId,
         string filePath,
         string? originalFilename,
+        string? optionsJson,
         CancellationToken cancellationToken)
     {
+        var mergedOptions = MergeOptionsWithOcrFlag(optionsJson);
         var payload = await SendProcessRequestAsync(
             documentId,
             filePath,
             originalFilename,
-            OcrOnlyOptionsJson,
+            mergedOptions,
             cancellationToken);
 
         return new PythonOcrResult(
             payload.OcrText,
             payload.Response.Meta.PagesProcessed,
             payload.Response.Meta.ProcessingMs,
-            payload.Response.Meta.OcrEngine);
+            payload.Response.Meta.OcrEngine,
+            payload.Response);
+    }
+
+    private static string MergeOptionsWithOcrFlag(string? userOptionsJson)
+    {
+        if (string.IsNullOrWhiteSpace(userOptionsJson))
+            return "{\"return_ocr_text\":true}";
+        var trimmed = userOptionsJson.Trim();
+        if (trimmed.StartsWith("{", StringComparison.Ordinal) && trimmed.EndsWith("}", StringComparison.Ordinal))
+            return "{\"return_ocr_text\":true," + trimmed[1..];
+        return "{\"return_ocr_text\":true}";
     }
 
     private async Task<PythonProcessPayload> SendProcessRequestAsync(
@@ -171,4 +184,5 @@ public sealed record PythonOcrResult(
     string? OcrText,
     int PagesProcessed,
     long ProcessingMs,
-    string OcrEngine);
+    string OcrEngine,
+    DocumentProcessResponse? PythonResponse = null);

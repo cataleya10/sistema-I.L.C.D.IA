@@ -318,18 +318,37 @@ public class HybridAiClientTests
             return """
             {
               "document_id":"00000000-0000-0000-0000-000000000000",
-              "status":"NEEDS_REVIEW",
+              "status":"READY",
               "document_type":"COMPROBANTE_DOMICILIO",
-              "confidence":0.62,
-              "fields":[],
+              "confidence":0.95,
+              "fields":[
+                {
+                  "key":"medidor",
+                  "label":"Medidor",
+                  "value":"A1B2C3D4",
+                  "confidence":0.93,
+                  "valid":true,
+                  "validation_errors":[],
+                  "source":null
+                },
+                {
+                  "key":"cp",
+                  "label":"CP",
+                  "value":"12345",
+                  "confidence":0.91,
+                  "valid":true,
+                  "validation_errors":[],
+                  "source":null
+                }
+              ],
               "warnings":[],
               "errors":[],
               "meta":{
                 "pages_processed":1,
                 "ocr_engine":"paddleocr",
-                "pipeline_version":"python-ocr-only-v1",
+                "pipeline_version":"python-extract-v1",
                 "model_version":"clf-v1",
-                "processing_ms":90
+                "processing_ms":180
               },
               "ocr_text":"TELMEX PAGAR ANTES DE: 23-ENE-2026 TOTAL A PAGAR: 549.00"
             }
@@ -444,18 +463,37 @@ public class HybridAiClientTests
             return """
             {
               "document_id":"00000000-0000-0000-0000-000000000000",
-              "status":"NEEDS_REVIEW",
+              "status":"READY",
               "document_type":"FACTURA",
-              "confidence":0.62,
-              "fields":[],
+              "confidence":0.95,
+              "fields":[
+                {
+                  "key":"tabla_celdas",
+                  "label":"Tabla celdas",
+                  "value":"{\"source\":\"python\",\"rows\":[[\"CUENTA\",\"REFERENCIA\",\"IMPORTE\"],[\"56551346133\",\"1620260115132703271255\",\"$1,462.58\"]]}",
+                  "confidence":0.93,
+                  "valid":true,
+                  "validation_errors":[],
+                  "source":null
+                },
+                {
+                  "key":"banco",
+                  "label":"Banco",
+                  "value":"TEXTO NO DESEADO",
+                  "confidence":0.55,
+                  "valid":false,
+                  "validation_errors":["Banco invalido."],
+                  "source":null
+                }
+              ],
               "warnings":[],
               "errors":[],
               "meta":{
                 "pages_processed":1,
                 "ocr_engine":"paddleocr",
-                "pipeline_version":"python-ocr-only-v1",
+                "pipeline_version":"python-extract-v1",
                 "model_version":"clf-v1",
-                "processing_ms":90
+                "processing_ms":180
               },
               "ocr_text":"PAGO DE NOMINA CUENTA REFERENCIA IMPORTE ESTATUS 56551346133 1620260115132703271255 $1,462.58 PROCESADO"
             }
@@ -528,18 +566,28 @@ public class HybridAiClientTests
             return """
             {
               "document_id":"00000000-0000-0000-0000-000000000000",
-              "status":"NEEDS_REVIEW",
+              "status":"READY",
               "document_type":"FACTURA",
-              "confidence":0.60,
-              "fields":[],
+              "confidence":0.70,
+              "fields":[
+                {
+                  "key":"tabla_celdas",
+                  "label":"Tabla celdas",
+                  "value":"{\"source\":\"text_lines\",\"rows\":[[\"CUENTA\",\"REFERENCIA\",\"IMPORTE\",\"NOMBRE\",\"APELLIDO PATERNO\",\"APELLIDO MATERNO\",\"ESTATUS\",\"CONCEPTO\"],[\"56783223195\",\"1620260115134340581263\",\"$610.44\",\"MARLA GRISELDA\",\"MENDEZ\",\"FLORES\",\"PROCESADO\",\"PAGO DE NOMINA\"],[\"56936397470\",\"1620260115134348451388\",\"$1,537.35\",\"ROLANDO ROGERIO\",\"CONTRERAS\",\"CAMARGO\",\"PROCESADO\",\"PAGO DE NOMINA\"]],\"canonical_rows\":[{\"cuenta\":\"56783223195\",\"referencia\":\"1620260115134340581263\",\"importe\":\"$610.44\",\"nombre\":\"MARLA GRISELDA\",\"apellido_paterno\":\"MENDEZ\",\"apellido_materno\":\"FLORES\",\"estatus\":\"PROCESADO\",\"concepto_pago\":\"PAGO DE NOMINA\"},{\"cuenta\":\"56936397470\",\"referencia\":\"1620260115134348451388\",\"importe\":\"$1,537.35\",\"nombre\":\"ROLANDO ROGERIO\",\"apellido_paterno\":\"CONTRERAS\",\"apellido_materno\":\"CAMARGO\",\"estatus\":\"PROCESADO\",\"concepto_pago\":\"PAGO DE NOMINA\"}]}",
+                  "confidence":0.70,
+                  "valid":true,
+                  "validation_errors":[],
+                  "source":null
+                }
+              ],
               "warnings":[],
               "errors":[],
               "meta":{
                 "pages_processed":1,
                 "ocr_engine":"paddleocr",
-                "pipeline_version":"python-ocr-only-v1",
+                "pipeline_version":"python-extract-v1",
                 "model_version":"clf-v1",
-                "processing_ms":90
+                "processing_ms":180
               },
               "ocr_text":"REPORTE DE OPERACIONES PAGO DE NOMINA CUENTA REFERENCIA IMPORTE NOMBRE 56783223195 1620260115134340581263 $610.44 MARLA GRISELDA MENDEZ FLORES PROCESADO"
             }
@@ -603,18 +651,55 @@ public class HybridAiClientTests
             return """
             {
               "document_id":"00000000-0000-0000-0000-000000000000",
-              "status":"NEEDS_REVIEW",
+              "status":"READY",
               "document_type":"ACTA_NACIMIENTO",
-              "confidence":0.62,
-              "fields":[],
+              "confidence":0.95,
+              "fields":[
+                {
+                  "key":"nombre",
+                  "label":"Nombre",
+                  "value":"ERWIN GUSTAVO GARCIA CAMPOS",
+                  "confidence":0.95,
+                  "valid":true,
+                  "validation_errors":[],
+                  "source":null
+                },
+                {
+                  "key":"folio",
+                  "label":"Folio",
+                  "value":"0001",
+                  "confidence":0.95,
+                  "valid":true,
+                  "validation_errors":[],
+                  "source":null
+                },
+                {
+                  "key":"numero_acta",
+                  "label":"Numero de acta",
+                  "value":"437",
+                  "confidence":0.95,
+                  "valid":true,
+                  "validation_errors":[],
+                  "source":null
+                },
+                {
+                  "key":"fecha_nacimiento",
+                  "label":"Fecha de nacimiento",
+                  "value":"20/08/2001",
+                  "confidence":0.95,
+                  "valid":true,
+                  "validation_errors":[],
+                  "source":null
+                }
+              ],
               "warnings":[],
               "errors":[],
               "meta":{
                 "pages_processed":1,
                 "ocr_engine":"paddleocr",
-                "pipeline_version":"python-ocr-only-v1",
+                "pipeline_version":"python-extract-v1",
                 "model_version":"clf-v1",
-                "processing_ms":90
+                "processing_ms":180
               },
               "ocr_text":"ACTA DE NACIMIENTO NOMBRE(S): FOLIO JSP,CAPTURANCO EL LDENTIFICADORELECTRONICO NUMERO DE ACTA DE NACIMIENTO"
             }
