@@ -1110,12 +1110,15 @@ def _extract_bbva_nomina_advanced_rows_from_text(raw_text: str) -> list[list[str
     if not lines:
         return []
 
+    # La referencia puede venir con un espacio OCR intermedio (ej: "16202601151343405812 63")
+    # _REF_PAT acepta dígitos con un espacio interno opcional para tolerar ese artefacto
+    _REF_PAT = r"\d{10,28}(?:\s+\d{1,6})?"
     row_pattern = re.compile(
         r"\b(?P<cuenta>\d{10,24})\s+"
-        r"(?P<referencia>\d{10,30})\s+"
+        r"(?P<referencia>" + _REF_PAT + r")\s+"
         r"(?P<importe>\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))\s+"
         r"(?P<nombre>[A-ZÑÁÉÍÓÚÜ ]{4,120}?)"
-        r"(?=\s+\d{10,24}\s+\d{10,30}\s+\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})"
+        r"(?=\s+\d{10,24}\s+" + _REF_PAT + r"\s+\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})"
         r"|\s+(?:PROCESADO|APLICADO|ACEPTADO|TRANSMITIDO|RECHAZADO)\b"
         r"|\s*$)"
     )
@@ -1139,7 +1142,9 @@ def _extract_bbva_nomina_advanced_rows_from_text(raw_text: str) -> list[list[str
 
         for match in row_pattern.finditer(line):
             cuenta = _normalize_numeric_field(match.group("cuenta"))
-            referencia = _normalize_value_for_key("referencia", match.group("referencia"))
+            # Elimina espacio OCR interno en la referencia (ej: "16202601...812 63" → "...81263")
+            ref_raw = re.sub(r"\s+", "", match.group("referencia"))
+            referencia = _normalize_value_for_key("referencia", ref_raw)
             importe = _normalize_payment_amount(match.group("importe"))
             full_name = _normalize_name(match.group("nombre"))
             if not _looks_like_person_name(full_name):

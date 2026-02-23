@@ -556,6 +556,37 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertEqual(rows[3][0], "56905029323")
         self.assertEqual(rows[3][1], "1620260115134344071306")
 
+    def test_extract_factura_bbva_nomina_reference_with_ocr_space(self):
+        """Referencias con espacio OCR intermedio (ej: '16202601151343405812 63') deben extraerse correctamente."""
+        ocr_text = "\n".join(
+            [
+                "REPORTE DE OPERACIONES PAGO DE NOMINA",
+                "CUENTA REFERENCIA IMPORTE NOMBRE APELLIDO PATERNO APELLIDO MATERNO ESTATUS CONCEPTO",
+                "56783223195 16202601151343405812 63 $610.44 MARLA GRISELDA MENDEZ FLORES PROCESADO PAGO DE NOMINA",
+                "56936397470 16202601151343484513 88 $1,537.35 ROLANDO ROGERIO CONTRERAS CAMARGO PROCESADO PAGO DE NOMINA",
+                "56905029323 16202601151343440713 06 $353.60 EDGAR HASSAN GUZMAN CASTRO PROCESADO PAGO DE NOMINA",
+            ]
+        )
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertIn("tabla_celdas", data)
+        payload = json.loads(data["tabla_celdas"])
+        rows = payload.get("rows", [])
+        # Deben aparecer las 3 filas (+ encabezado)
+        self.assertGreaterEqual(len(rows), 4, "Deben extraerse todas las filas, no solo la fila de resumen")
+        # Referencia normalizada sin espacio
+        self.assertEqual(rows[1][0], "56783223195")
+        self.assertEqual(rows[1][1], "1620260115134340581263")
+        self.assertEqual(rows[1][2], "$610.44")
+        self.assertEqual(rows[1][3], "MARLA GRISELDA")
+        self.assertEqual(rows[2][0], "56936397470")
+        self.assertEqual(rows[2][1], "1620260115134348451388")
+        self.assertEqual(rows[2][2], "$1,537.35")
+        self.assertEqual(rows[3][0], "56905029323")
+        self.assertEqual(rows[3][1], "1620260115134344071306")
+        self.assertEqual(rows[3][2], "$353.60")
+
     def test_extract_factura_payment_table_from_scotia_transfer_text(self):
         ocr_text = "\n".join(
             [
