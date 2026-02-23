@@ -33,6 +33,7 @@ public static class DependencyInjection
             }
         });
 
+        services.AddHttpContextAccessor();
         services.AddSingleton<IProcessingQueue, DocumentProcessingQueue>();
         services.AddSingleton<IProcessingTracker, ProcessingTracker>();
         services.AddScoped<IDocumentService, DocumentService>();

@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Application.DTOs;
 using Application.Interfaces;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Shared.Json;
 
@@ -16,10 +17,15 @@ public class PythonAiClient : IPythonAiClient
     private readonly HttpClient _httpClient;
     private readonly JsonSerializerOptions _jsonOptions;
     private readonly string? _apiKey;
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
-    public PythonAiClient(HttpClient httpClient, IConfiguration configuration)
+    public PythonAiClient(
+        HttpClient httpClient,
+        IConfiguration configuration,
+        IHttpContextAccessor httpContextAccessor)
     {
         _httpClient = httpClient;
+        _httpContextAccessor = httpContextAccessor;
         var baseUrl = configuration["PythonAi:BaseUrl"] ?? "http://localhost:8000";
         _httpClient.BaseAddress = new Uri(baseUrl);
         var timeoutSeconds = configuration.GetValue<int?>("PythonAi:TimeoutSeconds");
@@ -34,6 +40,13 @@ public class PythonAiClient : IPythonAiClient
             PropertyNameCaseInsensitive = true
         };
         _jsonOptions.Converters.Add(new JsonStringEnumConverter(new UpperSnakeCaseNamingPolicy()));
+    }
+
+    private string? GetCorrelationId()
+    {
+        var headers = _httpContextAccessor.HttpContext?.Request.Headers;
+        if (headers is null) return null;
+        return headers.TryGetValue("X-Correlation-Id", out var val) ? val.ToString() : null;
     }
 
     public async Task<DocumentProcessResponse> ProcessDocumentAsync(
@@ -65,6 +78,12 @@ public class PythonAiClient : IPythonAiClient
         if (!string.IsNullOrWhiteSpace(_apiKey))
         {
             request.Headers.Add("X-Api-Key", _apiKey);
+        }
+
+        var correlationId = GetCorrelationId();
+        if (!string.IsNullOrWhiteSpace(correlationId))
+        {
+            request.Headers.Add("X-Correlation-Id", correlationId);
         }
 
         using var response = await _httpClient.SendAsync(request, cancellationToken);
@@ -155,6 +174,12 @@ public class PythonAiClient : IPythonAiClient
         if (!string.IsNullOrWhiteSpace(_apiKey))
         {
             request.Headers.Add("X-Api-Key", _apiKey);
+        }
+
+        var correlationId = GetCorrelationId();
+        if (!string.IsNullOrWhiteSpace(correlationId))
+        {
+            request.Headers.Add("X-Correlation-Id", correlationId);
         }
 
         using var response = await _httpClient.SendAsync(request, cancellationToken);
