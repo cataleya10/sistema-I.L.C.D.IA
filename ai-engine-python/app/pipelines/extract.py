@@ -1123,7 +1123,6 @@ def _fix_payment_ocr_column_errors(structured_rows: list[list[str]]) -> list[lis
         if 0 <= concepto_idx < len(row) and estatus_idx >= 0 and concepto_idx != estatus_idx:
             concepto_val = row[concepto_idx].strip()
             sm = _STATUS_PREFIX_PAT.match(concepto_val)
-            logger.debug("[FIX3] concepto_idx=%d estatus_idx=%d len=%d concepto_val=%r sm=%s", concepto_idx, estatus_idx, len(row), concepto_val, bool(sm))
             if sm:
                 while len(row) <= max(estatus_idx, concepto_idx):
                     row.append("")
@@ -2221,7 +2220,6 @@ def _extract_payment_table_payload(base_text_raw: str, ocr_boxes) -> dict | None
 
     score_ocr = _payment_rows_quality_score(rows_ocr) if len(rows_ocr) >= 2 else -999
     score_text = _payment_rows_quality_score(rows_text) if len(rows_text) >= 2 else -999
-    logger.debug("[DIAG] ocr_rows=%d score=%s | text_rows=%d score=%s", len(rows_ocr), score_ocr, len(rows_text), score_text)
 
     selected_table_index = None
     if score_ocr >= score_text and score_ocr >= 0:
@@ -2275,15 +2273,6 @@ def _extract_payment_table_payload(base_text_raw: str, ocr_boxes) -> dict | None
             payload["primary_table_index"] = matched
         elif selected_table_index and selected_table_index > 0:
             payload["primary_table_index"] = selected_table_index
-    # DIAG: log first data row Estado/Concepto
-    if len(payload.get("rows", [])) >= 2:
-        r = payload["rows"][1]
-        hdr = payload["rows"][0]
-        _ci_diag = {_normalize_keyword(h).lower(): i for i, h in enumerate(hdr)}
-        ei = next((i for k, i in _ci_diag.items() if "estatus" in k or "estado" in k), -1)
-        ci = next((i for k, i in _ci_diag.items() if "concepto" in k), -1)
-        logger.debug("[DIAG] source=%s header=%s", payload.get("source"), hdr)
-        logger.debug("[DIAG] row1 Estado[%d]=%s Concepto[%d]=%s", ei, r[ei] if 0 <= ei < len(r) else "N/A", ci, r[ci] if 0 <= ci < len(r) else "N/A")
     return payload
 
 
@@ -7764,7 +7753,10 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
             snippet = snippet[:1200].rstrip() + "..."
         fields.insert(0, _make_field("texto_detectado", "Texto detectado", snippet, ocr_boxes, confidence=1.0))
 
-    if not fields:
+    # Fallback: when no meaningful fields were extracted (only texto_detectado),
+    # scan for common identifiers via regex so unknown document types still yield data.
+    has_meaningful = any(f.get("key") != "texto_detectado" for f in fields)
+    if not has_meaningful:
         for value in curps:
             fields.append(_make_field("curp", "CURP", _normalize_alnum(value), ocr_boxes))
         for value in rfcs:
@@ -7773,7 +7765,7 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
             fields.append(_make_field("nss", "NSS", _normalize_alnum(value), ocr_boxes))
         for value in clabes:
             fields.append(_make_field("clabe", "CLABE", _normalize_alnum(value), ocr_boxes))
-        if not fields and filename:
+        if not any(f.get("key") != "texto_detectado" for f in fields) and filename:
             name_curps = [match.group(0) for match in CURP_PATTERN.finditer(filename.upper())]
             for value in name_curps:
                 fields.append(_make_field("curp", "CURP", _normalize_alnum(value), ocr_boxes, confidence=0.9))

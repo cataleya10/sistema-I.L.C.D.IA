@@ -1796,6 +1796,113 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertIn("ESTATUS", result[0])
 
 
+class TestExtractFieldsErrorRecovery(unittest.TestCase):
+    """extract_fields must return [] on unhandled exceptions."""
+
+    def test_returns_empty_on_impl_exception(self):
+        with patch("app.pipelines.extract._extract_fields_impl", side_effect=RuntimeError("boom")):
+            result = _run_sync(extract_fields("INE", "some text"))
+        self.assertEqual(result, [])
+
+    def test_returns_empty_for_empty_input(self):
+        result = _run_sync(extract_fields("INE", ""))
+        # With no text at all, we should still get a list (possibly with texto_detectado)
+        self.assertIsInstance(result, list)
+
+
+class TestFallbackRegexScan(unittest.TestCase):
+    """When document_type is unrecognized, the tail fallback should still extract common regex patterns."""
+
+    def test_curp_extracted_for_unknown_type(self):
+        text = "Algo qualquiera GUZS850101HDFRLR09 contenido random"
+        result = _run_sync(extract_fields("DESCONOCIDO", text))
+        fm = _field_map(result)
+        self.assertIn("curp", fm)
+        self.assertEqual(fm["curp"], "GUZS850101HDFRLR09")
+
+    def test_rfc_extracted_for_unknown_type(self):
+        text = "NUMERO DE REGISTRO: GUZS850101AB3"
+        result = _run_sync(extract_fields("DESCONOCIDO", text))
+        fm = _field_map(result)
+        self.assertIn("rfc", fm)
+        self.assertEqual(fm["rfc"], "GUZS850101AB3")
+
+
+class TestHeaderCellDedup(unittest.TestCase):
+    """Edge cases for _header_cell_has_repeated_tokens and _dedup_header_cell."""
+
+    def test_single_token_not_repeated(self):
+        from app.pipelines.extract import _header_cell_has_repeated_tokens
+        self.assertFalse(_header_cell_has_repeated_tokens("CUENTA"))
+
+    def test_empty_string(self):
+        from app.pipelines.extract import _header_cell_has_repeated_tokens, _dedup_header_cell
+        self.assertFalse(_header_cell_has_repeated_tokens(""))
+        self.assertEqual(_dedup_header_cell(""), "")
+        self.assertEqual(_dedup_header_cell(None), "")
+
+    def test_three_same_tokens(self):
+        from app.pipelines.extract import _header_cell_has_repeated_tokens, _dedup_header_cell
+        self.assertTrue(_header_cell_has_repeated_tokens("NO NO NO"))
+        self.assertEqual(_dedup_header_cell("NO NO NO"), "NO")
+
+    def test_odd_non_repeated(self):
+        from app.pipelines.extract import _header_cell_has_repeated_tokens, _dedup_header_cell
+        self.assertFalse(_header_cell_has_repeated_tokens("APELLIDO PATERNO MATERNO"))
+        self.assertEqual(_dedup_header_cell("APELLIDO PATERNO MATERNO"), "APELLIDO PATERNO MATERNO")
+
+    def test_four_token_repeated_pair(self):
+        from app.pipelines.extract import _header_cell_has_repeated_tokens, _dedup_header_cell
+        self.assertTrue(_header_cell_has_repeated_tokens("APELLIDO PATERNO APELLIDO PATERNO"))
+        self.assertEqual(_dedup_header_cell("APELLIDO PATERNO APELLIDO PATERNO"), "APELLIDO PATERNO")
+
+    def test_dedup_header_row_full(self):
+        from app.pipelines.extract import _dedup_header_row
+        row = ["CUENTA CUENTA", "IMPORTE", "NOMBRE NOMBRE"]
+        result = _dedup_header_row(row)
+        self.assertEqual(result, ["CUENTA", "IMPORTE", "NOMBRE"])
+
+
+class TestPaymentQualityScoreEdgeCases(unittest.TestCase):
+    """Boundary conditions for quality scoring."""
+
+    def test_empty_rows_negative(self):
+        from app.pipelines.extract import _payment_rows_quality_score
+        self.assertLess(_payment_rows_quality_score([]), 0)
+
+    def test_single_row_negative(self):
+        from app.pipelines.extract import _payment_rows_quality_score
+        self.assertLess(_payment_rows_quality_score([["CUENTA", "IMPORTE"]]), 0)
+
+    def test_noisy_data_penalized(self):
+        from app.pipelines.extract import _payment_rows_quality_score
+        clean_rows = [
+            ["CUENTA", "REFERENCIA", "IMPORTE", "NOMBRE"],
+            ["12345678901", "16200", "$1,629.08", "LUIS ANGEL"],
+        ]
+        noisy_rows = [
+            ["CUENTA", "REFERENCIA", "IMPORTE", "NOMBRE"],
+            ["UNIDAD ESPECIALIZADA ACLARACION TELEFONOS 12345678901", "16200", "$1,629.08", "LUIS"],
+        ]
+        clean_score = _payment_rows_quality_score(clean_rows)
+        noisy_score = _payment_rows_quality_score(noisy_rows)
+        self.assertGreater(clean_score, noisy_score)
+
+    def test_repeated_headers_penalized(self):
+        from app.pipelines.extract import _payment_rows_quality_score
+        normal_rows = [
+            ["CUENTA", "REFERENCIA", "IMPORTE"],
+            ["12345678901", "16200", "$1,629.08"],
+        ]
+        dup_rows = [
+            ["CUENTA CUENTA", "REFERENCIA REFERENCIA", "IMPORTE IMPORTE"],
+            ["12345678901", "16200", "$1,629.08"],
+        ]
+        normal_score = _payment_rows_quality_score(normal_rows)
+        dup_score = _payment_rows_quality_score(dup_rows)
+        self.assertGreater(normal_score, dup_score)
+
+
 if __name__ == "__main__":
     unittest.main()
 

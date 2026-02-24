@@ -2,6 +2,9 @@
 
 Checklist operativo para validar salida a produccion de `Sistema I.L.C.D.IA`.
 
+> **Estado actual**: 130 unit tests passing (106 extraction + 24 classify/validators).
+> Rama: `release/readiness-final`. Ultima revision: 2026-02-17.
+
 Evidencia recomendada:
 - Reporte de readiness: `docs/release-readiness-2026-02-12.md`
 - Plantilla de rollback: `docs/rollback-plan-template.md`
@@ -11,7 +14,7 @@ Evidencia recomendada:
 - [ ] Rama protegida y PR aprobado.
 - [ ] CI en verde para backend, frontend y AI.
 - [ ] Sin vulnerabilidades activas de paquetes.
-- [ ] Variables sensibles definidas fuera de codigo (`Jwt__SigningKey`, `PythonAi__ApiKey`, secretos de despliegue).
+- [x] Variables sensibles definidas fuera de codigo (`Jwt__SigningKey`, `PythonAi__ApiKey`, secretos de despliegue). *(`.env.production` validado con valores planos + NOTA de set-production-config.ps1)*
 - [ ] URL de API frontend definida para el ambiente en `frontend-angular/web/public/app-config.js`.
 
 Comando recomendado local:

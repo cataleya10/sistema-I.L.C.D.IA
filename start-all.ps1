@@ -199,3 +199,15 @@ if ($feReady) { Start-Process "http://localhost:$frontendPort" }
 if (-not $aiReady) { Write-Host "IA Engine no responde a tiempo." -ForegroundColor Yellow }
 if (-not $apiReady) { Write-Host "Backend API no responde a tiempo." -ForegroundColor Yellow }
 if ($fe -and -not $feReady -and -not $frontendExitedEarly) { Write-Host "Frontend no responde a tiempo." -ForegroundColor Yellow }
+
+# Exit with non-zero code when any critical service failed to start
+$exitCode = 0
+if (-not $aiReady)  { $exitCode = 1 }
+if (-not $apiReady) { $exitCode = 1 }
+if ($fe -and -not $feReady) { $exitCode = 1 }
+if ($exitCode -eq 0) {
+    Write-Host "All services started successfully." -ForegroundColor Green
+} else {
+    Write-Host "One or more services failed health check — review logs/ for details." -ForegroundColor Red
+}
+exit $exitCode
