@@ -432,7 +432,22 @@ def _pick_address(lines: list[str]):
     return best_candidate
 
 
+def _repair_mojibake(text: str) -> str:
+    """Repair common UTF-8→Latin-1 mojibake (e.g. Ã± → ñ)."""
+    if not text or "\u00c3" not in text:
+        return text
+    try:
+        repaired = text.encode("latin-1").decode("utf-8")
+        if len(repaired) < len(text):
+            return repaired
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        pass
+    return text
+
+
 def _normalize_text(text: str) -> str:
+    text = unicodedata.normalize("NFC", text)
+    text = _repair_mojibake(text)
     text = text.replace("\u00a0", " ")
     return re.sub(r"\s+", " ", text).strip()
 
@@ -1553,6 +1568,39 @@ def _extract_bbva_nomina_advanced_rows_from_text(raw_text: str) -> list[list[str
     return [_ADVANCED_NOMINA_TABLE_HEADER, *rows[:500]]
 
 
+_ALL_STATUSES_SET = frozenset(_ALL_PAYMENT_STATUSES)
+
+
+def _smart_split_narrow_line(line: str) -> list[str]:
+    """Pattern-aware split for lines where columns are separated by single spaces.
+
+    Splits on token-type transitions: numeric ↔ alpha ↔ status keyword.
+    """
+    tokens = line.split()
+    if len(tokens) < 3:
+        return [line]
+    cells: list[str] = []
+    buf: list[str] = []
+    prev_type: str | None = None
+    for tok in tokens:
+        upper = tok.upper().strip(".,;:-")
+        if upper in _ALL_STATUSES_SET:
+            cur_type = "status"
+        elif re.match(r"^\$?\d[\d,OIL]*\.?\d*$", tok, re.IGNORECASE):
+            cur_type = "num"
+        else:
+            cur_type = "alpha"
+        if prev_type is not None and cur_type != prev_type:
+            cells.append(" ".join(buf))
+            buf = [tok]
+        else:
+            buf.append(tok)
+        prev_type = cur_type
+    if buf:
+        cells.append(" ".join(buf))
+    return cells if len(cells) >= 3 else [line]
+
+
 def _extract_payment_table_rows_from_text(raw_text: str) -> list[list[str]]:
     if not raw_text:
         return []
@@ -1560,6 +1608,7 @@ def _extract_payment_table_rows_from_text(raw_text: str) -> list[list[str]]:
     if advanced_rows:
         return advanced_rows
     rows: list[list[str]] = []
+    narrow_candidates: list[list[str]] = []
     for raw_line in raw_text.splitlines():
         line = str(raw_line or "").strip()
         if not line:
@@ -1568,13 +1617,26 @@ def _extract_payment_table_rows_from_text(raw_text: str) -> list[list[str]]:
             parts = [part.strip() for part in line.split("\t") if part.strip()]
         else:
             parts = [part.strip() for part in re.split(r"\s{2,}", line) if part.strip()]
+        # Fallback: pattern-aware split for narrow columns separated by single space
+        used_narrow = False
+        if len(parts) < 3:
+            narrow_parts = _smart_split_narrow_line(line)
+            if len(narrow_parts) >= 3:
+                parts = narrow_parts
+                used_narrow = True
         cells = [_normalize_table_cell(part) for part in parts if part.strip()]
         if len(cells) < 3:
             continue
         if _looks_like_payment_table_header(cells) or _looks_like_payment_table_data(cells):
-            rows.append(cells[:10])
+            if used_narrow:
+                narrow_candidates.append(cells[:10])
+            else:
+                rows.append(cells[:10])
         if len(rows) >= 500:
             break
+    # Only use narrow-split rows when 2+ found (real narrow-column table, not a one-off)
+    if len(narrow_candidates) >= 2:
+        rows.extend(narrow_candidates)
     if rows:
         return rows
     return _extract_payment_table_rows_from_compact_text(raw_text)
@@ -3325,11 +3387,25 @@ def _extract_bbva_payment_metadata(raw_text: str) -> dict[str, str]:
     accepted = re.findall(r"\b(APLICADO|ACEPTADO|TRANSMITIDO|RECHAZADO)\b", text)
     if accepted:
         out["estatus_detectados"] = ",".join(sorted(set(accepted)))
-    amount_match = re.search(r"\$?\s*([0-9OIL]{1,3}(?:[.,][0-9OIL]{3})*(?:[.,][0-9OIL]{2}))", text)
-    if amount_match:
-        normalized = _normalize_payment_amount(amount_match.group(0))
-        if normalized:
-            out["importe_detectado"] = normalized
+    amount_matches = re.findall(
+        r"\$?\s*([0-9OIL]{1,3}(?:[.,][0-9OIL]{3})*(?:[.,][0-9OIL]{2}))", text,
+    )
+    if amount_matches:
+        best_amount = ""
+        best_value = 0.0
+        for raw_amt in amount_matches:
+            normalized = _normalize_payment_amount("$" + raw_amt)
+            if normalized:
+                try:
+                    val = float(normalized.replace("$", "").replace(",", ""))
+                    if val > best_value:
+                        best_value = val
+                        best_amount = normalized
+                except ValueError:
+                    if not best_amount:
+                        best_amount = normalized
+        if best_amount:
+            out["importe_detectado"] = best_amount
     process_dt = re.search(
         r"(?:FECHA(?:\s+Y\s+HORA)?\s+DE\s+PROCESO|FECHA(?:\s+DE)?\s+TRANSMISION)\s*:?\s*([A-Z0-9:/ .-]{8,80})",
         text,
@@ -4043,7 +4119,9 @@ def _extract_payment_detail_payload(base_text_raw: str, table_payload: dict | No
         "bank": bank,
         "metadata": metadata,
         "table": {
-            "columns": rows[0] if len(rows) >= 1 else [],
+            "columns": canonical_columns if canonical_columns else (
+                rows[0] if len(rows) >= 1 else []
+            ),
             "row_count": len(row_objects),
             "rows": row_objects,
             "canonical_columns": canonical_columns,

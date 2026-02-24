@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from typing import Any
 
 import pandas as pd
@@ -127,6 +128,7 @@ def _clean_name(value: str) -> str:
     text = str(value or "").strip()
     if not text:
         return ""
+    text = unicodedata.normalize("NFC", text)
     text = text.upper()
     # Remove common OCR artifacts in names
     text = re.sub(r"[_\-]{2,}", " ", text)

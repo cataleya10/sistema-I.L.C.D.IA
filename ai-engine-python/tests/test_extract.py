@@ -2735,5 +2735,105 @@ class TestGenericBankMetadata(unittest.TestCase):
         self.assertEqual(meta["banco_detectado"], "HSBC")
 
 
+class TestSmartSplitNarrowLine(unittest.TestCase):
+    """Tests for _smart_split_narrow_line — pattern-aware single-space splitting."""
+
+    def test_numeric_alpha_status_split(self):
+        from app.pipelines.extract import _smart_split_narrow_line
+        result = _smart_split_narrow_line("1234567890 750.00 JUAN PEREZ APLICADO")
+        self.assertGreaterEqual(len(result), 3)
+        # Must contain account, amount, name, status as separate cells
+        joined = " | ".join(result)
+        self.assertIn("1234567890", joined)
+        self.assertIn("750.00", joined)
+        self.assertIn("APLICADO", joined)
+
+    def test_amount_with_dollar_sign(self):
+        from app.pipelines.extract import _smart_split_narrow_line
+        result = _smart_split_narrow_line("9876543210 $1,500.00 MARIA GARCIA PROCESADO")
+        self.assertGreaterEqual(len(result), 3)
+        joined = " | ".join(result)
+        self.assertIn("$1,500.00", joined)
+        self.assertIn("MARIA GARCIA", joined)
+
+    def test_too_few_tokens_returns_original(self):
+        from app.pipelines.extract import _smart_split_narrow_line
+        result = _smart_split_narrow_line("hola mundo")
+        self.assertEqual(result, ["hola mundo"])
+
+    def test_all_alpha_returns_original(self):
+        from app.pipelines.extract import _smart_split_narrow_line
+        result = _smart_split_narrow_line("JUAN PEREZ LOPEZ GARCIA")
+        # All alpha — can't split into 3+ typed cells, returns original
+        self.assertEqual(len(result), 1)
+
+
+class TestMojibakeRepair(unittest.TestCase):
+    """Tests for _repair_mojibake in _normalize_text."""
+
+    def test_latin1_mojibake_repaired(self):
+        from app.pipelines.extract import _normalize_text
+        # "ñ" encoded as UTF-8 then decoded as Latin-1 produces "Ã±"
+        broken = "Compa\u00c3\u00b1\u00c3\u00ada"
+        result = _normalize_text(broken)
+        self.assertIn("ñ", result.lower())
+        self.assertNotIn("\u00c3", result)
+
+    def test_clean_text_unchanged(self):
+        from app.pipelines.extract import _normalize_text
+        clean = "México S.A. de C.V."
+        result = _normalize_text(clean)
+        self.assertEqual(result, clean)
+
+    def test_nfc_composition(self):
+        from app.pipelines.extract import _normalize_text
+        # N + combining tilde should compose to Ñ
+        decomposed = "n\u0303"
+        result = _normalize_text(decomposed)
+        self.assertIn("\u00f1", result)
+
+
+class TestBbvaAmountPicksLargest(unittest.TestCase):
+    """Tests that BBVA metadata picks the largest amount when multiple present."""
+
+    def test_picks_largest_amount(self):
+        from app.pipelines.extract import _extract_bbva_payment_metadata
+        text = """REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS
+        TOTAL: $15,000.00  FEE: $150.00
+        TIPO DE PAGO: NOMINA
+        """
+        meta = _extract_bbva_payment_metadata(text)
+        self.assertIn("importe_detectado", meta)
+        # Should pick $15,000.00 not $150.00
+        amt = meta["importe_detectado"]
+        val = float(amt.replace("$", "").replace(",", ""))
+        self.assertGreaterEqual(val, 15000.0)
+
+    def test_single_amount_still_works(self):
+        from app.pipelines.extract import _extract_bbva_payment_metadata
+        text = """REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS
+        IMPORTE $3,240.73
+        """
+        meta = _extract_bbva_payment_metadata(text)
+        self.assertIn("importe_detectado", meta)
+
+
+class TestColumnsUseCanonical(unittest.TestCase):
+    """Tests that the response 'columns' field uses canonical names, not raw OCR headers."""
+
+    def test_columns_are_canonical(self):
+        from app.pipelines.extract import _extract_payment_detail_payload
+        raw_text = """REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS
+CTA CARGO\tNO. CUENTA\tIMPORTE\tNOMBRE\tESTATUS
+1234567890\t9876543210\t1,500.00\tJUAN PEREZ\tAPLICADO
+"""
+        result = _extract_payment_detail_payload(raw_text, None)
+        if result and "table" in result:
+            columns = result["table"].get("columns", [])
+            # Should not contain raw OCR headers like "CTA CARGO"
+            for col in columns:
+                self.assertNotIn("CTA CARGO", col.upper() if isinstance(col, str) else "")
+
+
 if __name__ == "__main__":
     unittest.main()

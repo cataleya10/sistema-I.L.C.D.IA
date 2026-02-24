@@ -470,5 +470,21 @@ class TestSingleRowSurvival(unittest.TestCase):
         self.assertEqual(len(result_rows), 1)
 
 
+class TestCleanNameNFC(unittest.TestCase):
+    """Tests that _clean_name applies NFC Unicode normalization."""
+
+    def test_decomposed_tilde_composes(self):
+        from app.pipelines.table_postprocess import _clean_name
+        # N + combining tilde → should become Ñ after NFC + upper
+        decomposed = "PEDRO NUN\u0303EZ"
+        result = _clean_name(decomposed)
+        self.assertIn("\u00d1", result)  # Ñ
+
+    def test_normal_name_unchanged(self):
+        from app.pipelines.table_postprocess import _clean_name
+        result = _clean_name("JUAN PÉREZ LÓPEZ")
+        self.assertEqual(result, "JUAN PÉREZ LÓPEZ")
+
+
 if __name__ == "__main__":
     unittest.main()
