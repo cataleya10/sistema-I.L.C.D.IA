@@ -115,6 +115,11 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         "NUMERO DE RASTREO",
         "REFERENCIA NUMERICA",
         "OPERACION INTERBANCARIA",
+        # BBVA Pago Mismo Banco / transferencias
+        "PAGO MISMO BANCO",
+        "OPERACION AUTORIZADA",
+        "DATOS DE CONFIRMACION DE LA TRANSFERENCIA",
+        "FOLIO DE FIRMA",
     )
     payment_markers_compact = (
         "DISPERSIONDEPAGODENOMINA",
@@ -135,6 +140,11 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         "NUMERODERASTREO",
         "REFERENCIANUMERICA",
         "OPERACIONINTERBANCARIA",
+        # BBVA Pago Mismo Banco compact
+        "PAGOMISMOBANCO",
+        "OPERACIONAUTORIZADA",
+        "DATOSDECONFIRMACIONDELATRANSFERENCIA",
+        "FOLIODEFIRMA",
     )
 
     if (

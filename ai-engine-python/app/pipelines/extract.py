@@ -2213,21 +2213,95 @@ def _normalize_payment_table_rows(rows: list[list[str]]) -> list[list[str]]:
     return result
 
 
-def _extract_payment_table_payload(base_text_raw: str, ocr_boxes) -> dict | None:
+def _extract_payment_table_rows_from_pdf_tables(pdf_tables: list[list[list[str]]] | None) -> list[list[str]]:
+    """Convert PyMuPDF find_tables() output into payment table rows.
+
+    Picks the best table (most rows with payment-like data) from the list of
+    structurally detected PDF tables.  Returns rows in the standard
+    ``[header_row, data_row, ...]`` format.
+    """
+    if not pdf_tables:
+        return []
+
+    best_rows: list[list[str]] = []
+    best_score = -999
+
+    for table_rows in pdf_tables:
+        if not table_rows or len(table_rows) < 2:
+            continue
+        # Clean None/empty cells
+        cleaned: list[list[str]] = []
+        for row in table_rows:
+            cleaned_row = [str(cell or "").strip() for cell in row]
+            # Skip fully empty rows
+            if any(c for c in cleaned_row):
+                cleaned.append(cleaned_row)
+        if len(cleaned) < 2:
+            continue
+
+        score = _payment_rows_quality_score(cleaned)
+        # Bonus for table detected structurally (ruling-line confidence)
+        score += 20
+        if score > best_score:
+            best_score = score
+            best_rows = cleaned
+
+    return best_rows
+
+
+def _pdf_tables_to_generic_payloads(pdf_tables: list[list[list[str]]] | None) -> list[dict]:
+    """Convert PyMuPDF find_tables() output into generic table payloads."""
+    if not pdf_tables:
+        return []
+    payloads: list[dict] = []
+    for idx, table_rows in enumerate(pdf_tables):
+        if not table_rows or len(table_rows) < 2:
+            continue
+        cleaned = [
+            [str(cell or "").strip() for cell in row]
+            for row in table_rows
+            if any(str(c or "").strip() for c in row)
+        ]
+        if len(cleaned) < 2:
+            continue
+        payloads.append({
+            "rows": cleaned,
+            "row_count": len(cleaned),
+            "column_count": len(cleaned[0]) if cleaned else 0,
+            "table_index": idx,
+            "source": "pdf_structure",
+        })
+    return payloads
+
+
+def _extract_payment_table_payload(base_text_raw: str, ocr_boxes, pdf_tables: list[list[list[str]]] | None = None) -> dict | None:
     all_tables = _extract_all_table_payloads(base_text_raw, ocr_boxes)
+    # Merge structurally-detected PDF tables into the generic pool
+    pdf_generic = _pdf_tables_to_generic_payloads(pdf_tables)
+    if pdf_generic:
+        all_tables = pdf_generic + all_tables
+
     rows_ocr = _extract_payment_table_rows_from_boxes(ocr_boxes)
     rows_text = _extract_payment_table_rows_from_text(base_text_raw)
+    rows_pdf = _extract_payment_table_rows_from_pdf_tables(pdf_tables)
 
     score_ocr = _payment_rows_quality_score(rows_ocr) if len(rows_ocr) >= 2 else -999
     score_text = _payment_rows_quality_score(rows_text) if len(rows_text) >= 2 else -999
+    score_pdf = (_payment_rows_quality_score(rows_pdf) + 20) if len(rows_pdf) >= 2 else -999
+
+    # Pick the best source among all three
+    candidates = [
+        (score_pdf, rows_pdf, "pdf_structure"),
+        (score_ocr, rows_ocr, "ocr_boxes"),
+        (score_text, rows_text, "text_lines"),
+    ]
+    candidates.sort(key=lambda c: c[0], reverse=True)
+    best_score, best_rows, best_source = candidates[0]
 
     selected_table_index = None
-    if score_ocr >= score_text and score_ocr >= 0:
-        rows = rows_ocr
-        source = "ocr_boxes"
-    elif score_text >= 0:
-        rows = rows_text
-        source = "text_lines"
+    if best_score >= 0:
+        rows = best_rows
+        source = best_source
     else:
         fallback_table = _pick_primary_table_from_payloads(all_tables)
         if not isinstance(fallback_table, dict):
@@ -2247,6 +2321,13 @@ def _extract_payment_table_payload(base_text_raw: str, ocr_boxes) -> dict | None
 
     if source == "ocr_boxes":
         rows = _merge_payment_rows_with_backup(rows, rows_text)
+    elif source == "text_lines":
+        rows = _merge_payment_rows_with_backup(rows, rows_ocr)
+    elif source == "pdf_structure":
+        # PDF structural tables are authoritative; use OCR as secondary
+        backup = rows_ocr if len(rows_ocr) >= 2 else rows_text
+        if len(backup) >= 2:
+            rows = _merge_payment_rows_with_backup(rows, backup)
     else:
         rows = _merge_payment_rows_with_backup(rows, rows_ocr)
 
@@ -6291,16 +6372,16 @@ def _try_repair_name_with_curp(name: str, curp: str) -> str:
     return name
 
 
-async def extract_fields(document_type: str, ocr_text: str, ocr_boxes: list[dict] | None = None, raw_text: str = "", filename: str | None = None) -> list[dict]:
+async def extract_fields(document_type: str, ocr_text: str, ocr_boxes: list[dict] | None = None, raw_text: str = "", filename: str | None = None, pdf_tables: list[list[list[str]]] | None = None) -> list[dict]:
     """Main extraction entry point with graceful error recovery."""
     try:
-        return await _extract_fields_impl(document_type, ocr_text, ocr_boxes, raw_text, filename)
+        return await _extract_fields_impl(document_type, ocr_text, ocr_boxes, raw_text, filename, pdf_tables)
     except Exception:
         logger.exception("Unhandled error in extract_fields for document_type=%s", document_type)
         return []
 
 
-async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: list[dict] | None = None, raw_text: str = "", filename: str | None = None) -> list[dict]:
+async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: list[dict] | None = None, raw_text: str = "", filename: str | None = None, pdf_tables: list[list[list[str]]] | None = None) -> list[dict]:
     fields: list[dict] = []
     base_text_raw = "\n".join(part for part in [raw_text, ocr_text] if part)
     base_text = _normalize_text(base_text_raw)
@@ -6603,7 +6684,7 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
         if labeled_clabe:
             fields.append(_make_field("clabe", "CLABE", _normalize_numeric_field(labeled_clabe), ocr_boxes, confidence=0.8))
 
-        payment_table = _extract_payment_table_payload(base_text_raw, ocr_boxes)
+        payment_table = _extract_payment_table_payload(base_text_raw, ocr_boxes, pdf_tables)
         payment_detail = _extract_payment_detail_payload(base_text_raw, payment_table)
         payment_table = _enrich_payment_table_payload(payment_table, payment_detail)
         if payment_table:
@@ -6652,7 +6733,7 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                 )
 
     if not any(str(field.get("key", "") or "") == "tabla_celdas" for field in fields):
-        payment_table = _extract_payment_table_payload(base_text_raw, ocr_boxes)
+        payment_table = _extract_payment_table_payload(base_text_raw, ocr_boxes, pdf_tables)
         payment_detail = _extract_payment_detail_payload(base_text_raw, payment_table)
         payment_table = _enrich_payment_table_payload(payment_table, payment_detail)
         if payment_table:

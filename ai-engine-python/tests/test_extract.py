@@ -1903,6 +1903,100 @@ class TestPaymentQualityScoreEdgeCases(unittest.TestCase):
         self.assertGreater(normal_score, dup_score)
 
 
+class TestPdfTableExtraction(unittest.TestCase):
+    """Tests for PyMuPDF find_tables() integration."""
+
+    def test_pdf_tables_to_payment_rows_picks_best(self):
+        from app.pipelines.extract import _extract_payment_table_rows_from_pdf_tables
+        tables = [
+            # Small unrelated table
+            [["Col1", "Col2"], ["A", "B"]],
+            # Payment table with proper headers
+            [
+                ["CUENTA", "REFERENCIA", "IMPORTE", "NOMBRE", "ESTATUS"],
+                ["56783223195", "162026011", "$610.44", "MARLA GRISELDA", "APLICADO"],
+                ["56936397470", "162026011", "$1,537.35", "ROLANDO ROGERIO", "APLICADO"],
+                ["56905029323", "162026011", "$353.60", "EDGAR HASSAN", "APLICADO"],
+            ],
+        ]
+        rows = _extract_payment_table_rows_from_pdf_tables(tables)
+        self.assertEqual(len(rows), 4)  # header + 3 data rows
+        self.assertIn("CUENTA", rows[0])
+        self.assertIn("56783223195", rows[1][0])
+
+    def test_pdf_tables_empty_returns_empty(self):
+        from app.pipelines.extract import _extract_payment_table_rows_from_pdf_tables
+        self.assertEqual(_extract_payment_table_rows_from_pdf_tables(None), [])
+        self.assertEqual(_extract_payment_table_rows_from_pdf_tables([]), [])
+
+    def test_pdf_tables_to_generic_payloads(self):
+        from app.pipelines.extract import _pdf_tables_to_generic_payloads
+        tables = [
+            [["H1", "H2"], ["V1", "V2"], ["V3", "V4"]],
+        ]
+        payloads = _pdf_tables_to_generic_payloads(tables)
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(payloads[0]["row_count"], 3)
+        self.assertEqual(payloads[0]["source"], "pdf_structure")
+
+    def test_pdf_tables_skips_all_empty_rows(self):
+        from app.pipelines.extract import _extract_payment_table_rows_from_pdf_tables
+        tables = [
+            [["", "", ""], ["", None, ""], ["", "", ""]],
+        ]
+        result = _extract_payment_table_rows_from_pdf_tables(tables)
+        self.assertEqual(result, [])
+
+    def test_payment_table_payload_prefers_pdf_structure(self):
+        """When PDF structural table is high quality, it should win over OCR/text."""
+        from app.pipelines.extract import _extract_payment_table_payload
+        pdf_tables = [
+            [
+                ["CUENTA", "REFERENCIA", "IMPORTE", "NOMBRE", "ESTATUS"],
+                ["56783223195", "162026011", "$610.44", "MARLA GRISELDA", "APLICADO"],
+                ["56936397470", "162026011", "$1,537.35", "ROLANDO", "APLICADO"],
+            ],
+        ]
+        # Use minimal text/boxes that wouldn't produce good results
+        result = _extract_payment_table_payload("Some random text", [], pdf_tables)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["source"], "pdf_structure")
+        self.assertGreaterEqual(len(result["rows"]), 3)
+
+    def test_banorte_23_rows_via_pdf_tables(self):
+        """Simulates Banorte REPORTE DE TRANSMISION with 23 rows from find_tables()."""
+        from app.pipelines.extract import _extract_payment_table_payload
+        header = ["No. Empleado", "Nombre", "Tipo Cuenta", "No. de Cuenta", "Importe", "Estatus", "Codigo", "Descripcion", "Clave Rastreo"]
+        data_rows = [
+            [f"000000000{i}", f"EMPLEADO {i} APELLIDO{i} SEGUNDO{i}", "01", f"0000000129030{i}408", f"$3,{200+i}.73", "APLICADO", "00", "ACEPTADO", f"CLAVE{i}"]
+            for i in range(1, 24)
+        ]
+        pdf_tables = [[header] + data_rows]
+        result = _extract_payment_table_payload("REPORTE DE TRANSMISION", [], pdf_tables)
+        self.assertIsNotNone(result)
+        # Should extract all 23 data rows + header
+        self.assertGreaterEqual(len(result["rows"]), 24)
+
+
+class TestClassifyBbvaTransferMarkers(unittest.TestCase):
+    """BBVA Pago Mismo Banco / transfer docs should be classified as FACTURA."""
+
+    def test_pago_mismo_banco_classified_as_factura(self):
+        from app.pipelines.classify import _keyword_override
+        text = "BBVA NET CASH OPERACION AUTORIZADA DATOS DE LA OPERACION PAGO MISMO BANCO IMPORTE 1537 35"
+        compact = text.replace(" ", "")
+        doc_type, conf = _keyword_override(text, compact, "")
+        self.assertEqual(doc_type, "FACTURA")
+        self.assertGreaterEqual(conf, 0.9)
+
+    def test_folio_de_firma_classified_as_factura(self):
+        from app.pipelines.classify import _keyword_override
+        text = "DATOS DE CONFIRMACION DE LA TRANSFERENCIA FOLIO DE FIRMA 7748662779"
+        compact = text.replace(" ", "")
+        doc_type, conf = _keyword_override(text, compact, "")
+        self.assertEqual(doc_type, "FACTURA")
+
+
 if __name__ == "__main__":
     unittest.main()
 

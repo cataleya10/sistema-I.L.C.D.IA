@@ -45,7 +45,7 @@ def _has_sufficient_text_layer(text: str) -> bool:
     )
 
 
-async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dict[str, Any]]]:
+async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dict[str, Any]], list[list[list[str]]]]:
     content = await file.read()
     if len(content) > MAX_UPLOAD_BYTES:
         raise ValueError(f"File too large ({len(content)} bytes, max {MAX_UPLOAD_BYTES})")
@@ -55,6 +55,7 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
     if content_type == "application/pdf" or filename.lower().endswith(".pdf"):
         extracted_parts: list[str] = []
         text_layer_boxes: list[dict[str, Any]] = []
+        pdf_tables: list[list[list[str]]] = []
         with fitz.open(stream=content, filetype="pdf") as doc:  # type: ignore[attr-defined]
             max_pages = min(len(doc), settings.max_pages)
             for index in range(max_pages):
@@ -76,10 +77,25 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
                             "page": index + 1,
                         }
                     )
+                # Extract structured tables via PyMuPDF find_tables()
+                try:
+                    tab_finder = page.find_tables()
+                    for table in tab_finder.tables:
+                        raw_rows = table.extract()
+                        if raw_rows and len(raw_rows) >= 2:
+                            clean_rows = [
+                                [str(cell or "").strip() for cell in row]
+                                for row in raw_rows
+                                if isinstance(row, (list, tuple))
+                            ]
+                            if clean_rows:
+                                pdf_tables.append(clean_rows)
+                except Exception:
+                    logger.debug("find_tables() failed on page %d, skipping", index + 1)
 
         extracted_text = "\n\n".join(part for part in extracted_parts if part)
         if settings.enable_text_layer_short_circuit and _has_sufficient_text_layer(extracted_text):
-            return [], extracted_text, text_layer_boxes
+            return [], extracted_text, text_layer_boxes, pdf_tables
 
         images: list[Image.Image] = []
         with fitz.open(stream=content, filetype="pdf") as doc:  # type: ignore[attr-defined]
@@ -94,7 +110,7 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
                 image = image.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3)).convert("RGB")
                 images.append(image)
 
-        return images, extracted_text, text_layer_boxes
+        return images, extracted_text, text_layer_boxes, pdf_tables
 
     image = Image.open(io.BytesIO(content)).convert("RGB")
     if image.width < 1200:
@@ -105,4 +121,4 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
     image = ImageEnhance.Contrast(image.convert("L")).enhance(1.8)
     image = ImageEnhance.Sharpness(image).enhance(2.0)
     image = image.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3)).convert("RGB")
-    return [image], "", []
+    return [image], "", [], []

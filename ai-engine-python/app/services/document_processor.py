@@ -385,7 +385,10 @@ async def process_document(file, document_id: str, source: str, options: str | N
 
     preprocess_result = await preprocess(file)
     text_layer_boxes: list[dict] = []
-    if isinstance(preprocess_result, tuple) and len(preprocess_result) >= 3:
+    pdf_tables: list[list[list[str]]] = []
+    if isinstance(preprocess_result, tuple) and len(preprocess_result) >= 4:
+        images, extracted_text, text_layer_boxes, pdf_tables = preprocess_result
+    elif isinstance(preprocess_result, tuple) and len(preprocess_result) >= 3:
         images, extracted_text, text_layer_boxes = preprocess_result
     else:
         images, extracted_text = preprocess_result
@@ -413,6 +416,7 @@ async def process_document(file, document_id: str, source: str, options: str | N
                 text_layer_boxes,
                 extracted_text,
                 file.filename,
+                pdf_tables,
             )
             candidate_fields = await validate_fields(candidate_fields)
             candidate_fields = _normalize_fields(fast_type, candidate_fields)
@@ -453,7 +457,7 @@ async def process_document(file, document_id: str, source: str, options: str | N
         if (ocr_text or extracted_text) and doc_type != "UNKNOWN":
             doc_confidence = max(doc_confidence, 0.85)
         extraction_boxes = ocr_boxes if ocr_boxes else text_layer_boxes
-        fields = await extract_fields(doc_type, ocr_text, extraction_boxes, extracted_text, file.filename)
+        fields = await extract_fields(doc_type, ocr_text, extraction_boxes, extracted_text, file.filename, pdf_tables)
         fields = await validate_fields(fields)
         fields = _normalize_fields(doc_type, fields)
         fields = _postprocess_fields(doc_type, fields)

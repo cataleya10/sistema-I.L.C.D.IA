@@ -208,6 +208,6 @@ if ($fe -and -not $feReady) { $exitCode = 1 }
 if ($exitCode -eq 0) {
     Write-Host "All services started successfully." -ForegroundColor Green
 } else {
-    Write-Host "One or more services failed health check — review logs/ for details." -ForegroundColor Red
+    Write-Host "One or more services failed health check - review logs/ for details." -ForegroundColor Red
 }
 exit $exitCode
