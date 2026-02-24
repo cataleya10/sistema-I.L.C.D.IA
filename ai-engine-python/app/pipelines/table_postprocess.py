@@ -167,6 +167,31 @@ def _clean_numeric_id(value: str) -> str:
     return text
 
 
+def _is_garbage_cell(value: str) -> bool:
+    """Detect garbage cell values: binary junk, excessive symbols, noise.
+
+    Mirrors the field-level ``_is_garbage_value()`` from extract.py but
+    tuned for individual table cells (shorter strings).
+    """
+    text = str(value or "").strip()
+    if not text:
+        return False
+    # Control characters (except common whitespace)
+    if re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", text):
+        return True
+    # Binary / base64 junk
+    if re.search(r"(?:[A-Za-z0-9+/]{20,}={0,2})", text) and not re.search(r"\s", text) and len(text) > 30:
+        return True
+    # Excessive special characters (over 50% non-alphanumeric)
+    alpha_count = sum(1 for ch in text if ch.isalnum() or ch.isspace())
+    if len(text) >= 4 and alpha_count / len(text) < 0.35:
+        return True
+    # Repeated single character (e.g., "||||||||" or "========")
+    if len(text) >= 4 and len(set(text.replace(" ", ""))) <= 1:
+        return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # DataFrame post-processing engine
 # ---------------------------------------------------------------------------
@@ -204,6 +229,12 @@ def postprocess_payment_table(
 
     if df.empty:
         return canonical_columns, canonical_rows
+
+    # --- Step 0: Cell-level garbage filter ---
+    for col in df.columns:
+        df[col] = df[col].apply(
+            lambda v: "" if _is_garbage_cell(str(v or "")) else str(v or "")
+        )
 
     # --- Step 1: Column-wise type-aware cleaning ---
     for col in df.columns:
@@ -275,6 +306,23 @@ def postprocess_payment_table(
             lambda row: any(str(v or "").strip() for v in row), axis=1
         )
         df = df[mask]
+
+    # --- Step 5b: Minimum row quality ---
+    # Drop rows where fewer than 2 important columns are filled (noise rows)
+    important_cols_list = [
+        c for c in df.columns
+        if c in _AMOUNT_COLUMNS | _ACCOUNT_COLUMNS | _NAME_COLUMNS | _STATUS_COLUMNS | _NUMERIC_ID_COLUMNS
+    ]
+    if important_cols_list and len(df) > 1:
+        min_filled = min(2, len(important_cols_list))
+        fill_mask = df[important_cols_list].apply(
+            lambda row: sum(1 for v in row if str(v or "").strip()) >= min_filled,
+            axis=1,
+        )
+        dropped_quality = len(df) - fill_mask.sum()
+        if dropped_quality > 0:
+            logger.info("postprocess: removed %d low-quality rows (< %d important cols filled)", dropped_quality, min_filled)
+        df = df[fill_mask]
 
     # --- Step 6: Column completeness stats (for diagnostics) ---
     # Not returned to client, but useful for logging

@@ -2951,7 +2951,56 @@ def _payment_header_alias(token: str) -> str:
     return aliases.get(token, token)
 
 
+def _merge_row_similarity(
+    primary_row: list[str],
+    backup_row: list[str],
+    primary_idx: dict[str, int],
+    backup_idx: dict[str, int],
+) -> float:
+    """Score how well a backup row matches a primary row (0..1).
+
+    Compares overlapping non-empty cells from common columns; higher is better.
+    Used for content-based row matching instead of positional offset.
+    """
+    matches = 0
+    comparisons = 0
+    for token, p_idx in primary_idx.items():
+        if p_idx >= len(primary_row):
+            continue
+        p_val = _normalize_text(primary_row[p_idx]).upper()
+        if not p_val:
+            continue
+        alias = _payment_header_alias(token)
+        b_idx = backup_idx.get(alias)
+        if b_idx is None or b_idx >= len(backup_row):
+            continue
+        b_val = _normalize_text(str(backup_row[b_idx] or "")).upper()
+        if not b_val:
+            continue
+        comparisons += 1
+        # Account/reference numbers: exact digit match
+        p_digits = re.sub(r"\D", "", p_val)
+        b_digits = re.sub(r"\D", "", b_val)
+        if len(p_digits) >= 6 and len(b_digits) >= 6:
+            if p_digits == b_digits:
+                matches += 1
+            continue
+        if p_val == b_val or p_val in b_val or b_val in p_val:
+            matches += 1
+    if comparisons == 0:
+        return 0.0
+    return matches / comparisons
+
+
 def _merge_payment_rows_with_backup(primary_rows: list[list[str]], backup_rows: list[list[str]]) -> list[list[str]]:
+    """Merge backup rows into primary rows using content-based matching.
+
+    Instead of purely positional offset merge (which breaks when one source
+    misses a row), this uses a two-pass approach:
+    1. If row counts match, use positional merge (fast path, order preserved).
+    2. If row counts differ, find the best-matching backup row for each
+       primary row using cell similarity, preventing cross-contamination.
+    """
     if len(primary_rows) < 2 or len(backup_rows) < 2:
         return primary_rows
 
@@ -2971,32 +3020,77 @@ def _merge_payment_rows_with_backup(primary_rows: list[list[str]], backup_rows: 
     if not primary_idx or not backup_idx:
         return primary_rows
 
-    merged = [primary_header]
-    max_data_rows = max(len(primary_rows), len(backup_rows)) - 1
-    for row_offset in range(max_data_rows):
-        primary_row = list(primary_rows[row_offset + 1]) if row_offset + 1 < len(primary_rows) else [""] * len(primary_header)
-        backup_row = backup_rows[row_offset + 1] if row_offset + 1 < len(backup_rows) else []
-        if not backup_row:
-            merged.append(primary_row)
-            continue
-
-        if len(primary_row) < len(primary_header):
-            primary_row.extend([""] * (len(primary_header) - len(primary_row)))
-
+    def _fill_empty_cells(p_row: list[str], b_row: list[str]) -> list[str]:
+        """Fill empty cells in primary row from backup row."""
+        row = list(p_row)
+        if len(row) < len(primary_header):
+            row.extend([""] * (len(primary_header) - len(row)))
         for token, p_idx in primary_idx.items():
-            if p_idx >= len(primary_row):
+            if p_idx >= len(row):
                 continue
-            if _normalize_text(primary_row[p_idx]):
+            if _normalize_text(row[p_idx]):
                 continue
             alias = _payment_header_alias(token)
             b_idx = backup_idx.get(alias)
-            if b_idx is None or b_idx >= len(backup_row):
+            if b_idx is None or b_idx >= len(b_row):
                 continue
-            backup_value = _normalize_text(str(backup_row[b_idx] or ""))
+            backup_value = _normalize_text(str(b_row[b_idx] or ""))
             if backup_value:
-                primary_row[p_idx] = backup_value
+                row[p_idx] = backup_value
+        return row
 
-        merged.append(primary_row)
+    primary_data = primary_rows[1:]
+    backup_data = backup_rows[1:]
+
+    # Fast path: same row count → positional merge (order preserved)
+    if len(primary_data) == len(backup_data):
+        merged = [primary_header]
+        for p_row, b_row in zip(primary_data, backup_data):
+            merged.append(_fill_empty_cells(list(p_row), b_row))
+        return merged
+
+    # Content-based matching: for each primary row find best backup match
+    merged = [primary_header]
+    used_backup: set[int] = set()
+    for p_row in primary_data:
+        best_b_idx = -1
+        best_sim = 0.3  # minimum similarity threshold
+        for b_i, b_row in enumerate(backup_data):
+            if b_i in used_backup:
+                continue
+            sim = _merge_row_similarity(list(p_row), b_row, primary_idx, backup_idx)
+            if sim > best_sim:
+                best_sim = sim
+                best_b_idx = b_i
+        if best_b_idx >= 0:
+            used_backup.add(best_b_idx)
+            merged.append(_fill_empty_cells(list(p_row), backup_data[best_b_idx]))
+        else:
+            row = list(p_row)
+            if len(row) < len(primary_header):
+                row.extend([""] * (len(primary_header) - len(row)))
+            merged.append(row)
+
+    # Append unmatched backup rows that have enough data to stand alone
+    for b_i, b_row in enumerate(backup_data):
+        if b_i in used_backup:
+            continue
+        # Build a primary-shaped row from backup data
+        new_row = [""] * len(primary_header)
+        filled = 0
+        for token, p_idx in primary_idx.items():
+            if p_idx >= len(new_row):
+                continue
+            alias = _payment_header_alias(token)
+            b_idx = backup_idx.get(alias)
+            if b_idx is None or b_idx >= len(b_row):
+                continue
+            val = _normalize_text(str(b_row[b_idx] or ""))
+            if val:
+                new_row[p_idx] = val
+                filled += 1
+        if filled >= 2:
+            merged.append(new_row)
 
     return merged
 
@@ -3520,6 +3614,35 @@ def _payment_header_keys_from_cells(cells: list[str]) -> list[str]:
     return normalized
 
 
+_SUMMARY_ROW_MARKERS = frozenset({
+    "CANTIDAD DE MOVIMIENTOS ALTAS",
+    "IMPORTE DE MOVIMIENTO ALTAS",
+    "CANTIDAD DE MOVIMIENTOS BAJAS",
+    "IMPORTE DE MOVIMIENTOS BAJAS",
+    "TOTAL CANTIDAD DE MOVIMIENTOS ALTAS",
+    "TOTAL IMPORTE DE MOVIMIENTO ALTAS",
+    "TOTAL CANTIDAD DE MOVIMIENTOS BAJAS",
+    "TOTAL IMPORTE DE MOVIMIENTOS BAJAS",
+})
+
+
+def _is_summary_row(row: list[str]) -> bool:
+    """Detect Scotia-style summary rows that should NOT be in the main table.
+
+    Summary rows have sub-header cells like 'CANTIDAD DE MOVIMIENTOS ALTAS'
+    or are the data row immediately following such a sub-header.
+    """
+    for cell in row:
+        upper = str(cell or "").strip().upper()
+        if upper in _SUMMARY_ROW_MARKERS:
+            return True
+        if "CANTIDAD DE MOVIMIENTO" in upper or "IMPORTE DE MOVIMIENTO" in upper:
+            return True
+        if "TOTAL CANTIDAD" in upper or "TOTAL IMPORTE" in upper:
+            return True
+    return False
+
+
 def _payment_rows_to_objects(rows: list[list[str]]) -> list[dict]:
     if len(rows) < 2:
         return []
@@ -3527,6 +3650,9 @@ def _payment_rows_to_objects(rows: list[list[str]]) -> list[dict]:
     keys = _payment_header_keys_from_cells(header)
     objects: list[dict] = []
     for row in rows[1:]:
+        # Skip summary sub-header/data rows (extracted separately)
+        if _is_summary_row(row):
+            continue
         item: dict[str, str] = {}
         for idx, key in enumerate(keys):
             if idx >= len(row):

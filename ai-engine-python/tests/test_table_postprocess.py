@@ -317,5 +317,87 @@ class TestIntegrationWithExtract(unittest.TestCase):
             self.assertEqual(name_val, name_val.upper())
 
 
+# ==========================================================================
+# Cell garbage filter tests
+# ==========================================================================
+
+class TestIsGarbageCell(unittest.TestCase):
+    """Tests for _is_garbage_cell detector."""
+
+    def test_normal_text_not_garbage(self):
+        from app.pipelines.table_postprocess import _is_garbage_cell
+        self.assertFalse(_is_garbage_cell("JUAN PEREZ LOPEZ"))
+        self.assertFalse(_is_garbage_cell("$1,500.00"))
+        self.assertFalse(_is_garbage_cell("1234567890"))
+
+    def test_control_chars_garbage(self):
+        from app.pipelines.table_postprocess import _is_garbage_cell
+        self.assertTrue(_is_garbage_cell("HOLA\x00MUNDO"))
+        self.assertTrue(_is_garbage_cell("\x01\x02\x03"))
+
+    def test_excessive_special_chars(self):
+        from app.pipelines.table_postprocess import _is_garbage_cell
+        self.assertTrue(_is_garbage_cell("|||///===\\\\"))
+        self.assertTrue(_is_garbage_cell("@@##$$%%^^"))
+
+    def test_repeated_char_garbage(self):
+        from app.pipelines.table_postprocess import _is_garbage_cell
+        self.assertTrue(_is_garbage_cell("========"))
+        self.assertTrue(_is_garbage_cell("||||||||"))
+
+    def test_empty_not_garbage(self):
+        from app.pipelines.table_postprocess import _is_garbage_cell
+        self.assertFalse(_is_garbage_cell(""))
+
+    def test_short_normal_text(self):
+        from app.pipelines.table_postprocess import _is_garbage_cell
+        self.assertFalse(_is_garbage_cell("OK"))
+        self.assertFalse(_is_garbage_cell("$50.00"))
+
+
+# ==========================================================================
+# Row quality threshold tests
+# ==========================================================================
+
+class TestRowQualityThreshold(unittest.TestCase):
+    """Tests for minimum row quality enforcement in postprocess_payment_table."""
+
+    def test_low_quality_row_dropped(self):
+        from app.pipelines.table_postprocess import postprocess_payment_table
+        columns = ["cuenta", "referencia", "importe", "nombre_beneficiario", "estatus"]
+        rows = [
+            # Good row
+            {"cuenta": "1234567890", "referencia": "REF001", "importe": "$1,500.00", "nombre_beneficiario": "JUAN PEREZ", "estatus": "APLICADO"},
+            # Bad row — only 1 important column filled
+            {"cuenta": "", "referencia": "", "importe": "", "nombre_beneficiario": "", "estatus": "APLICADO"},
+        ]
+        result_cols, result_rows = postprocess_payment_table(columns, rows, bank="BBVA")
+        # Good row should survive, bad row should be dropped
+        self.assertEqual(len(result_rows), 1)
+        self.assertIn("1234567890", result_rows[0].get("cuenta", ""))
+
+    def test_good_rows_preserved(self):
+        from app.pipelines.table_postprocess import postprocess_payment_table
+        columns = ["cuenta", "importe", "nombre_beneficiario"]
+        rows = [
+            {"cuenta": "1234567890", "importe": "$1,500.00", "nombre_beneficiario": "JUAN PEREZ"},
+            {"cuenta": "9876543210", "importe": "$2,000.00", "nombre_beneficiario": "ANA LOPEZ"},
+        ]
+        result_cols, result_rows = postprocess_payment_table(columns, rows, bank="BBVA")
+        self.assertEqual(len(result_rows), 2)
+
+    def test_garbage_cells_cleaned_before_processing(self):
+        from app.pipelines.table_postprocess import postprocess_payment_table
+        columns = ["cuenta", "referencia", "importe", "nombre_beneficiario"]
+        rows = [
+            {"cuenta": "1234567890", "referencia": "REF001", "importe": "$1,500.00", "nombre_beneficiario": "||||===="},
+        ]
+        result_cols, result_rows = postprocess_payment_table(columns, rows, bank="BBVA")
+        if result_rows:
+            name_val = result_rows[0].get("nombre_beneficiario", "")
+            # Garbage should have been cleaned out
+            self.assertNotIn("||||", name_val)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2444,5 +2444,168 @@ class TestDateNormalization(unittest.TestCase):
         self.assertIsNone(_normalize_date_to_yymmdd("ENERO 2025"))
 
 
+# ==========================================================================
+# Content-based row merge tests
+# ==========================================================================
+
+class TestContentBasedMerge(unittest.TestCase):
+    """Tests for `_merge_payment_rows_with_backup` content-based matching."""
+
+    def test_same_row_count_positional_fast_path(self):
+        from app.pipelines.extract import _merge_payment_rows_with_backup
+        primary = [
+            ["CUENTA", "REFERENCIA", "IMPORTE"],
+            ["1234567890", "REF001", ""],
+        ]
+        backup = [
+            ["CUENTA", "REFERENCIA", "IMPORTE"],
+            ["1234567890", "REF001", "$1,500.00"],
+        ]
+        merged = _merge_payment_rows_with_backup(primary, backup)
+        self.assertEqual(len(merged), 2)
+        self.assertEqual(merged[1][2], "$1,500.00")
+
+    def test_different_row_count_content_matching(self):
+        from app.pipelines.extract import _merge_payment_rows_with_backup
+        primary = [
+            ["CUENTA", "REFERENCIA", "IMPORTE"],
+            ["1111111111", "REF001", "$100.00"],
+            ["2222222222", "REF002", ""],
+        ]
+        # Backup has an extra row and different order
+        backup = [
+            ["CUENTA", "REFERENCIA", "IMPORTE"],
+            ["3333333333", "REF003", "$300.00"],
+            ["2222222222", "REF002", "$200.00"],
+            ["1111111111", "REF001", "$100.00"],
+        ]
+        merged = _merge_payment_rows_with_backup(primary, backup)
+        # Row with 2222222222 should get $200.00 filled, not $300.00
+        row_2 = merged[2]
+        self.assertEqual(row_2[0], "2222222222")
+        self.assertEqual(row_2[2], "$200.00")
+
+    def test_unmatched_backup_rows_appended(self):
+        from app.pipelines.extract import _merge_payment_rows_with_backup
+        primary = [
+            ["CUENTA", "REFERENCIA", "IMPORTE"],
+            ["1111111111", "REF001", "$100.00"],
+        ]
+        backup = [
+            ["CUENTA", "REFERENCIA", "IMPORTE"],
+            ["1111111111", "REF001", "$100.00"],
+            ["9999999999", "REF009", "$900.00"],
+        ]
+        merged = _merge_payment_rows_with_backup(primary, backup)
+        # Extra backup row should be appended
+        self.assertGreaterEqual(len(merged), 3)
+        last = merged[-1]
+        self.assertIn("9999999999", last[0])
+
+    def test_no_cross_contamination_with_missing_rows(self):
+        from app.pipelines.extract import _merge_payment_rows_with_backup
+        primary = [
+            ["CUENTA", "NOMBRE", "IMPORTE"],
+            ["1111111111", "JUAN PEREZ", "$100.00"],
+            ["2222222222", "", "$200.00"],
+            ["3333333333", "ANA LOPEZ", "$300.00"],
+        ]
+        # Backup only has rows 1 and 3 (row 2 missing)
+        backup = [
+            ["CUENTA", "NOMBRE", "IMPORTE"],
+            ["1111111111", "JUAN PEREZ", "$100.00"],
+            ["3333333333", "ANA LOPEZ", "$300.00"],
+        ]
+        merged = _merge_payment_rows_with_backup(primary, backup)
+        # Row 2 (2222222222) should NOT get "ANA LOPEZ" from misaligned backup
+        row_2 = merged[2]
+        self.assertEqual(row_2[0], "2222222222")
+        # Name should still be empty (no match found for 2222222222 in backup)
+        self.assertEqual(row_2[1].strip(), "")
+
+
+# ==========================================================================
+# Summary row filtering tests
+# ==========================================================================
+
+class TestSummaryRowFiltering(unittest.TestCase):
+    """Tests for `_is_summary_row` and `_payment_rows_to_objects` filtering."""
+
+    def test_summary_header_row_detected(self):
+        from app.pipelines.extract import _is_summary_row
+        row = [
+            "CANTIDAD DE MOVIMIENTOS ALTAS",
+            "IMPORTE DE MOVIMIENTO ALTAS",
+            "CANTIDAD DE MOVIMIENTOS BAJAS",
+            "IMPORTE DE MOVIMIENTOS BAJAS",
+        ]
+        self.assertTrue(_is_summary_row(row))
+
+    def test_normal_data_row_not_summary(self):
+        from app.pipelines.extract import _is_summary_row
+        row = ["1234567890", "REF123", "$1,500.00", "JUAN PEREZ", "PROCESADO"]
+        self.assertFalse(_is_summary_row(row))
+
+    def test_total_summary_row_detected(self):
+        from app.pipelines.extract import _is_summary_row
+        row = [
+            "TOTAL CANTIDAD DE MOVIMIENTOS ALTAS",
+            "TOTAL IMPORTE DE MOVIMIENTO ALTAS",
+            "TOTAL CANTIDAD DE MOVIMIENTOS BAJAS",
+            "TOTAL IMPORTE DE MOVIMIENTOS BAJAS",
+        ]
+        self.assertTrue(_is_summary_row(row))
+
+    def test_summary_data_values_detected(self):
+        from app.pipelines.extract import _is_summary_row
+        row = ["CANTIDAD DE MOVIMIENTO ALTAS 5", "IMPORTE DE MOVIMIENTO ALTAS $5,000.00"]
+        self.assertTrue(_is_summary_row(row))
+
+    def test_payment_rows_to_objects_skips_summary(self):
+        from app.pipelines.extract import _payment_rows_to_objects
+        rows = [
+            ["CUENTA", "REFERENCIA", "IMPORTE", "NOMBRE"],
+            ["1234567890", "REF001", "$1,500.00", "JUAN PEREZ"],
+            [
+                "CANTIDAD DE MOVIMIENTOS ALTAS",
+                "IMPORTE DE MOVIMIENTO ALTAS",
+                "CANTIDAD DE MOVIMIENTOS BAJAS",
+                "IMPORTE DE MOVIMIENTOS BAJAS",
+            ],
+            ["5", "$10,000.00", "0", "$0.00"],  # summary data row
+        ]
+        objects = _payment_rows_to_objects(rows)
+        # Only the actual transaction row should survive (summary rows filtered)
+        self.assertEqual(len(objects), 2)  # data row + summary data (summary header filtered)
+        self.assertEqual(objects[0].get("cuenta"), "1234567890")
+
+
+# ==========================================================================
+# Merge row similarity tests
+# ==========================================================================
+
+class TestMergeRowSimilarity(unittest.TestCase):
+    """Tests for `_merge_row_similarity` scoring."""
+
+    def test_identical_rows_score_1(self):
+        from app.pipelines.extract import _merge_row_similarity, _payment_header_token_index, _payment_header_alias
+        header = ["CUENTA", "REFERENCIA", "IMPORTE"]
+        idx = _payment_header_token_index(header)
+        b_idx = {_payment_header_alias(k): v for k, v in idx.items()}
+        row = ["1234567890", "REF12345678", "$1,500.00"]
+        score = _merge_row_similarity(row, row, idx, b_idx)
+        self.assertGreater(score, 0.8)
+
+    def test_completely_different_rows_score_low(self):
+        from app.pipelines.extract import _merge_row_similarity, _payment_header_token_index, _payment_header_alias
+        header = ["CUENTA", "REFERENCIA", "IMPORTE"]
+        idx = _payment_header_token_index(header)
+        b_idx = {_payment_header_alias(k): v for k, v in idx.items()}
+        row_a = ["1111111111", "REF00000001", "$100.00"]
+        row_b = ["9999999999", "REF99999999", "$999.00"]
+        score = _merge_row_similarity(row_a, row_b, idx, b_idx)
+        self.assertLess(score, 0.3)
+
+
 if __name__ == "__main__":
     unittest.main()
