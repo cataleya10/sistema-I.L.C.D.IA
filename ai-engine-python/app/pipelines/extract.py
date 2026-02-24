@@ -1043,11 +1043,12 @@ def _fix_payment_ocr_column_errors(structured_rows: list[list[str]]) -> list[lis
     3. ESTATUS embebido en CONCEPTO ("PROCESADO PAGO DE NOMINA"): separa estatus.
        Si el header OCR no tiene columna ESTATUS, se inyecta automáticamente.
     4. Nombres en mixed-case: uniforma a MAYÚSCULAS.
+    5. Dedup headers de multi-página OCR ("CUENTA CUENTA" → "CUENTA").
     """
     if len(structured_rows) < 2:
         return structured_rows
 
-    header = list(structured_rows[0])
+    header = _dedup_header_row(list(structured_rows[0]))
     keys = [_normalize_keyword(h).lower() for h in header]
 
     def _ci(name: str) -> int:
@@ -2120,6 +2121,7 @@ def _extract_bbva_transfer_receipt_rows(lines: list[str], raw_text: str) -> list
 def _normalize_payment_table_rows(rows: list[list[str]]) -> list[list[str]]:
     """Normalización final aplicada a las filas ya fusionadas (OCR + texto).
 
+    0. Deduplica headers de multi-página OCR ("CUENTA CUENTA" → "CUENTA").
     1. Si CONCEPTO empieza con palabra de estatus → siempre limpia el prefijo.
        Si ESTATUS también está vacío, lo extrae de ahí.
        Si el header no tiene columna ESTATUS, se inyecta antes de CONCEPTO.
@@ -2129,7 +2131,8 @@ def _normalize_payment_table_rows(rows: list[list[str]]) -> list[list[str]]:
     if len(rows) < 2:
         return rows
 
-    header = list(rows[0])  # copia mutable para poder inyectar columna
+    # Fix 0: Dedup multi-page OCR header tokens
+    header = _dedup_header_row(list(rows[0]))
     keys = [_normalize_keyword(h).lower() for h in header]
 
     def _ci(name: str) -> int:
@@ -2451,6 +2454,35 @@ def _header_cell_has_repeated_tokens(cell: str) -> bool:
     return False
 
 
+def _dedup_header_cell(cell: str) -> str:
+    """Strip repeated token halves from multi-page OCR headers.
+
+    Multi-page PDFs often produce concatenated headers when OCR merges pages:
+    - "CUENTA CUENTA" → "CUENTA"
+    - "REFERENCIA REFERENCIA" → "REFERENCIA"
+    - "APELLIDO PATERNO APELLIDO MATERNO ESTATUS APELLIDO PATERNO APELLIDO MATERNO ESTATUS"
+      → "APELLIDO PATERNO APELLIDO MATERNO ESTATUS"
+    """
+    tokens = str(cell or "").strip().split()
+    if len(tokens) < 2:
+        return str(cell or "").strip()
+    upper_tokens = [t.upper() for t in tokens]
+    # All same token: "CUENTA CUENTA" → "CUENTA"
+    if all(t == upper_tokens[0] for t in upper_tokens):
+        return tokens[0]
+    # Even count, repeated halves
+    if len(upper_tokens) % 2 == 0:
+        half = len(upper_tokens) // 2
+        if upper_tokens[:half] == upper_tokens[half:]:
+            return " ".join(tokens[:half])
+    return str(cell or "").strip()
+
+
+def _dedup_header_row(header: list[str]) -> list[str]:
+    """Apply header cell deduplication to an entire header row."""
+    return [_dedup_header_cell(cell) for cell in header]
+
+
 def _payment_rows_quality_score(rows: list[list[str]]) -> int:
     if len(rows) < 2:
         return -100
@@ -2466,8 +2498,9 @@ def _payment_rows_quality_score(rows: list[list[str]]) -> int:
     score -= sum(max(0, len(cell) - 60) for cell in header) // 4
     score -= sum(max(0, len(cell) - 120) for cell in data) // 6
 
+    # Penalizar headers con tokens duplicados (multi-página OCR)
     repeated_header_cells = sum(1 for cell in header if _header_cell_has_repeated_tokens(cell))
-    score -= repeated_header_cells * 14
+    score -= repeated_header_cells * 25
 
     data_joined = " ".join(data)
     noisy_fragments = (
@@ -2480,12 +2513,32 @@ def _payment_rows_quality_score(rows: list[list[str]]) -> int:
     )
     score -= sum(18 for fragment in noisy_fragments if fragment in data_joined)
 
+    # Penalizar celdas con múltiples montos (multi-record-per-line)
     amount_hits = len(re.findall(r"\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})\b", data_joined))
-    if amount_hits >= 2:
+    if amount_hits >= 3:
+        score -= 40
+    elif amount_hits >= 2:
         score -= 20
+
+    # Penalizar celdas con múltiples secuencias numéricas largas empaquetadas
     compact_number_hits = sum(1 for cell in data if len(re.findall(r"\b\d{10,24}\b", cell)) >= 2)
-    if compact_number_hits >= 1:
+    if compact_number_hits >= 2:
+        score -= 35
+    elif compact_number_hits >= 1:
         score -= 18
+
+    # Penalizar celdas de datos con metadatos del documento mezclados
+    metadata_noise = (
+        "NUMERODECONTRATO",
+        "NUMERODESECUENCIA",
+        "REPORTE DE OPERACIONES",
+        "DISPERSION DE PAGO",
+        "DATOSDELCLIENTE",
+        "COMPROBANTE DE LA OPERACION",
+    )
+    for fragment in metadata_noise:
+        if fragment in data_joined:
+            score -= 22
 
     if "CUENTA" in header_joined and data:
         account_cell = data[0] if len(data) >= 1 else ""
@@ -2497,7 +2550,7 @@ def _payment_rows_quality_score(rows: list[list[str]]) -> int:
     if "REFERENCIA" in header_joined and len(data) >= 2:
         ref_cell = data[1]
         if ref_cell and re.search(r"[A-Z]", ref_cell):
-            if any(token in ref_cell for token in ("DATOS", "CLIENTE", "PAGADOR")):
+            if any(token in ref_cell for token in ("DATOS", "CLIENTE", "PAGADOR", "REPORTE", "DISPERSION")):
                 score -= 25
             if sum(ch.isdigit() for ch in ref_cell) < 8:
                 score -= 15
@@ -2588,7 +2641,7 @@ def _merge_payment_rows_with_backup(primary_rows: list[list[str]], backup_rows: 
 
 def _payment_detect_bank(raw_text: str) -> str:
     text = _ascii_fold(str(raw_text or "")).upper()
-    if "SCOTIABANK" in text:
+    if "SCOTIABANK" in text or "SCOTIA BANK" in text:
         return "SCOTIABANK"
     if "BBVA" in text or "BANCOMER" in text or "REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS" in text:
         return "BBVA"
@@ -2598,12 +2651,28 @@ def _payment_detect_bank(raw_text: str) -> str:
         and ("CUENTA DE DEPOSITO" in text or "CUENTA DESTINO" in text)
     ):
         return "BBVA"
-    if "SANTANDER" in text:
+    if "SANTANDER" in text or "CONTRATO ENLACE" in text:
         return "SANTANDER"
     if "BANORTE" in text or "IXE" in text:
         return "BANORTE"
     if "BANAMEX" in text or "CITIBANAMEX" in text:
         return "BANAMEX"
+    if "HSBC" in text:
+        return "HSBC"
+    if "INBURSA" in text:
+        return "INBURSA"
+    # Fallback: try to detect bank from CLABE prefix (first 3 digits)
+    clabe_match = re.search(r"\b(\d{18})\b", text)
+    if clabe_match:
+        prefix = clabe_match.group(1)[:3]
+        _CLABE_BANK = {
+            "002": "BANAMEX", "012": "BBVA", "014": "SANTANDER",
+            "021": "HSBC", "030": "BAJIO", "036": "INBURSA",
+            "044": "SCOTIABANK", "072": "BANORTE", "058": "BANREGIO",
+        }
+        bank = _CLABE_BANK.get(prefix)
+        if bank:
+            return bank
     return "DESCONOCIDO"
 
 
@@ -2809,6 +2878,55 @@ def _extract_bbva_payment_metadata(raw_text: str) -> dict[str, str]:
     archivo_num_match = re.search(r"(?:NO\.?\s+DE\s+ARCHIVO|ARCHIVO\s+NO)\s*:?\s*([0-9OIL]{1,12})", text)
     if archivo_num_match:
         out["numero_archivo_en_dia"] = _normalize_numeric_field(archivo_num_match.group(1))
+    return out
+
+
+def _extract_santander_payment_metadata(raw_text: str) -> dict[str, str]:
+    """Extract Santander-specific metadata from nómina payment documents."""
+    text = _ascii_fold(str(raw_text or "")).upper()
+    out: dict[str, str] = {}
+
+    # Tipo de operación
+    op_type = re.search(r"TIPO\s+DE\s+OPERACION\s*:?\s*([A-Z ]{4,80}?)(?=\s+(?:FECHA|CUENTA|NUMERO|ESTATUS)\b|$)", text)
+    if op_type:
+        out["tipo_operacion"] = _normalize_text(op_type.group(1)).upper()
+
+    # Número de contrato ENLACE
+    contrato = re.search(r"(?:NUMERO\s+DE\s+)?CONTRATO\s*(?:ENLACE)?\s*:?\s*(\d{8,20})", text)
+    if contrato:
+        out["numero_contrato"] = contrato.group(1)
+
+    # Cuenta cargo
+    cuenta_cargo = re.search(r"CUENTA\s+CARGO\s*:?\s*(\d{8,20})", text)
+    if cuenta_cargo:
+        out["cuenta_cargo"] = cuenta_cargo.group(1)
+
+    # Fecha de envío de pago
+    fecha_envio = re.search(r"FECHA\s+DE\s+ENVIO\s+DE\s+PAGO\s*:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})", text)
+    if fecha_envio:
+        out["fecha_hora_proceso"] = _normalize_date_value(fecha_envio.group(1))
+
+    # Número de secuencia del archivo
+    secuencia = re.search(r"(?:NUMERO\s+DE\s+)?SECUENCIA\s+DEL?\s+ARCHIVO\s*:?\s*([A-Z0-9]{10,40})", text)
+    if secuencia:
+        out["numero_secuencia_archivo"] = secuencia.group(1)
+
+    # Importe total
+    importe_total = re.search(r"IMPORTE\s+TOTAL\s*:?\s*(\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))", text)
+    if importe_total:
+        normalized = _normalize_payment_amount(importe_total.group(1))
+        if normalized:
+            out["importe_detectado"] = normalized
+
+    # Total de registros
+    total_regs = re.search(r"TOTAL\s+DE\s+REGISTROS\s*:?\s*(\d{1,6})", text)
+    if total_regs:
+        out["total_registros"] = total_regs.group(1)
+
+    # Dispersión marker
+    if "DISPERSION" in text and "NOMINA" in text:
+        out["tipo_pago"] = "DISPERSION DE PAGO DE NOMINA"
+
     return out
 
 
@@ -3125,6 +3243,8 @@ def _extract_payment_detail_payload(base_text_raw: str, table_payload: dict | No
         metadata.update(_extract_scotia_payment_metadata(text))
     elif bank == "BBVA":
         metadata.update(_extract_bbva_payment_metadata(text))
+    elif bank == "SANTANDER":
+        metadata.update(_extract_santander_payment_metadata(text))
 
     metadata = _sanitize_payment_metadata(metadata)
 

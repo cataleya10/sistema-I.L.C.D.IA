@@ -1643,6 +1643,158 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertTrue(len(result) > 20, "Address-style reference should be preserved")
         self.assertIn("DEPTO", result)
 
+    # ── Table extraction improvements ────────────────────────────────
+
+    def test_dedup_header_cell_single_repeated(self):
+        from app.pipelines.extract import _dedup_header_cell
+        self.assertEqual(_dedup_header_cell("CUENTA CUENTA"), "CUENTA")
+
+    def test_dedup_header_cell_multi_repeated(self):
+        from app.pipelines.extract import _dedup_header_cell
+        self.assertEqual(
+            _dedup_header_cell("APELLIDO PATERNO APELLIDO PATERNO"),
+            "APELLIDO PATERNO",
+        )
+
+    def test_dedup_header_cell_complex_repeated(self):
+        from app.pipelines.extract import _dedup_header_cell
+        result = _dedup_header_cell(
+            "APELLIDO PATERNO APELLIDO MATERNO ESTATUS APELLIDO PATERNO APELLIDO MATERNO ESTATUS"
+        )
+        self.assertEqual(result, "APELLIDO PATERNO APELLIDO MATERNO ESTATUS")
+
+    def test_dedup_header_cell_no_repeat(self):
+        from app.pipelines.extract import _dedup_header_cell
+        self.assertEqual(_dedup_header_cell("NOMBRE"), "NOMBRE")
+        self.assertEqual(_dedup_header_cell("APELLIDO PATERNO"), "APELLIDO PATERNO")
+
+    def test_dedup_header_row(self):
+        from app.pipelines.extract import _dedup_header_row
+        header = [
+            "CUENTA CUENTA",
+            "REFERENCIA REFERENCIA",
+            "IMPORTE IMPORTE",
+            "NOMBRE NOMBRE",
+            "CONCEPTO CONCEPTO",
+        ]
+        result = _dedup_header_row(header)
+        self.assertEqual(result, ["CUENTA", "REFERENCIA", "IMPORTE", "NOMBRE", "CONCEPTO"])
+
+    def test_quality_score_penalizes_repeated_headers(self):
+        from app.pipelines.extract import _payment_rows_quality_score
+        # Good header
+        good_rows = [
+            ["CUENTA", "REFERENCIA", "IMPORTE", "NOMBRE", "ESTATUS", "CONCEPTO"],
+            ["12345678901", "1620260115134348", "$1,629.08", "LUIS ANGEL", "PROCESADO", "PAGO DE NOMINA"],
+        ]
+        # Bad header with duplicated tokens
+        bad_rows = [
+            ["CUENTA CUENTA", "REFERENCIA REFERENCIA", "IMPORTE IMPORTE", "NOMBRE NOMBRE", "ESTATUS ESTATUS", "CONCEPTO CONCEPTO"],
+            ["12345678901", "1620260115134348", "$1,629.08", "LUIS ANGEL", "PROCESADO", "PAGO DE NOMINA"],
+        ]
+        score_good = _payment_rows_quality_score(good_rows)
+        score_bad = _payment_rows_quality_score(bad_rows)
+        self.assertGreater(score_good, score_bad, "Repeated headers should be penalized")
+
+    def test_quality_score_penalizes_multi_record_cells(self):
+        from app.pipelines.extract import _payment_rows_quality_score
+        # Single record per row (clean)
+        clean_rows = [
+            ["CUENTA", "REFERENCIA", "IMPORTE", "NOMBRE"],
+            ["56936397271", "1620260115134348251383", "$1,629.08", "LUIS ANGEL"],
+        ]
+        # Multi-record jammed into one row (garbage)
+        multi_rows = [
+            ["CUENTA", "REFERENCIA", "IMPORTE", "NOMBRE"],
+            ["", "56936397271 1620260115134348251383 56926066072 1620260115134346391346", "", "$1,629.08 LUIS ANGEL $1,050.45 RICARDO"],
+        ]
+        score_clean = _payment_rows_quality_score(clean_rows)
+        score_multi = _payment_rows_quality_score(multi_rows)
+        self.assertGreater(score_clean, score_multi, "Multi-record cells should be penalized")
+
+    def test_bank_detection_santander(self):
+        from app.pipelines.extract import _payment_detect_bank
+        self.assertEqual(_payment_detect_bank("Santander dispersión de nómina"), "SANTANDER")
+
+    def test_bank_detection_contrato_enlace(self):
+        from app.pipelines.extract import _payment_detect_bank
+        self.assertEqual(
+            _payment_detect_bank("Numero de Contrato ENLACE: 80122978989"),
+            "SANTANDER",
+        )
+
+    def test_bank_detection_clabe_fallback_bbva(self):
+        from app.pipelines.extract import _payment_detect_bank
+        self.assertEqual(
+            _payment_detect_bank("CLABE: 012345678901234567 PAGO"),
+            "BBVA",
+        )
+
+    def test_bank_detection_clabe_fallback_santander(self):
+        from app.pipelines.extract import _payment_detect_bank
+        self.assertEqual(
+            _payment_detect_bank("cuenta 014567890123456789"),
+            "SANTANDER",
+        )
+
+    def test_normalize_payment_table_rows_dedups_headers(self):
+        from app.pipelines.extract import _normalize_payment_table_rows
+        rows = [
+            ["CUENTA CUENTA", "REFERENCIA REFERENCIA", "IMPORTE IMPORTE", "NOMBRE NOMBRE", "CONCEPTO CONCEPTO"],
+            ["12345678901", "1620260115134348", "$1,629.08", "LUIS ANGEL", "PAGO DE NOMINA"],
+        ]
+        result = _normalize_payment_table_rows(rows)
+        self.assertEqual(result[0], ["CUENTA", "REFERENCIA", "IMPORTE", "NOMBRE", "CONCEPTO"])
+        self.assertEqual(result[1][0], "12345678901")
+
+    def test_santander_text_extraction_uses_bbva_parser(self):
+        """Santander nómina text with same format as BBVA should produce rows."""
+        from app.pipelines.extract import _extract_bbva_nomina_advanced_rows_from_text
+        santander_text = (
+            "Dispersión de Pago de Nómina\n"
+            "Cuenta Referencia Importe Nombre Estatus Concepto\n"
+            "56783223195 1620260115134340581263 $610.44 MARLA GRISELDA PROCESADO PAGO DE NOMINA\n"
+            "56936397470 1620260115134348451388 $1,537.35 ROLANDO ROGERIO PROCESADO PAGO DE NOMINA\n"
+        )
+        rows = _extract_bbva_nomina_advanced_rows_from_text(santander_text)
+        self.assertGreaterEqual(len(rows), 3, "Should extract header + 2 data rows")
+        self.assertIn("CUENTA", rows[0])
+        # Check first data row
+        self.assertIn("56783223195", rows[1][0])
+        self.assertIn("610.44", rows[1][2])
+
+    def test_santander_metadata_extraction(self):
+        from app.pipelines.extract import _extract_santander_payment_metadata
+        text = (
+            "Numero de Contrato ENLACE: 80122978989\n"
+            "Cuenta cargo: 65507763084\n"
+            "Tipo de Operación: Abono nómina\n"
+            "Fecha de envío de pago: 15-01-2026\n"
+            "Dispersión de Pago de Nómina\n"
+            "Importe total: $140,948.59\n"
+            "Total de Registros: 94\n"
+            "Numero de Secuencia del archivo: 992026011513432707Z426\n"
+        )
+        meta = _extract_santander_payment_metadata(text)
+        self.assertEqual(meta.get("numero_contrato"), "80122978989")
+        self.assertEqual(meta.get("cuenta_cargo"), "65507763084")
+        self.assertIn("$140,948.59", meta.get("importe_detectado", ""))
+        self.assertEqual(meta.get("total_registros"), "94")
+        self.assertEqual(meta.get("tipo_pago"), "DISPERSION DE PAGO DE NOMINA")
+
+    def test_fix_payment_ocr_column_errors_dedups_headers(self):
+        from app.pipelines.extract import _fix_payment_ocr_column_errors
+        rows = [
+            ["CUENTA CUENTA", "REFERENCIA REFERENCIA", "IMPORTE IMPORTE", "NOMBRE NOMBRE", "APELLIDO PATERNO APELLIDO PATERNO", "APELLIDO MATERNO APELLIDO MATERNO", "CONCEPTO CONCEPTO"],
+            ["12345678901", "162026011", "$1,629.08", "LUIS ANGEL", "SOLER", "GUZMAN", "PAGO DE NOMINA"],
+        ]
+        result = _fix_payment_ocr_column_errors(rows)
+        self.assertEqual(result[0][0], "CUENTA")
+        self.assertEqual(result[0][1], "REFERENCIA")
+        # ESTATUS is injected before CONCEPTO when APELLIDO columns are present
+        self.assertIn("CONCEPTO", result[0])
+        self.assertIn("ESTATUS", result[0])
+
 
 if __name__ == "__main__":
     unittest.main()
