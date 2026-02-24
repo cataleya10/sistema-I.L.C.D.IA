@@ -575,6 +575,8 @@ _PAYMENT_TABLE_HEADER_TOKENS = (
     "CONCEPTO",
     "BENEFICIARIO",
     "CLAVE RASTREO",
+    "EMPLEADO",
+    "DESCRIPCION",
 )
 
 _PAYMENT_TABLE_STATUS_TOKENS = (
@@ -2216,35 +2218,71 @@ def _normalize_payment_table_rows(rows: list[list[str]]) -> list[list[str]]:
 def _extract_payment_table_rows_from_pdf_tables(pdf_tables: list[list[list[str]]] | None) -> list[list[str]]:
     """Convert PyMuPDF find_tables() output into payment table rows.
 
-    Picks the best table (most rows with payment-like data) from the list of
-    structurally detected PDF tables.  Returns rows in the standard
-    ``[header_row, data_row, ...]`` format.
+    Tables from multiple pages with matching headers are merged into a single
+    result so that multi-page Banorte/BBVA tables are fully captured.
+    Returns rows in the standard ``[header_row, data_row, ...]`` format.
     """
     if not pdf_tables:
         return []
 
-    best_rows: list[list[str]] = []
-    best_score = -999
-
+    # Step 1: clean each table
+    cleaned_tables: list[list[list[str]]] = []
     for table_rows in pdf_tables:
         if not table_rows or len(table_rows) < 2:
             continue
-        # Clean None/empty cells
         cleaned: list[list[str]] = []
         for row in table_rows:
             cleaned_row = [str(cell or "").strip() for cell in row]
-            # Skip fully empty rows
             if any(c for c in cleaned_row):
                 cleaned.append(cleaned_row)
-        if len(cleaned) < 2:
-            continue
+        if len(cleaned) >= 2:
+            cleaned_tables.append(cleaned)
 
-        score = _payment_rows_quality_score(cleaned)
-        # Bonus for table detected structurally (ruling-line confidence)
-        score += 20
+    if not cleaned_tables:
+        return []
+
+    # Step 2: group tables with identical header structure (multi-page merge)
+    def _header_sig(header: list[str]) -> str:
+        return "|".join(_normalize_keyword(h).lower() for h in header)
+
+    groups: dict[str, list[list[list[str]]]] = {}
+    for tbl in cleaned_tables:
+        sig = _header_sig(tbl[0])
+        groups.setdefault(sig, []).append(tbl)
+
+    # Step 3: for each group, merge data rows under a single header
+    merged_candidates: list[list[list[str]]] = []
+    for sig, tables_in_group in groups.items():
+        if len(tables_in_group) == 1:
+            merged_candidates.append(tables_in_group[0])
+        else:
+            # Multi-page: take header from first table, append data rows from all
+            header = tables_in_group[0][0]
+            col_count = len(header)
+            seen_rows: set[str] = set()
+            data_rows: list[list[str]] = []
+            for tbl in tables_in_group:
+                for row in tbl[1:]:
+                    # Pad/trim row to match header column count
+                    padded = list(row[:col_count])
+                    while len(padded) < col_count:
+                        padded.append("")
+                    row_key = "|".join(padded)
+                    if row_key not in seen_rows:
+                        seen_rows.add(row_key)
+                        data_rows.append(padded)
+            if data_rows:
+                merged_candidates.append([header] + data_rows)
+
+    # Step 4: pick the best merged candidate
+    best_rows: list[list[str]] = []
+    best_score = -999
+    for candidate in merged_candidates:
+        score = _payment_rows_quality_score(candidate)
+        score += 20  # structural bonus
         if score > best_score:
             best_score = score
-            best_rows = cleaned
+            best_rows = candidate
 
     return best_rows
 
@@ -2377,6 +2415,23 @@ def _build_payment_mapped_fields(payment_detail: dict) -> dict[str, str]:
             "nombre_archivo",
             "usuario_sistema_nombre",
             "importe_detectado",
+            "titular",
+            "contrato",
+            "divisa",
+            "folio_firma",
+            "folio_unico",
+            "folio_operacion",
+            "fecha_creacion",
+            "fecha_aplicacion",
+            "hora_captura",
+            "motivo_pago",
+            "solicitud_comentarios",
+            "fecha_corte",
+            "periodo",
+            "descripcion_servicio",
+            "resultado_traspaso",
+            "estatus_detectados",
+            "reporte_tipo",
         ):
             value = _normalize_text(str(metadata.get(key) or ""))
             if value:
@@ -2412,11 +2467,25 @@ def _build_payment_mapped_fields(payment_detail: dict) -> dict[str, str]:
         "concepto_pago": "concepto_pago",
         "clave_rastreo": "clave_rastreo",
         "nombre_beneficiario": "nombre_beneficiario",
+        "nombre": "nombre",
+        "apellido_paterno": "apellido_paterno",
+        "apellido_materno": "apellido_materno",
         "estatus": "estatus",
         "tipo_operacion": "tipo_operacion",
         "forma_deposito": "forma_deposito",
         "tipo_registro": "tipo_registro",
         "tipo_movimiento": "tipo_movimiento",
+        "numero_empleado": "numero_empleado",
+        "tipo_cuenta": "tipo_cuenta",
+        "codigo": "codigo",
+        "descripcion": "descripcion",
+        "divisa": "divisa",
+        "titular": "titular",
+        "contrato": "contrato",
+        "folio_firma": "folio_firma",
+        "folio_unico": "folio_unico",
+        "folio_operacion": "folio_operacion",
+        "motivo_pago": "motivo_pago",
     }
     for source_key, target_key in key_map.items():
         value = _normalize_text(str(first_row.get(source_key) or ""))
@@ -2948,6 +3017,109 @@ def _extract_bbva_payment_metadata(raw_text: str) -> dict[str, str]:
     archivo_num_match = re.search(r"(?:NO\.?\s+DE\s+ARCHIVO|ARCHIVO\s+NO)\s*:?\s*([0-9OIL]{1,12})", text)
     if archivo_num_match:
         out["numero_archivo_en_dia"] = _normalize_numeric_field(archivo_num_match.group(1))
+
+    # --- BBVA transfer receipt / comprobante de traspaso fields ---
+    is_transfer = any(
+        token in text
+        for token in (
+            "COMPROBANTE",
+            "RESULTADO DEL TRASPASO",
+            "PAGO MISMO BANCO",
+            "OPERACION AUTORIZADA",
+            "DATOS DE CONFIRMACION",
+            "FOLIO DE FIRMA",
+        )
+    )
+    if is_transfer:
+        # Titular
+        titular_match = re.search(
+            r"(?:TITULAR(?:\s+DE\s+LA\s+CUENTA)?)\s*:?\s*([A-Z .']{4,120})",
+            text,
+        )
+        if titular_match:
+            out["titular"] = _normalize_name(titular_match.group(1))
+        # Contrato
+        contrato_match = re.search(r"(?:NUM\.?\s*CONTRATO|CONTRATO)\s*:?\s*(\d{4,20})", text)
+        if contrato_match:
+            out["contrato"] = contrato_match.group(1)
+        # Divisa
+        divisa_match = re.search(r"DIVISA\s*:?\s*([A-Z]{2,10})", text)
+        if divisa_match:
+            out["divisa"] = _normalize_text(divisa_match.group(1))
+        # Folio de firma
+        folio_firma_match = re.search(r"FOLIO\s+DE\s+FIRMA\s*:?\s*([A-Z0-9 -]{4,30})", text)
+        if folio_firma_match:
+            out["folio_firma"] = _normalize_text(folio_firma_match.group(1))
+        # Folio unico
+        folio_unico_match = re.search(r"FOLIO\s+UNICO\s*:?\s*([A-Z0-9 -]{4,30})", text)
+        if folio_unico_match:
+            out["folio_unico"] = _normalize_text(folio_unico_match.group(1))
+        # Folio de operacion
+        folio_op_match = re.search(r"FOLIO\s+(?:DE\s+)?OPERACION\s*:?\s*([A-Z0-9 -]{4,30})", text)
+        if folio_op_match and "folio_internet" not in out:
+            out["folio_operacion"] = _normalize_text(folio_op_match.group(1))
+        # Fecha de creacion
+        fecha_creacion_match = re.search(
+            r"FECHA\s+DE\s+CREACION\s*:?\s*([0-9A-Z:/ .-]{8,40})", text
+        )
+        if fecha_creacion_match:
+            out["fecha_creacion"] = _normalize_text(fecha_creacion_match.group(1))
+        # Fecha de aplicacion
+        fecha_aplicacion_match = re.search(
+            r"FECHA\s+DE\s+APLICACION\s*:?\s*([0-9A-Z:/ .-]{8,40})", text
+        )
+        if fecha_aplicacion_match:
+            out["fecha_aplicacion"] = _normalize_text(fecha_aplicacion_match.group(1))
+        # Hora de captura
+        hora_captura_match = re.search(
+            r"HORA\s+DE\s+CAPTURA\s*:?\s*([0-9:. -]{4,20})", text
+        )
+        if hora_captura_match and "fecha_hora_captura" not in out:
+            out["hora_captura"] = _normalize_text(hora_captura_match.group(1))
+        # Motivo de pago
+        motivo_match = re.search(
+            r"MOTIVO\s+DE\s+PAGO\s*:?\s*([A-Z0-9 ._/-]{2,80})", text
+        )
+        if motivo_match:
+            out["motivo_pago"] = _normalize_text(motivo_match.group(1))
+        # Solicitud de comentarios
+        solicitud_match = re.search(
+            r"SOLICITUD\s+DE\s+COMENTARIOS\s*:?\s*([A-Z0-9 ._/-]{2,120})", text
+        )
+        if solicitud_match:
+            out["solicitud_comentarios"] = _normalize_text(solicitud_match.group(1))
+        # Fecha de corte
+        fecha_corte_match = re.search(
+            r"FECHA\s+DE\s+CORTE\s*:?\s*([0-9A-Z:/ .-]{6,40})", text
+        )
+        if fecha_corte_match:
+            out["fecha_corte"] = _normalize_text(fecha_corte_match.group(1))
+        # Periodo
+        periodo_match = re.search(
+            r"PERIODO\s*:?\s*([A-Z0-9 /_.-]{4,60})", text
+        )
+        if periodo_match:
+            out["periodo"] = _normalize_text(periodo_match.group(1))
+        # Descripcion del servicio
+        desc_match = re.search(
+            r"DESCRIPCION(?:\s+DEL\s+SERVICIO)?\s*:?\s*([A-Z0-9 ._/-]{2,120})", text
+        )
+        if desc_match:
+            out["descripcion_servicio"] = _normalize_text(desc_match.group(1))
+        # Resultado del traspaso
+        resultado_match = re.search(
+            r"RESULTADO\s+DEL\s+TRASPASO\s*:?\s*([A-Z ]{4,60})", text
+        )
+        if resultado_match:
+            out["resultado_traspaso"] = _normalize_text(resultado_match.group(1))
+        # Tipo de operacion (BBVA transfer)
+        tipo_op_match = re.search(
+            r"TIPO\s+DE\s+OPERACION\s*:?\s*([A-Z ]{4,80}?)(?=\s+(?:FOLIO|CUENTA|BANCO|IMPORTE|FECHA)\b|$)",
+            text,
+        )
+        if tipo_op_match and "tipo_pago" not in out:
+            out["tipo_pago"] = _normalize_text(tipo_op_match.group(1)).upper()
+
     return out
 
 
@@ -3151,12 +3323,17 @@ def _canonical_payment_key(bank: str, raw_key: str) -> str:
     base_map = {
         "cuenta": "cuenta",
         "cuentaderetiro": "cuenta_retiro",
+        "cuentacargo": "cuenta_retiro",
         "cuentabeneficiario": "cuenta_beneficiario",
         "numerodecuentabeneficiario": "cuenta_beneficiario",
+        "numerodecuentadelbeneficiario": "cuenta_beneficiario",
         "numerodecuenta": "cuenta",
         "nocuenta": "cuenta",
+        "nodecuenta": "cuenta",
         "cuentadedeposito": "cuenta",
         "cuentadeposito": "cuenta",
+        "cuentadestino": "cuenta",
+        "cuentadeabono": "cuenta",
         "cuentacuenta": "cuenta",
         "referencia": "referencia",
         "referencianumerica": "referencia",
@@ -3166,6 +3343,8 @@ def _canonical_payment_key(bank: str, raw_key: str) -> str:
         "nombre": "nombre_beneficiario",
         "nombrebeneficiario": "nombre_beneficiario",
         "nombrenombre": "nombre_beneficiario",
+        "beneficiario": "nombre_beneficiario",
+        "nombrecorto": "nombre_beneficiario",
         "apellidopaterno": "apellido_paterno",
         "apellidomaterno": "apellido_materno",
         "apellidopaternoapellidomaternoestatus": "apellido_combo_estatus",
@@ -3176,9 +3355,29 @@ def _canonical_payment_key(bank: str, raw_key: str) -> str:
         "conceptoconcepto": "concepto_pago",
         "tipodeoperacion": "tipo_operacion",
         "bancodestino": "banco_destino",
+        "bancoreceptor": "banco_destino",
         "formadedeposito": "forma_deposito",
         "clavederastreo": "clave_rastreo",
         "claverastreo": "clave_rastreo",
+        "codigo": "codigo",
+        "descripcion": "descripcion",
+        "tipocuenta": "tipo_cuenta",
+        "tipodecuenta": "tipo_cuenta",
+        "noempleado": "numero_empleado",
+        "numeroempleado": "numero_empleado",
+        "numerodeempleado": "numero_empleado",
+        "motivodepago": "motivo_pago",
+        "motivopago": "motivo_pago",
+        "divisa": "divisa",
+        "titular": "titular",
+        "titulardelacuenta": "titular",
+        "contrato": "contrato",
+        "numcontrato": "contrato",
+        "numerocontrato": "contrato",
+        "numerodecontrato": "contrato",
+        "foliodefirma": "folio_firma",
+        "foliounico": "folio_unico",
+        "foliooperacion": "folio_operacion",
     }
     scotia_map = {
         "tipoderegistro": "tipo_registro",
@@ -3195,15 +3394,29 @@ def _canonical_payment_key(bank: str, raw_key: str) -> str:
         "nombredelbeneficiario": "nombre_beneficiario",
     }
     bbva_map = {
-        "tipodecuenta": "tipo_cuenta",
-        "codigo": "codigo",
-        "descripcion": "descripcion",
+        "cuentaderetiroclabe": "cuenta_retiro",
+        "cuentadedepsitoclabe": "cuenta",
+        "cuentadedepositoclabe": "cuenta",
+        "resultadodeltraspaso": "estatus",
+        "foliodefirma": "folio_firma",
+        "foliounico": "folio_unico",
+        "fechadecreacion": "fecha_creacion",
+        "fechadeaplicacion": "fecha_aplicacion",
+        "horadecaptura": "hora_captura",
+    }
+    banorte_map = {
+        "noempleado": "numero_empleado",
+        "tipocuenta": "tipo_cuenta",
+        "nodecuenta": "cuenta",
+        "claverastreo": "clave_rastreo",
     }
 
     if bank == "SCOTIABANK" and key in scotia_map:
         return scotia_map[key]
     if bank == "BBVA" and key in bbva_map:
         return bbva_map[key]
+    if bank == "BANORTE" and key in banorte_map:
+        return banorte_map[key]
     return base_map.get(key, key)
 
 

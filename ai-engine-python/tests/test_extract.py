@@ -1977,6 +1977,205 @@ class TestPdfTableExtraction(unittest.TestCase):
         # Should extract all 23 data rows + header
         self.assertGreaterEqual(len(result["rows"]), 24)
 
+    def test_multipage_pdf_tables_merge(self):
+        """Tables split across pages with same header should be merged."""
+        from app.pipelines.extract import _extract_payment_table_rows_from_pdf_tables
+        header = ["CUENTA", "REFERENCIA", "IMPORTE", "NOMBRE", "ESTATUS"]
+        page1_table = [
+            header,
+            ["56783223195", "162026011", "$610.44", "MARLA GRISELDA", "APLICADO"],
+            ["56936397470", "162026011", "$1,537.35", "ROLANDO ROGERIO", "APLICADO"],
+        ]
+        page2_table = [
+            header,  # repeated on second page
+            ["56905029323", "162026011", "$353.60", "EDGAR HASSAN", "APLICADO"],
+            ["12345678901", "162026011", "$240.00", "JOSE CARLOS", "PROCESADO"],
+        ]
+        rows = _extract_payment_table_rows_from_pdf_tables([page1_table, page2_table])
+        # header + 4 unique data rows
+        self.assertEqual(len(rows), 5)
+        self.assertEqual(rows[0], header)
+        names = [r[3] for r in rows[1:]]
+        self.assertIn("MARLA GRISELDA", names)
+        self.assertIn("EDGAR HASSAN", names)
+        self.assertIn("JOSE CARLOS", names)
+
+    def test_multipage_pdf_tables_dedup_rows(self):
+        """Duplicate rows across pages should not appear twice."""
+        from app.pipelines.extract import _extract_payment_table_rows_from_pdf_tables
+        header = ["CUENTA", "IMPORTE", "NOMBRE", "ESTATUS"]
+        row1 = ["56783223195", "$610.44", "MARLA GRISELDA", "APLICADO"]
+        page1 = [header, row1]
+        page2 = [header, row1]  # exact duplicate
+        rows = _extract_payment_table_rows_from_pdf_tables([page1, page2])
+        self.assertEqual(len(rows), 2)  # header + 1 unique data row
+
+
+class TestCanonicalKeyMapping(unittest.TestCase):
+    """Tests for _canonical_payment_key precision mappings."""
+
+    def test_banorte_pdf_headers_mapped(self):
+        from app.pipelines.extract import _canonical_payment_key
+        self.assertEqual(_canonical_payment_key("BANORTE", "noempleado"), "numero_empleado")
+        self.assertEqual(_canonical_payment_key("BANORTE", "tipocuenta"), "tipo_cuenta")
+        self.assertEqual(_canonical_payment_key("BANORTE", "nodecuenta"), "cuenta")
+        self.assertEqual(_canonical_payment_key("BANORTE", "claverastreo"), "clave_rastreo")
+
+    def test_base_map_new_keys(self):
+        from app.pipelines.extract import _canonical_payment_key
+        self.assertEqual(_canonical_payment_key("DESCONOCIDO", "cuentacargo"), "cuenta_retiro")
+        self.assertEqual(_canonical_payment_key("DESCONOCIDO", "cuentadestino"), "cuenta")
+        self.assertEqual(_canonical_payment_key("DESCONOCIDO", "cuentadeabono"), "cuenta")
+        self.assertEqual(_canonical_payment_key("DESCONOCIDO", "beneficiario"), "nombre_beneficiario")
+        self.assertEqual(_canonical_payment_key("DESCONOCIDO", "nombrecorto"), "nombre_beneficiario")
+        self.assertEqual(_canonical_payment_key("DESCONOCIDO", "numeroempleado"), "numero_empleado")
+        self.assertEqual(_canonical_payment_key("DESCONOCIDO", "codigo"), "codigo")
+        self.assertEqual(_canonical_payment_key("DESCONOCIDO", "descripcion"), "descripcion")
+        self.assertEqual(_canonical_payment_key("DESCONOCIDO", "tipocuenta"), "tipo_cuenta")
+        self.assertEqual(_canonical_payment_key("DESCONOCIDO", "divisa"), "divisa")
+        self.assertEqual(_canonical_payment_key("DESCONOCIDO", "titular"), "titular")
+        self.assertEqual(_canonical_payment_key("DESCONOCIDO", "contrato"), "contrato")
+        self.assertEqual(_canonical_payment_key("DESCONOCIDO", "foliodefirma"), "folio_firma")
+        self.assertEqual(_canonical_payment_key("DESCONOCIDO", "foliounico"), "folio_unico")
+        self.assertEqual(_canonical_payment_key("DESCONOCIDO", "motivodepago"), "motivo_pago")
+
+    def test_bbva_transfer_keys_mapped(self):
+        from app.pipelines.extract import _canonical_payment_key
+        self.assertEqual(_canonical_payment_key("BBVA", "foliodefirma"), "folio_firma")
+        self.assertEqual(_canonical_payment_key("BBVA", "foliounico"), "folio_unico")
+        self.assertEqual(_canonical_payment_key("BBVA", "fechadecreacion"), "fecha_creacion")
+        self.assertEqual(_canonical_payment_key("BBVA", "fechadeaplicacion"), "fecha_aplicacion")
+        self.assertEqual(_canonical_payment_key("BBVA", "horadecaptura"), "hora_captura")
+        self.assertEqual(_canonical_payment_key("BBVA", "resultadodeltraspaso"), "estatus")
+
+    def test_canonical_rows_banorte_pdf_table(self):
+        """Full integration: Banorte PDF table → canonical rows with proper mappings."""
+        from app.pipelines.extract import _payment_rows_to_objects, _payment_to_canonical_rows
+        rows = [
+            ["No. Empleado", "Nombre", "Tipo Cuenta", "No. de Cuenta", "Importe", "Estatus", "Codigo", "Descripcion", "Clave Rastreo"],
+            ["000123456", "JUAN PEREZ LOPEZ", "03", "002180019912345678", "$3,240.73", "APLICADO", "00", "ACEPTADO", "BANORTE12345"],
+        ]
+        objects = _payment_rows_to_objects(rows)
+        self.assertEqual(len(objects), 1)
+        canonical_cols, canonical_rows = _payment_to_canonical_rows("BANORTE", objects)
+        self.assertEqual(len(canonical_rows), 1)
+        row = canonical_rows[0]
+        # Key field mappings should produce correct canonical keys
+        self.assertEqual(row.get("numero_empleado"), "000123456")
+        self.assertEqual(row.get("cuenta"), "002180019912345678")
+        self.assertEqual(row.get("tipo_cuenta"), "03")
+        self.assertEqual(row.get("importe"), "$3,240.73")
+        self.assertEqual(row.get("estatus"), "APLICADO")
+        self.assertEqual(row.get("clave_rastreo"), "BANORTE12345")
+        # Name should be split from nombre_beneficiario
+        self.assertEqual(row.get("nombre"), "JUAN")
+        self.assertEqual(row.get("apellido_paterno"), "PEREZ")
+        self.assertEqual(row.get("apellido_materno"), "LOPEZ")
+
+
+class TestBbvaTransferMetadata(unittest.TestCase):
+    """Tests for BBVA transfer receipt metadata extraction."""
+
+    def test_bbva_transfer_extracts_titular(self):
+        from app.pipelines.extract import _extract_bbva_payment_metadata
+        text = "COMPROBANTE\nTITULAR DE LA CUENTA: MARIA ELENA GUTIERREZ\nCONTRATO: 12345678\nDIVISA: MXN"
+        result = _extract_bbva_payment_metadata(text)
+        self.assertIn("titular", result)
+        self.assertIn("GUTIERREZ", result["titular"].upper())
+        self.assertEqual(result.get("contrato"), "12345678")
+        self.assertEqual(result.get("divisa"), "MXN")
+
+    def test_bbva_transfer_extracts_folios(self):
+        from app.pipelines.extract import _extract_bbva_payment_metadata
+        text = "RESULTADO DEL TRASPASO APLICADO\nFOLIO DE FIRMA: 7748662779\nFOLIO UNICO: ABC12345"
+        result = _extract_bbva_payment_metadata(text)
+        self.assertIn("folio_firma", result)
+        self.assertIn("7748662779", result["folio_firma"])
+        self.assertIn("folio_unico", result)
+        self.assertIn("resultado_traspaso", result)
+
+    def test_bbva_transfer_extracts_dates(self):
+        from app.pipelines.extract import _extract_bbva_payment_metadata
+        text = "DATOS DE CONFIRMACION\nFECHA DE CREACION: 15/01/2025\nFECHA DE APLICACION: 15/01/2025\nHORA DE CAPTURA: 14:30:15"
+        result = _extract_bbva_payment_metadata(text)
+        self.assertIn("fecha_creacion", result)
+        self.assertIn("15/01/2025", result["fecha_creacion"])
+        self.assertIn("fecha_aplicacion", result)
+        self.assertIn("hora_captura", result)
+
+    def test_bbva_transfer_extracts_motivo_pago(self):
+        from app.pipelines.extract import _extract_bbva_payment_metadata
+        text = "PAGO MISMO BANCO\nMOTIVO DE PAGO: PAGO DE NOMINA QUINCENAL\nSOLICITUD DE COMENTARIOS: QUINCENA 1"
+        result = _extract_bbva_payment_metadata(text)
+        self.assertIn("motivo_pago", result)
+        self.assertIn("solicitud_comentarios", result)
+
+    def test_bbva_nontransfer_no_transfer_fields(self):
+        """Non-transfer BBVA docs should not extract transfer-specific fields."""
+        from app.pipelines.extract import _extract_bbva_payment_metadata
+        text = "REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS\nTIPO DE PAGO: NOMINA\nFECHA DE TRANSMISION: 15/01/2025 10:30:00"
+        result = _extract_bbva_payment_metadata(text)
+        self.assertIn("reporte_tipo", result)
+        self.assertNotIn("titular", result)
+        self.assertNotIn("folio_firma", result)
+
+
+class TestBuildPaymentMappedFields(unittest.TestCase):
+    """Tests for _build_payment_mapped_fields with expanded metadata."""
+
+    def test_maps_transfer_metadata_fields(self):
+        from app.pipelines.extract import _build_payment_mapped_fields
+        detail = {
+            "bank": "BBVA",
+            "metadata": {
+                "titular": "MARIA ELENA",
+                "contrato": "12345678",
+                "divisa": "MXN",
+                "folio_firma": "7748662779",
+                "folio_unico": "ABC123",
+                "fecha_creacion": "15/01/2025",
+                "fecha_aplicacion": "15/01/2025",
+                "motivo_pago": "PAGO NOMINA",
+                "solicitud_comentarios": "QUINCENA 1",
+                "resultado_traspaso": "APLICADO",
+            },
+            "table": {"canonical_rows": []},
+        }
+        mapped = _build_payment_mapped_fields(detail)
+        self.assertEqual(mapped["banco"], "BBVA")
+        self.assertEqual(mapped["titular"], "MARIA ELENA")
+        self.assertEqual(mapped["contrato"], "12345678")
+        self.assertEqual(mapped["divisa"], "MXN")
+        self.assertEqual(mapped["folio_firma"], "7748662779")
+        self.assertEqual(mapped["motivo_pago"], "PAGO NOMINA")
+        self.assertEqual(mapped["resultado_traspaso"], "APLICADO")
+
+    def test_maps_banorte_canonical_row_fields(self):
+        from app.pipelines.extract import _build_payment_mapped_fields
+        detail = {
+            "bank": "BANORTE",
+            "metadata": {},
+            "table": {
+                "canonical_rows": [
+                    {
+                        "numero_empleado": "000123",
+                        "nombre": "JUAN",
+                        "apellido_paterno": "PEREZ",
+                        "cuenta": "002180019912345678",
+                        "importe": "$3,240.73",
+                        "estatus": "APLICADO",
+                        "tipo_cuenta": "03",
+                        "clave_rastreo": "BANORTE12345",
+                    }
+                ]
+            },
+        }
+        mapped = _build_payment_mapped_fields(detail)
+        self.assertEqual(mapped["banco"], "BANORTE")
+        self.assertEqual(mapped.get("numero_empleado"), "000123")
+        self.assertEqual(mapped.get("tipo_cuenta"), "03")
+        self.assertEqual(mapped.get("clave_rastreo"), "BANORTE12345")
+
 
 class TestClassifyBbvaTransferMarkers(unittest.TestCase):
     """BBVA Pago Mismo Banco / transfer docs should be classified as FACTURA."""
