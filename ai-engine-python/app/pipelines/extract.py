@@ -453,6 +453,8 @@ _LOW_CONF_DROP_BY_TYPE = {
     },
     "COMPROBANTE_DOMICILIO": {
         "periodo",
+        "titular",
+        "referencia",
     },
     "CONSTANCIA_SITUACION_FISCAL": {
         "cp",
@@ -466,20 +468,88 @@ _LOW_CONF_DROP_BY_TYPE = {
         "fecha_documento",
         "folio_solicitud",
     },
+    "FACTURA": {
+        "titular",
+        "referencia",
+        "fecha_corte",
+    },
+    "DATOS_BANCARIOS": {
+        "titular",
+        "fecha_corte",
+        "periodo",
+    },
+}
+
+# Fields that should be dropped when marked invalid (valid=False) per doc type
+_INVALID_DROP_BY_TYPE: dict[str, set[str]] = {
+    "ACTA_NACIMIENTO": {"registro_civil", "juez"},
+    "INE": {"curp", "clave_elector", "seccion"},
+    "CURP": {"curp"},
+    "NSS": {"nss"},
+    "DATOS_BANCARIOS": {"clabe", "rfc"},
+    "CONSTANCIA_SITUACION_FISCAL": {"rfc", "cp"},
+    "COMPROBANTE_DOMICILIO": {"cp"},
 }
 
 
+# ── Value sanitizer: detects and rejects OCR garbage ──────────────────────
+_GARBAGE_PATTERN = re.compile(
+    r"[\x00-\x08\x0b\x0c\x0e-\x1f]"
+    r"|[\x7f-\x9f]"
+    r"|[#%&<>{}\\]{3,}"
+)
+_MIN_ALPHA_RATIO = 0.25  # At least 25% alphabetic chars for text fields
+_PURE_TEXT_KEYS = {
+    "nombre", "nombres", "apellido_paterno", "apellido_materno",
+    "primer_apellido", "segundo_apellido", "titular", "nombre_empresa",
+    "juez", "registro_civil", "domicilio", "cliente",
+    "regimen", "denominacion",
+}
+
+
+def _is_garbage_value(key: str, value: str) -> bool:
+    """Return True if the value looks like OCR garbage that should be dropped."""
+    if not value or not value.strip():
+        return True
+    v = value.strip()
+    # Control characters / binary junk
+    if _GARBAGE_PATTERN.search(v):
+        return True
+    # Extremely short values for text fields (single char noise)
+    if key in _PURE_TEXT_KEYS and len(v) < 2:
+        return True
+    # Text fields must have a minimum ratio of alphabetic characters
+    if key in _PURE_TEXT_KEYS:
+        alpha = sum(1 for ch in v if ch.isalpha())
+        if len(v) > 3 and alpha / max(len(v), 1) < _MIN_ALPHA_RATIO:
+            return True
+    return False
+
+
 def _postprocess_fields(document_type: str, fields: list[dict]) -> list[dict]:
+    """Drop low-confidence, invalid, and garbage fields before output."""
     cleaned = []
     drop_low = _LOW_CONF_DROP_BY_TYPE.get(document_type, set())
+    drop_invalid = _INVALID_DROP_BY_TYPE.get(document_type, set())
     for field in fields:
-        key = field.get("key")
+        key = str(field.get("key", ""))
         if key == "texto_detectado":
             cleaned.append(field)
             continue
+        # Drop low-confidence fields per document type
         if key in drop_low and field.get("confidence", 1) < 0.7:
             continue
-        if key in {"registro_civil", "juez"} and field.get("valid") is False:
+        # Drop structurally invalid fields per document type
+        if key in drop_invalid and field.get("valid") is False:
+            continue
+        # Strip stray control characters from surviving values
+        value = str(field.get("value", "") or "")
+        sanitized = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', value).strip()
+        if sanitized != value:
+            field = {**field, "value": sanitized}
+        # Drop OCR garbage values (control chars, nonsense text)
+        if _is_garbage_value(key, sanitized):
+            logger.debug("Dropping garbage field %s=%r", key, sanitized[:50])
             continue
         cleaned.append(field)
     return cleaned

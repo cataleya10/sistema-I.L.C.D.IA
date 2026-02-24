@@ -335,6 +335,8 @@ _LOW_CONF_DROP_BY_TYPE = {
     },
     "COMPROBANTE_DOMICILIO": {
         "periodo",
+        "titular",
+        "referencia",
     },
     "CONSTANCIA_SITUACION_FISCAL": {
         "cp",
@@ -348,10 +350,26 @@ _LOW_CONF_DROP_BY_TYPE = {
         "fecha_documento",
         "folio_solicitud",
     },
+    "FACTURA": {
+        "titular",
+        "referencia",
+        "fecha_corte",
+    },
+    "DATOS_BANCARIOS": {
+        "titular",
+        "fecha_corte",
+        "periodo",
+    },
 }
 
 _INVALID_DROP_BY_TYPE = {
     "ACTA_NACIMIENTO": {"registro_civil", "juez"},
+    "INE": {"curp", "clave_elector", "seccion"},
+    "CURP": {"curp"},
+    "NSS": {"nss"},
+    "DATOS_BANCARIOS": {"clabe", "rfc"},
+    "CONSTANCIA_SITUACION_FISCAL": {"rfc", "cp"},
+    "COMPROBANTE_DOMICILIO": {"cp"},
 }
 
 
@@ -367,6 +385,14 @@ def _postprocess_fields(doc_type: str, fields: list[dict]) -> list[dict]:
         if key in drop_low and field.get("confidence", 1) < 0.7:
             continue
         if key in drop_invalid and field.get("valid") is False:
+            continue
+        # Strip control characters from values
+        value = str(field.get("value", "") or "")
+        import re as _re
+        sanitized = _re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', value).strip()
+        if sanitized != value:
+            field = {**field, "value": sanitized}
+        if not sanitized:
             continue
         cleaned.append(field)
     return cleaned

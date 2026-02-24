@@ -2196,6 +2196,119 @@ class TestClassifyBbvaTransferMarkers(unittest.TestCase):
         self.assertEqual(doc_type, "FACTURA")
 
 
+class TestIsGarbageValue(unittest.TestCase):
+    """Tests for the _is_garbage_value garbage detector."""
+
+    def test_empty_is_garbage(self):
+        from app.pipelines.extract import _is_garbage_value
+        self.assertTrue(_is_garbage_value("nombre", ""))
+        self.assertTrue(_is_garbage_value("nombre", "   "))
+
+    def test_control_characters_garbage(self):
+        from app.pipelines.extract import _is_garbage_value
+        self.assertTrue(_is_garbage_value("nombre", "\x00\x01ABC"))
+        self.assertTrue(_is_garbage_value("rfc", "ABC\x1fDEF"))
+
+    def test_excessive_special_chars_garbage(self):
+        from app.pipelines.extract import _is_garbage_value
+        self.assertTrue(_is_garbage_value("nombre", "###%%%&&&"))
+
+    def test_low_alpha_ratio_garbage_for_text_keys(self):
+        from app.pipelines.extract import _is_garbage_value
+        self.assertTrue(_is_garbage_value("nombre", "123456789"))
+        self.assertTrue(_is_garbage_value("titular", "$#@!^*()"))
+
+    def test_single_char_garbage_for_text_keys(self):
+        from app.pipelines.extract import _is_garbage_value
+        self.assertTrue(_is_garbage_value("nombre", "X"))
+        self.assertTrue(_is_garbage_value("domicilio", "A"))
+
+    def test_valid_name_not_garbage(self):
+        from app.pipelines.extract import _is_garbage_value
+        self.assertFalse(_is_garbage_value("nombre", "JUAN PEREZ LOPEZ"))
+        self.assertFalse(_is_garbage_value("titular", "MARIA ELENA GUTIERREZ"))
+
+    def test_valid_rfc_not_garbage(self):
+        from app.pipelines.extract import _is_garbage_value
+        self.assertFalse(_is_garbage_value("rfc", "PELJ850101ABC"))
+
+    def test_valid_curp_not_garbage(self):
+        from app.pipelines.extract import _is_garbage_value
+        self.assertFalse(_is_garbage_value("curp", "PELJ850101HDFRPN09"))
+
+    def test_numeric_keys_pass(self):
+        """Non-text keys like cp, nss, clabe should not be checked for alpha ratio."""
+        from app.pipelines.extract import _is_garbage_value
+        self.assertFalse(_is_garbage_value("cp", "06600"))
+        self.assertFalse(_is_garbage_value("nss", "12345678901"))
+        self.assertFalse(_is_garbage_value("clabe", "002180019912345678"))
+
+    def test_address_with_numbers_valid(self):
+        from app.pipelines.extract import _is_garbage_value
+        self.assertFalse(_is_garbage_value("domicilio", "AV INSURGENTES SUR 1234 COL DEL VALLE CP 03100"))
+
+
+class TestPostprocessFieldsExpanded(unittest.TestCase):
+    """Tests for the expanded _postprocess_fields with garbage detection."""
+
+    def test_drops_garbage_value(self):
+        from app.pipelines.extract import _postprocess_fields
+        fields = [
+            {"key": "nombre", "label": "Nombre", "value": "\x00\x01\x02", "confidence": 0.9, "valid": True},
+            {"key": "rfc", "label": "RFC", "value": "PELJ850101ABC", "confidence": 0.9, "valid": True},
+        ]
+        result = _postprocess_fields("INE", fields)
+        keys = [f["key"] for f in result]
+        self.assertNotIn("nombre", keys)
+        self.assertIn("rfc", keys)
+
+    def test_strips_control_chars_from_valid_field(self):
+        from app.pipelines.extract import _postprocess_fields
+        fields = [
+            {"key": "rfc", "label": "RFC", "value": "PELJ850101ABC\x0f", "confidence": 0.9, "valid": True},
+        ]
+        result = _postprocess_fields("CONSTANCIA_SITUACION_FISCAL", fields)
+        self.assertEqual(result[0]["value"], "PELJ850101ABC")
+
+    def test_drops_invalid_curp_for_ine(self):
+        from app.pipelines.extract import _postprocess_fields
+        fields = [
+            {"key": "curp", "label": "CURP", "value": "BADFORMAT", "confidence": 0.8, "valid": False},
+        ]
+        result = _postprocess_fields("INE", fields)
+        self.assertEqual(len(result), 0)
+
+    def test_drops_invalid_clabe_for_datos_bancarios(self):
+        from app.pipelines.extract import _postprocess_fields
+        fields = [
+            {"key": "clabe", "label": "CLABE", "value": "999999999", "confidence": 0.8, "valid": False},
+            {"key": "banco", "label": "Banco", "value": "BBVA", "confidence": 0.9, "valid": True},
+        ]
+        result = _postprocess_fields("DATOS_BANCARIOS", fields)
+        keys = [f["key"] for f in result]
+        self.assertNotIn("clabe", keys)
+        self.assertIn("banco", keys)
+
+    def test_drops_low_confidence_factura_titular(self):
+        from app.pipelines.extract import _postprocess_fields
+        fields = [
+            {"key": "titular", "label": "Titular", "value": "NOISE VALUE", "confidence": 0.5, "valid": True},
+            {"key": "cuenta", "label": "Cuenta", "value": "123456789", "confidence": 0.9, "valid": True},
+        ]
+        result = _postprocess_fields("FACTURA", fields)
+        keys = [f["key"] for f in result]
+        self.assertNotIn("titular", keys)
+        self.assertIn("cuenta", keys)
+
+    def test_texto_detectado_always_passes(self):
+        from app.pipelines.extract import _postprocess_fields
+        fields = [
+            {"key": "texto_detectado", "label": "Texto", "value": "ANY TEXT", "confidence": 0.1, "valid": True},
+        ]
+        result = _postprocess_fields("INE", fields)
+        self.assertEqual(len(result), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
 
