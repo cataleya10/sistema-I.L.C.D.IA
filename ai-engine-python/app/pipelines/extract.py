@@ -1061,10 +1061,19 @@ def _fix_payment_ocr_column_errors(structured_rows: list[list[str]]) -> list[lis
     estatus_idx = _ci("estatus") if _ci("estatus") != -1 else _ci("estado")
     concepto_idx = _ci("concepto")
 
-    # Fix pre-loop: inyectar columna ESTATUS si el header OCR no la incluye.
+    _has_apellido = any("apellido" in k for k in keys)
+
+    # Fix pre-loop A: detectar columna merged "ESTATUS CONCEPTO" donde ambos índices
+    # apuntan al mismo lugar. Normalizamos: renombramos la columna a solo CONCEPTO y
+    # forzamos inyección de ESTATUS para que el path de inyección la maneje bien.
+    if estatus_idx >= 0 and estatus_idx == concepto_idx and concepto_idx >= 0:
+        header[concepto_idx] = "CONCEPTO"
+        keys[concepto_idx] = "concepto"
+        estatus_idx = -1
+
+    # Fix pre-loop B: inyectar columna ESTATUS si el header OCR no la incluye.
     # Solo aplica a tablas de nómina BBVA (tienen columna APELLIDO); tablas tipo
     # Scotia/Scotiabank tienen estructura diferente y no deben modificarse.
-    _has_apellido = any("apellido" in k for k in keys)
     col_injected = False
     if estatus_idx < 0 and concepto_idx >= 0 and _has_apellido:
         insert_pos = concepto_idx
@@ -1107,8 +1116,10 @@ def _fix_payment_ocr_column_errors(structured_rows: list[list[str]]) -> list[lis
                 if nombre_original:
                     continue
 
-        # Fix 3: estatus embebido en concepto
-        if 0 <= concepto_idx < len(row) and estatus_idx >= 0:
+        # Fix 3: estatus embebido en concepto.
+        # Siempre limpiar concepto cuando empieza con palabra de estatus.
+        # Si estatus está vacío, también se extrae de ahí.
+        if 0 <= concepto_idx < len(row) and estatus_idx >= 0 and concepto_idx != estatus_idx:
             concepto_val = row[concepto_idx].strip()
             sm = _STATUS_PREFIX_PAT.match(concepto_val)
             logger.debug("[FIX3] concepto_idx=%d estatus_idx=%d len=%d concepto_val=%r sm=%s", concepto_idx, estatus_idx, len(row), concepto_val, bool(sm))
@@ -1117,7 +1128,15 @@ def _fix_payment_ocr_column_errors(structured_rows: list[list[str]]) -> list[lis
                     row.append("")
                 if not row[estatus_idx].strip():
                     row[estatus_idx] = sm.group(1)
-                    row[concepto_idx] = concepto_val[sm.end():].strip() or "PAGO DE NOMINA"
+                # Siempre limpiar el prefijo de estatus del concepto
+                row[concepto_idx] = concepto_val[sm.end():].strip() or "PAGO DE NOMINA"
+
+        # Fix 3b: fallback — si estatus sigue vacío, buscar palabra de estatus en la fila
+        if 0 <= estatus_idx < len(row) and not row[estatus_idx].strip() and _has_apellido:
+            row_joined = " ".join(str(c or "") for c in row)
+            m_st = re.search(r"\b(PROCESADO|APLICADO|ACEPTADO|TRANSMITIDO|RECHAZADO)\b", row_joined)
+            if m_st:
+                row[estatus_idx] = m_st.group(1)
 
         # Fix 4: uniformar nombres a MAYÚSCULAS (OCR puede devolver mixed-case)
         for col_idx in [nombre_idx, _ci("apellido")]:
@@ -1737,6 +1756,22 @@ def _extract_payment_table_rows_from_compact_text(raw_text: str) -> list[list[st
     return [header, row]
 
 
+_BANORTE_STATUS_RE = r"(?:APLICADO|ACEPTADO|PROCESADO|TRANSMITIDO|RECHAZADO)"
+# Patrón para fila de nómina multi-empleado (una fila por línea):
+# "0000000001  ARLY ERNESTO ESPINOZA JOB  01  00000001290307408  $3,201.73  APLICADO  00  ACEPTADO"
+_BANORTE_ROW_PAT = re.compile(
+    r"^\s*(?P<employee>\d{6,12})\s+"
+    r"(?P<nombre>[A-Z][A-Z ]{3,59}?)\s+"
+    r"(?P<tipo>\d{2})\s+"
+    r"(?P<cuenta>\d{12,24})\s+"
+    r"(?P<importe>\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))\s+"
+    r"(?P<estatus>" + _BANORTE_STATUS_RE + r")\s+"
+    r"(?P<codigo>\d{2})\s+"
+    r"(?P<descripcion>" + _BANORTE_STATUS_RE + r")"
+    r"(?:\s+(?P<clave>[A-Z0-9]{8,50}))?\s*$"
+)
+
+
 def _extract_banorte_bbva_detail_rows(lines: list[str], raw_text: str) -> list[list[str]]:
     full = " ".join(lines)
     if "REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS" not in full:
@@ -1756,6 +1791,44 @@ def _extract_banorte_bbva_detail_rows(lines: list[str], raw_text: str) -> list[l
         "CLAVE RASTREO",
     ]
 
+    detail_idx = next(
+        (
+            i
+            for i, line in enumerate(lines)
+            if any(marker in line for marker in ("NO. EMPLEADO", "NOEMPLEADO", "DETALLE"))
+        ),
+        None,
+    )
+
+    # --- Path A: extracción multi-fila (una línea por empleado) ---
+    # Aplica cuando el documento es una tabla con múltiples empleados donde cada fila
+    # contiene todos los campos en una sola línea separados por espacios.
+    table_rows: list[list[str]] = []
+    start_idx = (detail_idx + 1) if detail_idx is not None else 0
+    for line in lines[start_idx:]:
+        folded_line = _ascii_fold(_normalize_text(line)).upper()
+        m = _BANORTE_ROW_PAT.match(folded_line)
+        if m:
+            table_rows.append([
+                m.group("employee"),
+                _normalize_name(m.group("nombre")),
+                m.group("tipo"),
+                _normalize_numeric_field(m.group("cuenta")),
+                _normalize_payment_amount(m.group("importe")),
+                _normalize_table_cell(m.group("estatus")),
+                m.group("codigo"),
+                _normalize_table_cell(m.group("descripcion")),
+                m.group("clave") or "",
+            ])
+        elif table_rows and _is_payment_table_footer([folded_line]):
+            break
+
+    if len(table_rows) >= 1:
+        return [header, *table_rows[:500]]
+
+    # --- Path B (fallback): extracción single-record para comprobantes individuales ---
+    # Aplica cuando el documento es un comprobante de un solo empleado con cada campo
+    # en su propia línea.
     employee = ""
     name = ""
     tipo_cuenta = ""
@@ -1765,15 +1838,6 @@ def _extract_banorte_bbva_detail_rows(lines: list[str], raw_text: str) -> list[l
     codigo = ""
     descripcion = ""
     clave_rastreo = ""
-
-    detail_idx = next(
-        (
-            i
-            for i, line in enumerate(lines)
-            if any(marker in line for marker in ("NO. EMPLEADO", "NOEMPLEADO", "DETALLE"))
-        ),
-        None,
-    )
 
     if detail_idx is not None:
         scope = lines[detail_idx : min(len(lines), detail_idx + 20)]
@@ -2056,9 +2120,11 @@ def _extract_bbva_transfer_receipt_rows(lines: list[str], raw_text: str) -> list
 def _normalize_payment_table_rows(rows: list[list[str]]) -> list[list[str]]:
     """Normalización final aplicada a las filas ya fusionadas (OCR + texto).
 
-    1. Si CONCEPTO empieza con palabra de estatus y ESTATUS está vacío → separa.
+    1. Si CONCEPTO empieza con palabra de estatus → siempre limpia el prefijo.
+       Si ESTATUS también está vacío, lo extrae de ahí.
        Si el header no tiene columna ESTATUS, se inyecta antes de CONCEPTO.
-    2. Uniforma NOMBRE y APELLIDO* a MAYÚSCULAS.
+    2. Fallback: si ESTATUS sigue vacío, busca la palabra de estatus en toda la fila.
+    3. Uniforma NOMBRE y APELLIDO* a MAYÚSCULAS.
     """
     if len(rows) < 2:
         return rows
@@ -2077,10 +2143,18 @@ def _normalize_payment_table_rows(rows: list[list[str]]) -> list[list[str]]:
     nombre_idx = _ci("nombre")
     apellido_idxs = [i for i, k in enumerate(keys) if "apellido" in k]
 
-    # Red de seguridad: inyectar ESTATUS si el header no lo tiene pero sí CONCEPTO.
+    _has_apellido = bool(apellido_idxs)
+
+    # Fix pre-loop A: detectar columna merged "ESTATUS CONCEPTO" donde ambos índices
+    # apuntan al mismo lugar. Renombramos a CONCEPTO y forzamos inyección de ESTATUS.
+    if estatus_idx >= 0 and estatus_idx == concepto_idx and concepto_idx >= 0:
+        header[concepto_idx] = "CONCEPTO"
+        keys[concepto_idx] = "concepto"
+        estatus_idx = -1
+
+    # Fix pre-loop B: inyectar ESTATUS si el header no lo tiene pero sí CONCEPTO.
     # Solo aplica a tablas BBVA nomina (tienen columna APELLIDO); tablas tipo Scotia
     # tienen estructura diferente y su CONCEPTO no lleva prefijo de estatus.
-    _has_apellido = bool(apellido_idxs)
     col_injected = False
     if estatus_idx < 0 and concepto_idx >= 0 and _has_apellido:
         insert_pos = concepto_idx
@@ -2101,13 +2175,28 @@ def _normalize_payment_table_rows(rows: list[list[str]]) -> list[list[str]]:
         else:
             row = list(orig_row)
 
-        # Extraer estatus embebido en concepto (aplica a cualquier source)
-        if 0 <= concepto_idx < len(row) and 0 <= estatus_idx < len(row):
+        # Fix 3: extraer/limpiar estatus embebido en concepto (aplica a cualquier source).
+        # Siempre se limpia el prefijo de estatus del concepto para evitar duplicados.
+        # Si estatus está vacío, también se extrae de ahí.
+        if (
+            0 <= concepto_idx < len(row)
+            and 0 <= estatus_idx < len(row)
+            and concepto_idx != estatus_idx
+        ):
             concepto_val = row[concepto_idx].strip()
             sm = _STATUS_PREFIX_PAT.match(concepto_val)
-            if sm and not row[estatus_idx].strip():
-                row[estatus_idx] = sm.group(1)
+            if sm:
+                if not row[estatus_idx].strip():
+                    row[estatus_idx] = sm.group(1)
+                # Siempre limpiar el prefijo del concepto (evita "PROCESADO PAGO DE NOMINA")
                 row[concepto_idx] = concepto_val[sm.end():].strip() or "PAGO DE NOMINA"
+
+        # Fix 3b: fallback — si estatus sigue vacío, buscar palabra de estatus en la fila
+        if 0 <= estatus_idx < len(row) and not row[estatus_idx].strip() and _has_apellido:
+            row_joined = " ".join(str(c or "") for c in row)
+            m_st = re.search(r"\b(PROCESADO|APLICADO|ACEPTADO|TRANSMITIDO|RECHAZADO)\b", row_joined)
+            if m_st:
+                row[estatus_idx] = m_st.group(1)
 
         # Uniformar nombre y apellidos a MAYÚSCULAS
         for col_idx in ([nombre_idx] + apellido_idxs):
