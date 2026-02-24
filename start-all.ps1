@@ -67,11 +67,15 @@ function Invoke-AiPreflight {
     Write-Host "Running AI preflight checks..." -ForegroundColor Cyan
     Push-Location (Join-Path $rootPath "ai-engine-python")
     try {
-        & py -3 -c "import ast, pathlib; ast.parse(pathlib.Path('app/pipelines/extract.py').read_text(encoding='utf-8-sig')); print('extract.py syntax ok')"
+        $venvPython = Join-Path $rootPath "ai-engine-python\.venv\Scripts\python.exe"
+        if (-not (Test-Path $venvPython)) {
+            $venvPython = "py -3"
+        }
+        & $venvPython -c "import ast, pathlib; ast.parse(pathlib.Path('app/pipelines/extract.py').read_text(encoding='utf-8-sig')); print('extract.py syntax ok')"
         if ($LASTEXITCODE -ne 0) {
             throw "Python compile check failed."
         }
-        & py -3 "tools/run_regressions.py"
+        & $venvPython "tools/run_regressions.py"
         if ($LASTEXITCODE -ne 0) {
             throw "Regression suite check failed."
         }
