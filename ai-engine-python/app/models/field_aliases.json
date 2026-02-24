@@ -72,7 +72,8 @@
   "sexo": [
     "SEXO",
     "GENERO",
-    "GEN"
+    "GEN",
+    "GACE010425"
   ],
   "apellido_paterno": [
     "APELLIDO PATERNO",
