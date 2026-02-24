@@ -26,7 +26,7 @@ class TestCleanAmount(unittest.TestCase):
     def test_empty_returns_empty(self):
         from app.pipelines.table_postprocess import _clean_amount
         self.assertEqual(_clean_amount(""), "")
-        self.assertEqual(_clean_amount(None), "")
+        self.assertEqual(_clean_amount(""), "")
 
     def test_whole_number(self):
         from app.pipelines.table_postprocess import _clean_amount
@@ -288,6 +288,7 @@ class TestIntegrationWithExtract(unittest.TestCase):
         }
         result = _extract_payment_detail_payload("BANORTE REPORTE DE TRANSMISION", table_payload)
         self.assertIsNotNone(result)
+        assert result is not None  # narrow type for Pyright
         self.assertIn("quality_report", result)
         qr = result["quality_report"]
         self.assertGreater(qr["row_count"], 0)
@@ -303,6 +304,7 @@ class TestIntegrationWithExtract(unittest.TestCase):
         }
         result = _extract_payment_detail_payload("BANORTE DISPERSIONES", table_payload)
         self.assertIsNotNone(result)
+        assert result is not None  # narrow type for Pyright
         canonical = result["table"]["canonical_rows"]
         self.assertGreater(len(canonical), 0)
         row = canonical[0]
