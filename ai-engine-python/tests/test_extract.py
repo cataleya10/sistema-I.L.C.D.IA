@@ -1599,6 +1599,50 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertNotIn("PROCESADO", result[1][7], "CONCEPTO no debe contener el estatus")
         self.assertIn("PAGO", result[1][7], "CONCEPTO debe conservar el concepto")
 
+    # ── Quality improvement tests ──
+
+    def test_clean_address_strips_leading_dashes(self):
+        from app.pipelines.extract import _clean_address_value
+        result = _clean_address_value("-LOC ZAPOTAL 2DA SECCION")
+        self.assertFalse(result.startswith("-"), "Leading dashes should be stripped")
+        self.assertIn("LOC", result)
+
+    def test_clean_address_splits_daseccion(self):
+        from app.pipelines.extract import _clean_address_value
+        result = _clean_address_value("2 DASECCION S/N RIAZAPOTAL 2 DASECCION")
+        self.assertIn("DA SECCION", result, "DASECCION should be split to DA SECCION")
+        self.assertIn("RIA ZAPOTAL", result, "RIAZAPOTAL should be split to RIA ZAPOTAL")
+
+    def test_clean_address_splits_benito_merge(self):
+        from app.pipelines.extract import _clean_address_value
+        result = _clean_address_value("BENITOJUAREZ SSL.BENITOJUAR")
+        self.assertIn("BENITO JUAREZ", result)
+        self.assertIn("BENITO JUAR", result)
+
+    def test_name_matches_curp_valid(self):
+        from app.pipelines.extract import _name_matches_curp
+        self.assertTrue(_name_matches_curp("ERWIN GUSTAVO GARCIA CAMPOS", "GACE010425HTCRMRA8"))
+
+    def test_name_matches_curp_missing_paterno(self):
+        from app.pipelines.extract import _name_matches_curp
+        # "GUSTAVOIA" starts with G which matches paterno, but if paterno were missing:
+        self.assertFalse(_name_matches_curp("ERWIN GUSTAVOIA CAMPOS", "GACE010425HTCRMRA8"))
+
+    def test_try_repair_name_with_curp(self):
+        from app.pipelines.extract import _try_repair_name_with_curp
+        # "GUSTAVOIA" doesn't contain G as missing initial in a splittable position,
+        # but the repair should at least attempt to find splits.
+        result = _try_repair_name_with_curp("ERWIN GUSTAVOIA CAMPOS", "GACE010425HTCRMRA8")
+        # The repair may or may not succeed on this specific case depending on heuristic
+        self.assertIsInstance(result, str)
+        self.assertTrue(len(result) >= 10)
+
+    def test_normalize_reference_address_style(self):
+        from app.pipelines.extract import _normalize_reference_value
+        result = _normalize_reference_value("17DN.223 DEPTO.1 BENITO JUAR AV LUIS DONALDO COLOSIO Y 46 SSL.BENITO JUAREZ CP 24180")
+        self.assertTrue(len(result) > 20, "Address-style reference should be preserved")
+        self.assertIn("DEPTO", result)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4251,11 +4251,13 @@ def _extract_ine_from_boxes(ocr_boxes):
 
     domicilio_line = _find_label_line(lines, "DOMICILIO")
     if domicilio_line:
+        # NOTE: "SECCION" removed from stop labels because it appears in address
+        # text (e.g. "2DA SECCION") and prematurely truncates address collection.
         value_lines = _collect_below(
             lines,
             domicilio_line,
-            ["CLAVE", "CURP", "SECCION", "VIGENCIA", "FECHA"],
-            max_lines=3,
+            ["CLAVE", "CURP", "VIGENCIA", "FECHA"],
+            max_lines=5,
         )
         domicilio = line_tokens(value_lines, min_conf=0.85) or line_texts(value_lines)
         if domicilio:
@@ -4985,6 +4987,8 @@ def _clean_address_value(value: str) -> str:
     )
     upper = upper.replace("DOMICILIO", " ")
     upper = re.sub(r"^\s*DE\s+SUMINISTRO\b", " ", upper)
+    # Strip leading dashes/hyphens that OCR sometimes prepends
+    upper = re.sub(r"^[\s\-]+", "", upper)
     upper = re.sub(r"\bAV(?=[A-Z])", "AV ", upper)
     upper = re.sub(r"\bFCP\b", "CP", upper)
     upper = re.sub(r"([A-Z])S/N\b", r"\1 S/N", upper)
@@ -4992,6 +4996,15 @@ def _clean_address_value(value: str) -> str:
     upper = re.sub(r"\bLOC([A-Z]{2,})\b", r"LOC \1", upper)
     upper = re.sub(r"\bLOC([A-Z]{2,})(\d{5})\b", r"LOC \1 \2", upper)
     upper = re.sub(r"\bLOC\s*([A-Z]+)(\d{5})\b", r"LOC \1 \2", upper)
+    # Fix OCR-merged ordinal+SECCION: "2DASECCION" or "2 DASECCION" → "2DA SECCION"
+    upper = re.sub(r"\b(\d+)\s*DASECCION\b", r"\1DA SECCION", upper)
+    upper = re.sub(r"\bDASECCION\b", "DA SECCION", upper)
+    # Fix OCR-merged tokens with RIA prefix (e.g. "RIAZAPOTAL" → "RIA ZAPOTAL")
+    upper = re.sub(r"\bRIA([A-Z]{4,})\b", r"RIA \1", upper)
+    # Fix BENITO merges (e.g. "BENITOJUAR" → "BENITO JUAR", "BENITOJUAREZ" → "BENITO JUAREZ")
+    upper = re.sub(r"\bBENITO([A-Z]{3,})\b", r"BENITO \1", upper)
+    # Fix SSL prefix merges (e.g. "SSLBENITOJUAREZ" → "SSL BENITO JUAREZ")
+    upper = re.sub(r"\bSSL\.?([A-Z]{3,})\b", r"SSL \1", upper)
     upper = re.sub(r"(?<=\D)(?=\d)", " ", upper)
     upper = re.sub(r"(?<=\d)(?=\D)", " ", upper)
     # Normalize common OCR merges for address tokens
@@ -5016,14 +5029,13 @@ def _clean_address_value(value: str) -> str:
         "NOMBRE",
         "SEXO",
         "CURP",
-        "SECCION",
         "FECHA",
         "CLAVE",
         "ELECTOR",
     }
     allowed_keywords = {
         "CALLE", "CARR", "AV", "COL", "FRACC", "CP", "MUN", "EDO", "KM",
-        "S/N", "NUM", "NO.", "LOC"
+        "S/N", "NUM", "NO.", "LOC", "SECCION",
     }
     vowels = set("AEIOU")
     tokens = []
@@ -6084,6 +6096,92 @@ def _dedupe_fields(fields: list[dict]) -> list[dict]:
     return list(best.values())
 
 
+def _name_matches_curp(name: str, curp: str) -> bool:
+    """Check if name tokens are consistent with CURP letter positions.
+
+    CURP structure:
+    - pos 0: first letter of paternal surname
+    - pos 1: first internal vowel of paternal surname
+    - pos 2: first letter of maternal surname
+    - pos 3: first letter of given name (primer nombre)
+    Returns True if a token matching the paterno initial + vowel AND the nombre
+    initial are found in the name tokens.
+    """
+    if not name or not curp or len(curp) < 4:
+        return True  # Cannot validate, assume OK
+    tokens = [t for t in name.upper().split() if t]
+    if len(tokens) < 2:
+        return True
+    paterno_init = curp[0].upper()
+    paterno_vowel = curp[1].upper()
+    nombre_init = curp[3].upper()
+    vowels = set("AEIOU")
+
+    has_nombre = any(t[0] == nombre_init for t in tokens)
+    # Validate paterno: token must start with paterno_init AND its first
+    # internal vowel (any vowel after the initial) must match paterno_vowel.
+    has_paterno = False
+    for t in tokens:
+        if t[0] != paterno_init:
+            continue
+        # Find the first vowel after the initial letter
+        first_vowel = next((c for c in t[1:] if c in vowels), "")
+        if first_vowel == paterno_vowel:
+            has_paterno = True
+            break
+    return has_nombre and has_paterno
+
+
+def _try_repair_name_with_curp(name: str, curp: str) -> str:
+    """Try to split OCR-merged tokens in a name using CURP initials.
+
+    When OCR merges adjacent name tokens (e.g. 'GUSTAVOIA' from 'GUSTAVO' + 'GARCIA'),
+    use the CURP paterno/materno initials to find a plausible split point.
+    """
+    if not name or not curp or len(curp) < 4:
+        return name
+    tokens = name.upper().split()
+    if not tokens:
+        return name
+    paterno_init = curp[0].upper()
+    materno_init = curp[2].upper()
+    nombre_init = curp[3].upper()
+    firsts = {t[0] for t in tokens}
+
+    # Identify which initial is missing
+    missing_init = None
+    if nombre_init not in firsts:
+        missing_init = nombre_init
+    elif paterno_init not in firsts:
+        missing_init = paterno_init
+    elif materno_init not in firsts:
+        missing_init = materno_init
+    else:
+        return name  # All initials present
+
+    # Try to split a long token that may contain the missing initial
+    for i, token in enumerate(tokens):
+        if len(token) < 7:
+            continue
+        if token[0] == missing_init:
+            continue  # This token already starts with missing initial
+        for pos in range(3, len(token) - 2):
+            if token[pos] == missing_init:
+                left = token[:pos]
+                right = token[pos:]
+                # Both parts should look like name fragments (>= 3 chars, has vowels)
+                vowels = set("AEIOU")
+                if (
+                    len(left) >= 3
+                    and len(right) >= 3
+                    and any(c in vowels for c in left)
+                    and any(c in vowels for c in right)
+                ):
+                    tokens[i:i + 1] = [left, right]
+                    return " ".join(tokens)
+    return name
+
+
 async def extract_fields(document_type: str, ocr_text: str, ocr_boxes: list[dict] | None = None, raw_text: str = "", filename: str | None = None) -> list[dict]:
     """Main extraction entry point with graceful error recovery."""
     try:
@@ -6125,7 +6223,19 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
         if name_match:
             fields.append(_make_field("nombre", "Nombre", _normalize_name(name_match), ocr_boxes, confidence=0.6))
         if "nombre" in box_values:
-            fields.append(_make_field("nombre", "Nombre", _normalize_name(box_values["nombre"]["value"]), ocr_boxes, confidence=0.8))
+            box_name = _normalize_name(box_values["nombre"]["value"])
+            box_name_conf = 0.8
+            # Validate OCR name against CURP initials; lower confidence if mismatch
+            # so that better sources (MRZ, text fallback) can win during deduplication.
+            if curps:
+                if not _name_matches_curp(box_name, curps[0]):
+                    repaired = _try_repair_name_with_curp(box_name, curps[0])
+                    if repaired != box_name and _name_matches_curp(repaired, curps[0]):
+                        box_name = _normalize_name(repaired)
+                        box_name_conf = 0.82
+                    else:
+                        box_name_conf = 0.55  # Mismatch — let other sources win
+            fields.append(_make_field("nombre", "Nombre", box_name, ocr_boxes, confidence=box_name_conf))
         mrz_name = _extract_mrz_name_from_text(base_text_raw)
         if mrz_name:
             fields.append(_make_field("nombre", "Nombre", _normalize_name(mrz_name), ocr_boxes, confidence=0.96))
@@ -6260,14 +6370,22 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                     after = line.split("DOMICILIO", 1)[-1].strip()
                     if after:
                         addr_lines.append(after)
-                    for line in text_lines[dom_line_idx + 1: dom_line_idx + 5]:
+                    # Collect up to 6 lines to capture city/state (e.g. JONUTA TAB)
+                    for line in text_lines[dom_line_idx + 1: dom_line_idx + 7]:
                         if any(skip in line for skip in ["INSTITUTO", "INSTITU", "ELECTO", "ELECT", "CREDENCIAL"]):
                             continue
                         addr_lines.append(line)
                 if addr_lines:
                     raw_addr = " ".join(addr_lines)
-                    # Stop at known trailing fields if they leaked into the address line
-                    raw_addr = re.split(r"\b(CLAVE|CURP|FECHA|SECCION|VIGENCIA)\b", raw_addr)[0]
+                    # Stop at known trailing fields if they leaked into the address line.
+                    # NOTE: "SECCION" removed because it appears within address text
+                    # (e.g. "2DA SECCION") and would prematurely truncate the address.
+                    # Use stricter patterns that target actual INE field labels.
+                    raw_addr = re.split(
+                        r"\b(CLAVE\s+(?:DE\s+)?ELECTOR|CURP\s+[A-Z]|FECHA\s+DE|VIGENCIA\s*\d)"
+                        r"|\bSECCION\s+\d{3,4}\b",
+                        raw_addr,
+                    )[0]
                     address = _clean_address_value(raw_addr)
                     fields.append(_make_field("domicilio", "Domicilio", address, ocr_boxes, confidence=0.95))
         curp_entidad = _extract_curp_state(curps)
@@ -6891,7 +7009,7 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                 ref_lines = []
                 cp_line = ""
                 if cp_index is not None:
-                    start = max(0, cp_index - 3)
+                    start = max(0, cp_index - 5)
                     for line in box_text_lines[start:cp_index]:
                         if "(" in line and ")" in line:
                             continue
@@ -6920,14 +7038,14 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                 if domicilio_block:
                     fields.append(_make_field("domicilio", "Domicilio", _clean_address_value(domicilio_block), ocr_boxes, confidence=0.85))
                 fields.append(_make_field("cp", "CP", cp_match, ocr_boxes, confidence=0.85))
-                existing_ref = next((f for f in fields if f.get("key") == "referencia"), None)
-                ref_ok = False
-                if existing_ref and existing_ref.get("value"):
-                    ref_ok = "RMU" not in existing_ref["value"]
-                if not ref_ok:
-                    normalized_ref = _normalize_value_for_key("referencia", referencia_block)
-                    if normalized_ref:
-                        fields.append(_make_field("referencia", "Referencia", normalized_ref, ocr_boxes, confidence=0.8))
+                # Always add the address-style reference block for CFE docs.
+                # This is the "domicilio de suministro" reference, which is the
+                # expected referencia for utility bills (not the numeric barcode).
+                # The higher confidence (0.88) ensures it wins over numeric codes
+                # from box extraction (0.7) during deduplication.
+                normalized_ref = _normalize_value_for_key("referencia", referencia_block)
+                if normalized_ref:
+                    fields.append(_make_field("referencia", "Referencia", normalized_ref, ocr_boxes, confidence=0.88))
 
             existing_num = next((f for f in fields if f.get("key") == "numero_servicio"), None)
             num_ok = False
