@@ -399,5 +399,76 @@ class TestRowQualityThreshold(unittest.TestCase):
             self.assertNotIn("||||", name_val)
 
 
+# ==========================================================================
+# Dedup preserves distinct rows with same amount
+# ==========================================================================
+
+class TestDedupPreservesDistinctRows(unittest.TestCase):
+    """Tests that dedup key includes referencia to avoid collapsing legit rows."""
+
+    def test_same_account_amount_different_referencia_preserved(self):
+        from app.pipelines.table_postprocess import postprocess_payment_table
+        columns = ["cuenta", "referencia", "importe", "nombre_beneficiario"]
+        rows = [
+            {"cuenta": "1234567890", "referencia": "REF001", "importe": "$3,200.00", "nombre_beneficiario": "JUAN PEREZ"},
+            {"cuenta": "1234567890", "referencia": "REF002", "importe": "$3,200.00", "nombre_beneficiario": "ANA LOPEZ"},
+        ]
+        result_cols, result_rows = postprocess_payment_table(columns, rows, bank="BBVA")
+        self.assertEqual(len(result_rows), 2)
+
+
+# ==========================================================================
+# Cross-column status inference expanded
+# ==========================================================================
+
+class TestCrossColumnStatusInference(unittest.TestCase):
+    """Tests that concepto_pago and tipo_movimiento fill empty estatus."""
+
+    def test_status_from_concepto_pago(self):
+        from app.pipelines.table_postprocess import postprocess_payment_table
+        columns = ["cuenta", "importe", "estatus", "concepto_pago"]
+        rows = [
+            {"cuenta": "1234567890", "importe": "$1,500.00", "estatus": "", "concepto_pago": "CANCELADO PAGO NOMINA"},
+        ]
+        result_cols, result_rows = postprocess_payment_table(columns, rows, bank="BBVA")
+        self.assertEqual(result_rows[0].get("estatus"), "CANCELADO")
+
+    def test_status_from_tipo_movimiento(self):
+        from app.pipelines.table_postprocess import postprocess_payment_table
+        columns = ["cuenta", "importe", "estatus", "tipo_movimiento"]
+        rows = [
+            {"cuenta": "1234567890", "importe": "$1,500.00", "estatus": "", "tipo_movimiento": "LIQUIDADO"},
+        ]
+        result_cols, result_rows = postprocess_payment_table(columns, rows, bank="SCOTIABANK")
+        self.assertEqual(result_rows[0].get("estatus"), "LIQUIDADO")
+
+
+# ==========================================================================
+# Single-row table survives quality filter
+# ==========================================================================
+
+class TestSingleRowSurvival(unittest.TestCase):
+    """Tests that single-row tables are not dropped by quality filter."""
+
+    def test_single_row_with_two_fields_survives(self):
+        from app.pipelines.table_postprocess import postprocess_payment_table
+        columns = ["cuenta", "importe"]
+        rows = [
+            {"cuenta": "1234567890", "importe": "$500.00"},
+        ]
+        result_cols, result_rows = postprocess_payment_table(columns, rows, bank="BBVA")
+        self.assertEqual(len(result_rows), 1)
+
+    def test_single_row_with_one_field_survives(self):
+        from app.pipelines.table_postprocess import postprocess_payment_table
+        columns = ["cuenta", "importe"]
+        rows = [
+            {"cuenta": "1234567890", "importe": ""},
+        ]
+        result_cols, result_rows = postprocess_payment_table(columns, rows, bank="BBVA")
+        # Single row should survive (quality filter skipped for len==1)
+        self.assertEqual(len(result_rows), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

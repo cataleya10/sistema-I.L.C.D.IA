@@ -2480,10 +2480,14 @@ class TestContentBasedMerge(unittest.TestCase):
             ["1111111111", "REF001", "$100.00"],
         ]
         merged = _merge_payment_rows_with_backup(primary, backup)
-        # Row with 2222222222 should get $200.00 filled, not $300.00
-        row_2 = merged[2]
-        self.assertEqual(row_2[0], "2222222222")
-        self.assertEqual(row_2[2], "$200.00")
+        # Primary rows should be present in order; 2222 should get $200 filled
+        data_rows = merged[1:]
+        cuenta_values = [r[0] for r in data_rows]
+        self.assertIn("2222222222", cuenta_values)
+        row_2222 = next(r for r in data_rows if r[0] == "2222222222")
+        self.assertEqual(row_2222[2], "$200.00")
+        # Unmatched backup (3333) should also appear
+        self.assertIn("3333333333", cuenta_values)
 
     def test_unmatched_backup_rows_appended(self):
         from app.pipelines.extract import _merge_payment_rows_with_backup
@@ -2497,10 +2501,10 @@ class TestContentBasedMerge(unittest.TestCase):
             ["9999999999", "REF009", "$900.00"],
         ]
         merged = _merge_payment_rows_with_backup(primary, backup)
-        # Extra backup row should be appended
+        # Extra backup row should be inserted
         self.assertGreaterEqual(len(merged), 3)
-        last = merged[-1]
-        self.assertIn("9999999999", last[0])
+        cuenta_values = [r[0] for r in merged[1:]]
+        self.assertIn("9999999999", cuenta_values)
 
     def test_no_cross_contamination_with_missing_rows(self):
         from app.pipelines.extract import _merge_payment_rows_with_backup
@@ -2605,6 +2609,130 @@ class TestMergeRowSimilarity(unittest.TestCase):
         row_b = ["9999999999", "REF99999999", "$999.00"]
         score = _merge_row_similarity(row_a, row_b, idx, b_idx)
         self.assertLess(score, 0.3)
+
+
+# ==========================================================================
+# Unified status vocabulary tests
+# ==========================================================================
+
+class TestUnifiedStatusVocabulary(unittest.TestCase):
+    """Tests for expanded status vocabulary (DEVUELTO, CANCELADO, LIQUIDADO)."""
+
+    def test_status_prefix_pat_matches_devuelto(self):
+        from app.pipelines.extract import _STATUS_PREFIX_PAT
+        m = _STATUS_PREFIX_PAT.match("DEVUELTO PAGO DE NOMINA")
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(1), "DEVUELTO")
+
+    def test_status_prefix_pat_matches_cancelado(self):
+        from app.pipelines.extract import _STATUS_PREFIX_PAT
+        m = _STATUS_PREFIX_PAT.match("CANCELADO PAGO DE NOMINA")
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(1), "CANCELADO")
+
+    def test_status_prefix_pat_matches_liquidado(self):
+        from app.pipelines.extract import _STATUS_PREFIX_PAT
+        m = _STATUS_PREFIX_PAT.match("LIQUIDADO")
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(1), "LIQUIDADO")
+
+    def test_status_search_pat_finds_in_text(self):
+        from app.pipelines.extract import _STATUS_SEARCH_PAT
+        m = _STATUS_SEARCH_PAT.search("RESULTADO: DEVUELTO POR BANCO")
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(1), "DEVUELTO")
+
+    def test_all_statuses_tuple_complete(self):
+        from app.pipelines.extract import _ALL_PAYMENT_STATUSES
+        self.assertIn("PROCESADO", _ALL_PAYMENT_STATUSES)
+        self.assertIn("DEVUELTO", _ALL_PAYMENT_STATUSES)
+        self.assertIn("CANCELADO", _ALL_PAYMENT_STATUSES)
+        self.assertIn("LIQUIDADO", _ALL_PAYMENT_STATUSES)
+
+
+# ==========================================================================
+# OCR amount corruption fix tests
+# ==========================================================================
+
+class TestOcrAmountFix(unittest.TestCase):
+    """Tests that OCR O→0 replacement only applies within numeric tokens."""
+
+    def test_normalize_payment_amount_importe_prefix(self):
+        from app.pipelines.extract import _normalize_payment_amount
+        # "IMPORTE $1,500.00" — O in IMPORTE should NOT corrupt the amount
+        result = _normalize_payment_amount("IMPORTE $1,500.00")
+        self.assertEqual(result, "$1,500.00")
+
+    def test_normalize_payment_amount_with_ocr_o(self):
+        from app.pipelines.extract import _normalize_payment_amount
+        # "$1,5OO.OO" — O→0 within the numeric token
+        result = _normalize_payment_amount("$1,5OO.OO")
+        self.assertEqual(result, "$1,500.00")
+
+    def test_clean_amount_pesos_suffix_preserved(self):
+        from app.pipelines.table_postprocess import _clean_amount
+        # "$1,500.00 PESOS" — should extract amount correctly
+        result = _clean_amount("$1,500.00 PESOS")
+        self.assertEqual(result, "$1,500.00")
+
+    def test_clean_amount_with_text_prefix(self):
+        from app.pipelines.table_postprocess import _clean_amount
+        # Should NOT corrupt letters in surrounding text
+        result = _clean_amount("IMPORTE $3,240.73")
+        self.assertEqual(result, "$3,240.73")
+
+
+# ==========================================================================
+# Canonical key fuzzy alias tests
+# ==========================================================================
+
+class TestCanonicalKeyFuzzyAlias(unittest.TestCase):
+    """Tests for fuzzy alias mapping of unmapped column headers."""
+
+    def test_monto_maps_to_importe(self):
+        from app.pipelines.extract import _canonical_payment_key
+        self.assertEqual(_canonical_payment_key("HSBC", "MONTO"), "importe")
+
+    def test_cuenta_cargo_maps_to_cuenta_retiro(self):
+        from app.pipelines.extract import _canonical_payment_key
+        self.assertEqual(_canonical_payment_key("HSBC", "CUENTA CARGO"), "cuenta_retiro")
+
+    def test_rfc_beneficiario(self):
+        from app.pipelines.extract import _canonical_payment_key
+        self.assertEqual(_canonical_payment_key("BANAMEX", "RFC BENEFICIARIO"), "rfc_beneficiario")
+
+    def test_folio_confirmacion(self):
+        from app.pipelines.extract import _canonical_payment_key
+        self.assertEqual(_canonical_payment_key("INBURSA", "FOLIO DE CONFIRMACION"), "folio_operacion")
+
+    def test_ocr_noise_key_dropped(self):
+        from app.pipelines.extract import _canonical_payment_key
+        result = _canonical_payment_key("HSBC", "CU3N7A")
+        self.assertEqual(result, "")
+
+
+# ==========================================================================
+# Generic bank metadata extraction tests
+# ==========================================================================
+
+class TestGenericBankMetadata(unittest.TestCase):
+    """Tests for _extract_generic_bank_payment_metadata."""
+
+    def test_hsbc_metadata_extraction(self):
+        from app.pipelines.extract import _extract_generic_bank_payment_metadata
+        text = """
+        HSBC DISPERSIONES DE NOMINA
+        FOLIO DE CONFIRMACION: 12345678
+        CUENTA CARGO: 021180012345678901
+        BENEFICIARIO: JUAN PEREZ LOPEZ
+        MONTO TOTAL: $15,000.00
+        FECHA DE OPERACION: 14/02/2026
+        """
+        meta = _extract_generic_bank_payment_metadata(text, "HSBC")
+        self.assertIn("folio_operacion", meta)
+        self.assertIn("cuenta_cargo", meta)
+        self.assertIn("banco_detectado", meta)
+        self.assertEqual(meta["banco_detectado"], "HSBC")
 
 
 if __name__ == "__main__":

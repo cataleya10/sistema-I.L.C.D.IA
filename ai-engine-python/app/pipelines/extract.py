@@ -1256,7 +1256,15 @@ def _payment_table_row_by_anchors(row_boxes: list[dict], anchors: list[dict]) ->
 
 
 _AMOUNT_IN_CELL_PAT = re.compile(r"^\$?\s*(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))\b")
-_STATUS_PREFIX_PAT = re.compile(r"^(PROCESADO|APLICADO|ACEPTADO|TRANSMITIDO|RECHAZADO)\b\s*")
+
+# Unified status vocabulary — used by all payment functions and shared with table_postprocess.py
+_ALL_PAYMENT_STATUSES = (
+    "PROCESADO", "APLICADO", "ACEPTADO", "TRANSMITIDO", "RECHAZADO",
+    "DEVUELTO", "CANCELADO", "LIQUIDADO",
+)
+_STATUS_WORDS_RE = "|".join(_ALL_PAYMENT_STATUSES)
+_STATUS_PREFIX_PAT = re.compile(rf"^({_STATUS_WORDS_RE})\b\s*")
+_STATUS_SEARCH_PAT = re.compile(rf"\b({_STATUS_WORDS_RE})\b")
 
 
 def _fix_payment_ocr_column_errors(structured_rows: list[list[str]]) -> list[list[str]]:
@@ -1359,7 +1367,7 @@ def _fix_payment_ocr_column_errors(structured_rows: list[list[str]]) -> list[lis
         # Fix 3b: fallback — si estatus sigue vacío, buscar palabra de estatus en la fila
         if 0 <= estatus_idx < len(row) and not row[estatus_idx].strip() and _has_apellido:
             row_joined = " ".join(str(c or "") for c in row)
-            m_st = re.search(r"\b(PROCESADO|APLICADO|ACEPTADO|TRANSMITIDO|RECHAZADO)\b", row_joined)
+            m_st = _STATUS_SEARCH_PAT.search(row_joined)
             if m_st:
                 row[estatus_idx] = m_st.group(1)
 
@@ -1476,10 +1484,10 @@ def _extract_bbva_nomina_advanced_rows_from_text(raw_text: str) -> list[list[str
         r"(?P<importe>\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))\s+"
         r"(?P<nombre>[A-ZÑÁÉÍÓÚÜ ]{4,120}?)"
         r"(?=\s+\d{10,24}\s+" + _REF_PAT + r"\s+\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})"
-        r"|\s+(?:PROCESADO|APLICADO|ACEPTADO|TRANSMITIDO|RECHAZADO)\b"
+        rf"|\s+(?:{_STATUS_WORDS_RE})\b"
         r"|\s*$)"
     )
-    status_pattern = re.compile(r"\b(PROCESADO|APLICADO|ACEPTADO|TRANSMITIDO|RECHAZADO)\b")
+    status_pattern = _STATUS_SEARCH_PAT
     concept_pattern = re.compile(r"\b(PAGO(?:\s+DE)?\s+NOMINA|ABONO\s+NOMINA)\b")
 
     global_status_match = status_pattern.search(folded)
@@ -2421,7 +2429,7 @@ def _normalize_payment_table_rows(rows: list[list[str]]) -> list[list[str]]:
         # Fix 3b: fallback — si estatus sigue vacío, buscar palabra de estatus en la fila
         if 0 <= estatus_idx < len(row) and not row[estatus_idx].strip() and _has_apellido:
             row_joined = " ".join(str(c or "") for c in row)
-            m_st = re.search(r"\b(PROCESADO|APLICADO|ACEPTADO|TRANSMITIDO|RECHAZADO)\b", row_joined)
+            m_st = _STATUS_SEARCH_PAT.search(row_joined)
             if m_st:
                 row[estatus_idx] = m_st.group(1)
 
@@ -2502,7 +2510,7 @@ def _extract_payment_table_rows_from_pdf_tables(pdf_tables: list[list[list[str]]
     best_score = -999
     for candidate in merged_candidates:
         score = _payment_rows_quality_score(candidate)
-        score += 20  # structural bonus
+        # No inner bonus — the outer _extract_payment_table_payload adds +20 for PDF source
         if score > best_score:
             best_score = score
             best_rows = candidate
@@ -3050,9 +3058,11 @@ def _merge_payment_rows_with_backup(primary_rows: list[list[str]], backup_rows: 
         return merged
 
     # Content-based matching: for each primary row find best backup match
-    merged = [primary_header]
+    # Track which backup index matched each primary position for ordering
+    merged_data: list[list[str]] = []
     used_backup: set[int] = set()
-    for p_row in primary_data:
+    primary_to_backup: dict[int, int] = {}  # primary_idx → backup_idx
+    for p_i, p_row in enumerate(primary_data):
         best_b_idx = -1
         best_sim = 0.3  # minimum similarity threshold
         for b_i, b_row in enumerate(backup_data):
@@ -3064,35 +3074,49 @@ def _merge_payment_rows_with_backup(primary_rows: list[list[str]], backup_rows: 
                 best_b_idx = b_i
         if best_b_idx >= 0:
             used_backup.add(best_b_idx)
-            merged.append(_fill_empty_cells(list(p_row), backup_data[best_b_idx]))
+            primary_to_backup[p_i] = best_b_idx
+            merged_data.append(_fill_empty_cells(list(p_row), backup_data[best_b_idx]))
         else:
             row = list(p_row)
             if len(row) < len(primary_header):
                 row.extend([""] * (len(primary_header) - len(row)))
-            merged.append(row)
+            merged_data.append(row)
 
-    # Append unmatched backup rows that have enough data to stand alone
+    # Insert unmatched backup rows at estimated positions (ordered by original
+    # backup index, placed after the last matched primary row that maps to a
+    # backup row before the unmatched one).
+    unmatched_backups: list[tuple[int, list[str]]] = []
     for b_i, b_row in enumerate(backup_data):
         if b_i in used_backup:
             continue
-        # Build a primary-shaped row from backup data
         new_row = [""] * len(primary_header)
         filled = 0
         for token, p_idx in primary_idx.items():
             if p_idx >= len(new_row):
                 continue
             alias = _payment_header_alias(token)
-            b_idx = backup_idx.get(alias)
-            if b_idx is None or b_idx >= len(b_row):
+            b_idx_val = backup_idx.get(alias)
+            if b_idx_val is None or b_idx_val >= len(b_row):
                 continue
-            val = _normalize_text(str(b_row[b_idx] or ""))
+            val = _normalize_text(str(b_row[b_idx_val] or ""))
             if val:
                 new_row[p_idx] = val
                 filled += 1
         if filled >= 2:
-            merged.append(new_row)
+            # Find insertion point: after the last primary row whose matched
+            # backup index is < b_i (preserves document order)
+            insert_after = -1
+            for p_i, mb_i in primary_to_backup.items():
+                if mb_i < b_i and p_i > insert_after:
+                    insert_after = p_i
+            unmatched_backups.append((insert_after, new_row))
 
-    return merged
+    # Insert in reverse order so indices remain valid
+    unmatched_backups.sort(key=lambda x: x[0], reverse=True)
+    for insert_after, new_row in unmatched_backups:
+        merged_data.insert(insert_after + 1, new_row)
+
+    return [primary_header] + merged_data
 
 
 def _payment_detect_bank(raw_text: str) -> str:
@@ -3178,8 +3202,13 @@ def _normalize_payment_amount(value: str) -> str:
     text = _normalize_text(str(value or "")).upper()
     if not text:
         return ""
-    text = text.replace("O", "0").replace("I", "1").replace("L", "1")
-    match = re.search(r"\$?\s*(\d[\d.,]{1,24})", text)
+    # Find the numeric token FIRST, then apply OCR corrections only within it
+    match = re.search(r"\$?\s*([0-9OIL][0-9OIL.,]{1,24})", text)
+    if not match:
+        return ""
+    token = match.group(1)
+    token = token.replace("O", "0").replace("I", "1").replace("L", "1")
+    match = re.search(r"(\d[\d.,]{1,24})", token)
     if not match:
         return ""
     token = match.group(1)
@@ -3489,6 +3518,54 @@ def _extract_santander_payment_metadata(raw_text: str) -> dict[str, str]:
     return out
 
 
+def _extract_generic_bank_payment_metadata(raw_text: str, bank: str) -> dict[str, str]:
+    """Extract metadata for banks without a dedicated handler (HSBC, BANAMEX, INBURSA, BANREGIO, BAJIO).
+
+    Uses broad label patterns that cover common Mexican bank payment document formats.
+    """
+    text = _ascii_fold(str(raw_text or "")).upper()
+    out: dict[str, str] = {}
+
+    # Common labels across multiple Mexican banks
+    _GENERIC_LABELS: list[tuple[str, list[str]]] = [
+        ("folio_operacion", ["FOLIO DE CONFIRMACION", "FOLIO DE OPERACION", "FOLIO OPERACION", "NO. DE OPERACION", "NUMERO DE OPERACION"]),
+        ("tipo_pago", ["TIPO DE PAGO", "TIPO DE OPERACION", "TIPO OPERACION", "CONCEPTO DE PAGO"]),
+        ("cuenta_cargo", ["CUENTA CARGO", "CUENTA ORIGEN", "CUENTA DE CARGO", "CUENTA ORDENANTE"]),
+        ("cuenta_beneficiario", ["CUENTA DESTINO", "CUENTA BENEFICIARIO", "CUENTA DE ABONO", "CUENTA CLABE"]),
+        ("nombre_beneficiario", ["BENEFICIARIO", "NOMBRE DEL BENEFICIARIO", "NOMBRE BENEFICIARIO"]),
+        ("titular", ["TITULAR", "NOMBRE DEL TITULAR", "CLIENTE"]),
+        ("importe_detectado", ["MONTO TOTAL", "MONTO", "IMPORTE TOTAL", "TOTAL A PAGAR", "IMPORTE"]),
+        ("referencia_carga", ["REFERENCIA", "REFERENCIA NUMERICA", "NUMERO DE REFERENCIA"]),
+        ("fecha_hora_proceso", ["FECHA DE OPERACION", "FECHA OPERACION", "FECHA DE PAGO", "FECHA PAGO", "FECHA VALOR"]),
+        ("banco_destino", ["BANCO DESTINO", "BANCO BENEFICIARIO", "BANCO RECEPTOR", "INSTITUCION DESTINO"]),
+        ("numero_contrato", ["CONTRATO", "NUMERO DE CONTRATO", "NO. DE CONTRATO"]),
+    ]
+
+    for key, labels in _GENERIC_LABELS:
+        if key in out:
+            continue
+        value = _payment_pick_labeled_value(raw_text, labels, max_len=180)
+        if value:
+            out[key] = value
+
+    # Amount detection — look for labeled amount first, then any standalone amount
+    if "importe_detectado" not in out:
+        amount_match = re.search(
+            r"(?:MONTO|IMPORTE|TOTAL)\s*:?\s*(\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))",
+            text,
+        )
+        if amount_match:
+            normalized = _normalize_payment_amount(amount_match.group(1))
+            if normalized:
+                out["importe_detectado"] = normalized
+
+    # Bank brand detection for logging/metadata
+    if bank and bank != "DESCONOCIDO":
+        out.setdefault("banco_detectado", bank)
+
+    return out
+
+
 def _extract_scotia_summary_tables(raw_text: str) -> list[dict]:
     text = str(raw_text or "")
     if not text.strip():
@@ -3766,7 +3843,50 @@ def _canonical_payment_key(bank: str, raw_key: str) -> str:
         return bbva_map[key]
     if bank == "BANORTE" and key in banorte_map:
         return banorte_map[key]
-    return base_map.get(key, key)
+
+    mapped = base_map.get(key)
+    if mapped:
+        return mapped
+
+    # Fallback: fuzzy match for unmapped keys from unsupported banks
+    # (HSBC, INBURSA, BANAMEX, BANREGIO, etc.)
+    _FUZZY_ALIASES: dict[str, str] = {
+        "monto": "importe",
+        "montototal": "importe",
+        "montopago": "importe",
+        "cantidad": "importe",
+        "importepago": "importe",
+        "saldo": "importe",
+        "cuentacargo": "cuenta_retiro",
+        "cuentaorigen": "cuenta_retiro",
+        "cuentaabono": "cuenta",
+        "cuentadestino": "cuenta",
+        "rfcbeneficiario": "rfc_beneficiario",
+        "rfc": "rfc_beneficiario",
+        "curp": "curp_beneficiario",
+        "curpbeneficiario": "curp_beneficiario",
+        "fechaoperacion": "fecha_aplicacion",
+        "fechapago": "fecha_aplicacion",
+        "fechavalor": "fecha_aplicacion",
+        "bancobeneficiario": "banco_destino",
+        "bancoordenante": "banco_origen",
+        "bancoemisor": "banco_origen",
+        "folioconfirmacion": "folio_operacion",
+        "foliodeconfirmacion": "folio_operacion",
+        "clavedebeneficiario": "clave_beneficiario",
+        "tipopago": "tipo_operacion",
+        "mediopago": "forma_deposito",
+        "formapago": "forma_deposito",
+    }
+    fuzzy = _FUZZY_ALIASES.get(key)
+    if fuzzy:
+        return fuzzy
+
+    # Drop unrecognized keys that look like OCR noise (contain digits mixed with letters)
+    if re.search(r"\d", key) and re.search(r"[a-z]", key) and len(key) < 8:
+        return ""
+
+    return key
 
 
 def _payment_to_canonical_rows(bank: str, rows: list[dict]) -> tuple[list[str], list[dict]]:
@@ -3844,17 +3964,17 @@ def _extract_payment_detail_payload(base_text_raw: str, table_payload: dict | No
     metadata: dict[str, str] = {}
     bank = _payment_detect_bank(text)
     label_map = {
-        "fecha_archivo": ["FECHA"],
+        "fecha_archivo": ["FECHA", "FECHA DE ARCHIVO"],
         "hora_archivo": ["HORA"],
-        "nombre_empresa": ["NOMBRE DE EMPRESA", "EMPRESA"],
+        "nombre_empresa": ["NOMBRE DE EMPRESA", "EMPRESA", "RAZON SOCIAL"],
         "nombre_archivo": ["NOMBRE DEL ARCHIVO"],
-        "folio": ["FOLIO"],
+        "folio": ["FOLIO", "FOLIO DE INTERNET"],
         "nombre_contrato_scotia_linea": ["NOMBRE DE CONTRATO SCOTIA EN LINEA"],
         "numero_contrato_scotia_linea": ["NUMERO DE CONTRATO SCOTIA EN LINEA"],
         "numero_contrato_servicio": ["NUMERO DE CONTRATO DEL SERVICIO"],
-        "numero_lote": ["LOTE", "LOTE ID", "NO DE LOTE"],
+        "numero_lote": ["LOTE", "LOTE ID", "NO DE LOTE", "NUMERO DE LOTE"],
         "numero_archivo_en_dia": ["NUMERO DE ARCHIVO EN EL DIA"],
-        "usuario_sistema_nombre": ["NOMBRE DE USUARIO DEL SISTEMA Y NOMBRE"],
+        "usuario_sistema_nombre": ["NOMBRE DE USUARIO DEL SISTEMA Y NOMBRE", "USUARIO"],
         "fecha_hora_validacion_archivo": ["FECHA Y HORA DE VALIDACION DEL ARCHIVO"],
         "fecha_hora_registro": ["FECHA Y HORA DE REGISTRO"],
         "fecha_hora_proceso": ["FECHA Y HORA DE PROCESO", "FECHA DE TRANSMISION"],
@@ -3877,6 +3997,9 @@ def _extract_payment_detail_payload(base_text_raw: str, table_payload: dict | No
         metadata.update(_extract_bbva_payment_metadata(text))
     elif bank == "SANTANDER":
         metadata.update(_extract_santander_payment_metadata(text))
+    else:
+        # Generic metadata extraction for HSBC, BANAMEX, INBURSA, BANREGIO, etc.
+        metadata.update(_extract_generic_bank_payment_metadata(text, bank))
 
     metadata = _sanitize_payment_metadata(metadata)
 
@@ -3895,11 +4018,15 @@ def _extract_payment_detail_payload(base_text_raw: str, table_payload: dict | No
     # --- Pandas-based precision post-processing ---
     try:
         metadata = postprocess_metadata(metadata, bank=bank)
+    except Exception:
+        logger.warning("postprocess_metadata failed, using raw metadata", exc_info=True)
+
+    try:
         canonical_columns, canonical_rows = postprocess_payment_table(
             canonical_columns, canonical_rows, bank=bank,
         )
     except Exception:
-        logger.debug("postprocess_payment_table failed, using raw data")
+        logger.warning("postprocess_payment_table failed, using raw table data", exc_info=True)
 
     if not metadata and not row_objects and not canonical_rows and not summary_tables:
         return None

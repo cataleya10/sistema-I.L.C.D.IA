@@ -63,13 +63,23 @@ def _clean_amount(value: str) -> str:
     text = str(value or "").strip()
     if not text:
         return ""
-    # Fix common OCR errors
-    text = text.replace("O", "0").replace("l", "1").replace("I", "1")
-    # Strip currency prefix/suffix
+    # Strip currency prefix/suffix BEFORE OCR correction to protect words
     text = re.sub(r"(?i)\s*(?:MXN|MXP|PESOS?)\s*", "", text)
-    match = re.search(r"\$?\s*(\d[\d.,]{0,24})", text)
+    # Find numeric token FIRST, then apply OCR corrections only within it.
+    # Prefer $-prefixed match so letters inside words (e.g. "IMPORTE") are
+    # not mistaken for OCR-lookalike digits.
+    match = re.search(r"\$\s*([0-9OIl][0-9OIl.,]{0,24})", text)
+    if not match:
+        # Fallback: require an actual digit start (not inside a word)
+        match = re.search(r"(?<![A-Za-z])([0-9][0-9OIl.,]{0,24})", text)
     if not match:
         return text  # return original if no number found
+    token = match.group(1)
+    # Apply OCR corrections only within the extracted token
+    token = token.replace("O", "0").replace("l", "1").replace("I", "1")
+    match = re.search(r"(\d[\d.,]{0,24})", token)
+    if not match:
+        return text
     token = match.group(1)
     token = re.sub(r"[^\d.,]", "", token)
     if not token:
@@ -254,14 +264,19 @@ def postprocess_payment_table(
             df[col] = df[col].apply(lambda v: str(v or "").strip())
 
     # --- Step 2: Cross-column status inference ---
-    # If estatus is empty but descripcion contains a valid status, fill it
-    if "estatus" in df.columns and "descripcion" in df.columns:
+    # If estatus is empty, check multiple candidate columns for status words
+    _STATUS_SOURCE_COLS = ("descripcion", "concepto_pago", "tipo_movimiento", "tipo_operacion")
+    status_sources = [c for c in _STATUS_SOURCE_COLS if c in df.columns]
+    if "estatus" in df.columns and status_sources:
         mask = df["estatus"].apply(lambda v: not str(v or "").strip())
         for idx in df.index[mask]:
-            desc = str(df.at[idx, "descripcion"] or "").upper()
-            for status in _VALID_STATUSES:
-                if status in desc:
-                    df.at[idx, "estatus"] = status
+            for src_col in status_sources:
+                desc = str(df.at[idx, src_col] or "").upper()
+                for status in _VALID_STATUSES:
+                    if status in desc:
+                        df.at[idx, "estatus"] = status
+                        break
+                if str(df.at[idx, "estatus"] or "").strip():
                     break
 
     # --- Step 3: Cross-column amount validation ---
@@ -279,7 +294,7 @@ def postprocess_payment_table(
                 )
 
     # --- Step 4: Duplicate row detection ---
-    # Build a dedup key from (cuenta or nombre) + importe
+    # Build a dedup key from (cuenta or nombre) + importe + referencia/employee
     dedup_cols = []
     for col in ("cuenta", "cuenta_beneficiario"):
         if col in df.columns:
@@ -287,6 +302,11 @@ def postprocess_payment_table(
             break
     if "importe" in df.columns:
         dedup_cols.append("importe")
+    # Add a discriminator to avoid collapsing rows with same account+amount
+    for col in ("referencia", "numero_empleado", "folio_operacion", "clave_rastreo"):
+        if col in df.columns:
+            dedup_cols.append(col)
+            break
     if "nombre" in df.columns or "nombre_beneficiario" in df.columns:
         name_col = "nombre" if "nombre" in df.columns else "nombre_beneficiario"
         dedup_cols.append(name_col)
@@ -309,6 +329,7 @@ def postprocess_payment_table(
 
     # --- Step 5b: Minimum row quality ---
     # Drop rows where fewer than 2 important columns are filled (noise rows)
+    # Skip for single-row tables to avoid dropping valid single-transaction receipts
     important_cols_list = [
         c for c in df.columns
         if c in _AMOUNT_COLUMNS | _ACCOUNT_COLUMNS | _NAME_COLUMNS | _STATUS_COLUMNS | _NUMERIC_ID_COLUMNS
@@ -320,9 +341,9 @@ def postprocess_payment_table(
             axis=1,
         )
         dropped_quality = len(df) - fill_mask.sum()
-        if dropped_quality > 0:
+        if dropped_quality > 0 and dropped_quality < len(df):  # never drop ALL rows
             logger.info("postprocess: removed %d low-quality rows (< %d important cols filled)", dropped_quality, min_filled)
-        df = df[fill_mask]
+            df = df[fill_mask]
 
     # --- Step 6: Column completeness stats (for diagnostics) ---
     # Not returned to client, but useful for logging
