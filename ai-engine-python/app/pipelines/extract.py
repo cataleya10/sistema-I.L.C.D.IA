@@ -264,19 +264,46 @@ def _find_source(value: str, ocr_boxes):
         return None
     for box in ocr_boxes:
         if value in box.get("text", "").upper():
-            return {"page": box.get("page", 1), "bbox": box.get("bbox", [])}
+            return {"page": box.get("page", 1), "bbox": box.get("bbox", []),
+                    "ocr_confidence": box.get("confidence")}
+    return None
+
+
+def _ocr_confidence_for_value(value: str, ocr_boxes) -> float | None:
+    """Return the OCR engine confidence for the box that contains *value*.
+
+    Returns None when value cannot be located in ocr_boxes so callers can
+    decide whether to adjust the extraction confidence.
+    """
+    if not value or not ocr_boxes:
+        return None
+    upper = value.upper()
+    for box in ocr_boxes:
+        if upper in box.get("text", "").upper():
+            conf = box.get("confidence")
+            if isinstance(conf, (int, float)):
+                return float(conf)
     return None
 
 
 def _make_field(key: str, label: str, value: str, ocr_boxes, confidence: float = 0.7):
+    source = _find_source(value, ocr_boxes)
+    # Propagate OCR box confidence: if OCR confidence is lower than the
+    # requested extraction confidence, cap the field confidence down so
+    # that downstream filters can discard unreliable extractions.
+    ocr_conf = _ocr_confidence_for_value(value, ocr_boxes)
+    effective_conf = confidence
+    if ocr_conf is not None and ocr_conf < confidence:
+        # Blend: keep some extractor confidence but weigh OCR quality
+        effective_conf = round(min(confidence, 0.5 * confidence + 0.5 * ocr_conf), 4)
     return {
         "key": key,
         "label": label,
         "value": value,
-        "confidence": confidence,
+        "confidence": effective_conf,
         "valid": True,
         "validation_errors": [],
-        "source": _find_source(value, ocr_boxes)
+        "source": source,
     }
 
 
@@ -552,7 +579,128 @@ def _postprocess_fields(document_type: str, fields: list[dict]) -> list[dict]:
             logger.debug("Dropping garbage field %s=%r", key, sanitized[:50])
             continue
         cleaned.append(field)
+    # ── Cross-field coherence checks ────────────────────────────────────
+    cleaned = _apply_cross_field_checks(cleaned)
     return cleaned
+
+
+# ── Cross-field coherence validation ───────────────────────────────────────
+def _extract_date_from_curp(curp: str) -> str | None:
+    """Extract YYMMDD date fragment from a CURP string (positions 4-9)."""
+    if not curp or len(curp) < 10:
+        return None
+    fragment = curp[4:10]
+    if not fragment.isdigit():
+        return None
+    return fragment  # e.g. "850101" = 1985-01-01
+
+
+def _extract_date_from_rfc(rfc: str) -> str | None:
+    """Extract YYMMDD date fragment from an RFC string (positions 4-9 for personas físicas)."""
+    if not rfc or len(rfc) < 10:
+        return None
+    fragment = rfc[4:10]
+    if not fragment.isdigit():
+        return None
+    return fragment
+
+
+def _normalize_date_to_yymmdd(date_str: str) -> str | None:
+    """Convert common date formats (DD/MM/YYYY, YYYY-MM-DD, DD-MM-YY, etc.) to YYMMDD."""
+    if not date_str:
+        return None
+    cleaned = re.sub(r"[^\d/\-]", "", date_str.strip())
+    patterns = [
+        (r"(\d{2})/(\d{2})/(\d{4})", lambda m: m.group(3)[2:] + m.group(2) + m.group(1)),
+        (r"(\d{2})-(\d{2})-(\d{4})", lambda m: m.group(3)[2:] + m.group(2) + m.group(1)),
+        (r"(\d{4})-(\d{2})-(\d{2})", lambda m: m.group(1)[2:] + m.group(2) + m.group(3)),
+        (r"(\d{4})/(\d{2})/(\d{2})", lambda m: m.group(1)[2:] + m.group(2) + m.group(3)),
+        (r"(\d{2})/(\d{2})/(\d{2})", lambda m: m.group(3) + m.group(2) + m.group(1)),
+    ]
+    for pattern, formatter in patterns:
+        match = re.fullmatch(pattern, cleaned)
+        if match:
+            return formatter(match)
+    return None
+
+
+def _apply_cross_field_checks(fields: list[dict]) -> list[dict]:
+    """Flag fields that are internally inconsistent with each other.
+
+    Cross-checks implemented:
+    1. CURP date ↔ fecha_nacimiento
+    2. RFC date ↔ fecha_nacimiento
+    3. CURP initials ↔ nombre (already done in INE extractor, now generalized)
+    4. RFC initials ↔ nombre
+    """
+    field_map: dict[str, dict] = {}
+    for f in fields:
+        key = str(f.get("key", ""))
+        if key and key not in field_map:
+            field_map[key] = f
+
+    curp_val = str(field_map.get("curp", {}).get("value", "") or "").upper()
+    rfc_val = str(field_map.get("rfc", {}).get("value", "") or "").upper()
+    fecha_val = str(field_map.get("fecha_nacimiento", {}).get("value", "") or "")
+    nombre_val = str(field_map.get("nombre", {}).get("value", "") or "").upper()
+
+    warnings_added: list[str] = []
+
+    # 1. CURP date ↔ fecha_nacimiento
+    if curp_val and fecha_val:
+        curp_date = _extract_date_from_curp(curp_val)
+        fecha_yymmdd = _normalize_date_to_yymmdd(fecha_val)
+        if curp_date and fecha_yymmdd and curp_date != fecha_yymmdd:
+            if "fecha_nacimiento" in field_map:
+                f = field_map["fecha_nacimiento"]
+                f["confidence"] = round(min(float(f.get("confidence", 0.7)), 0.55), 4)
+                errors = f.get("validation_errors", [])
+                errors.append(f"Fecha no coincide con CURP ({curp_date} vs {fecha_yymmdd})")
+                f["validation_errors"] = errors
+                warnings_added.append("curp_fecha")
+
+    # 2. RFC date ↔ fecha_nacimiento
+    if rfc_val and len(rfc_val) >= 12 and fecha_val:
+        rfc_date = _extract_date_from_rfc(rfc_val)
+        fecha_yymmdd = _normalize_date_to_yymmdd(fecha_val)
+        if rfc_date and fecha_yymmdd and rfc_date != fecha_yymmdd:
+            if "fecha_nacimiento" in field_map and "curp_fecha" not in warnings_added:
+                f = field_map["fecha_nacimiento"]
+                f["confidence"] = round(min(float(f.get("confidence", 0.7)), 0.55), 4)
+                errors = f.get("validation_errors", [])
+                errors.append(f"Fecha no coincide con RFC ({rfc_date} vs {fecha_yymmdd})")
+                f["validation_errors"] = errors
+
+    # 3. CURP initials ↔ nombre (generalized for all doc types)
+    if curp_val and len(curp_val) >= 4 and nombre_val and len(nombre_val) >= 3:
+        if not _name_matches_curp(nombre_val, curp_val):
+            if "nombre" in field_map:
+                f = field_map["nombre"]
+                f["confidence"] = round(min(float(f.get("confidence", 0.7)), 0.6), 4)
+                errors = f.get("validation_errors", [])
+                errors.append("Nombre no coincide con iniciales de CURP")
+                f["validation_errors"] = errors
+
+    # 4. RFC initials ↔ nombre
+    if rfc_val and len(rfc_val) >= 4 and nombre_val and len(nombre_val) >= 3:
+        rfc_init_paterno = rfc_val[0]
+        rfc_init_nombre = rfc_val[3] if len(rfc_val) >= 4 else ""
+        tokens = [t for t in nombre_val.split() if t]
+        if len(tokens) >= 2 and rfc_init_nombre:
+            has_paterno = any(t[0] == rfc_init_paterno for t in tokens)
+            has_nombre = any(t[0] == rfc_init_nombre for t in tokens)
+            if not (has_paterno and has_nombre):
+                if "nombre" in field_map:
+                    f = field_map["nombre"]
+                    current_conf = float(f.get("confidence", 0.7))
+                    # Only penalize if not already penalized by CURP check
+                    if current_conf > 0.55:
+                        f["confidence"] = round(min(current_conf, 0.6), 4)
+                        errors = f.get("validation_errors", [])
+                        errors.append("Nombre no coincide con iniciales de RFC")
+                        f["validation_errors"] = errors
+
+    return fields
 
 
 def _label_key(text: str) -> str:

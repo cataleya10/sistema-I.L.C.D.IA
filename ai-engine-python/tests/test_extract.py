@@ -2309,6 +2309,140 @@ class TestPostprocessFieldsExpanded(unittest.TestCase):
         self.assertEqual(len(result), 1)
 
 
+class TestOcrConfidencePropagation(unittest.TestCase):
+    """Tests for OCR confidence propagation into _make_field."""
+
+    def test_high_ocr_conf_preserves_extraction_confidence(self):
+        from app.pipelines.extract import _make_field
+        boxes = [{"text": "PELJ850101ABC", "confidence": 0.99, "page": 1, "bbox": []}]
+        field = _make_field("rfc", "RFC", "PELJ850101ABC", boxes, confidence=0.8)
+        self.assertEqual(field["confidence"], 0.8)
+
+    def test_low_ocr_conf_caps_extraction_confidence(self):
+        from app.pipelines.extract import _make_field
+        boxes = [{"text": "PELJ850101ABC", "confidence": 0.3, "page": 1, "bbox": []}]
+        field = _make_field("rfc", "RFC", "PELJ850101ABC", boxes, confidence=0.8)
+        # Should be lower than 0.8 since OCR reported only 0.3
+        self.assertLess(field["confidence"], 0.8)
+
+    def test_no_ocr_boxes_preserves_confidence(self):
+        from app.pipelines.extract import _make_field
+        field = _make_field("rfc", "RFC", "PELJ850101ABC", None, confidence=0.9)
+        self.assertEqual(field["confidence"], 0.9)
+
+    def test_value_not_in_boxes_preserves_confidence(self):
+        from app.pipelines.extract import _make_field
+        boxes = [{"text": "OTHER TEXT", "confidence": 0.3, "page": 1, "bbox": []}]
+        field = _make_field("rfc", "RFC", "PELJ850101ABC", boxes, confidence=0.9)
+        self.assertEqual(field["confidence"], 0.9)
+
+    def test_source_includes_ocr_confidence(self):
+        from app.pipelines.extract import _make_field
+        boxes = [{"text": "PELJ850101ABC", "confidence": 0.95, "page": 1, "bbox": [[0, 0]]}]
+        field = _make_field("rfc", "RFC", "PELJ850101ABC", boxes, confidence=0.8)
+        self.assertIsNotNone(field["source"])
+        self.assertEqual(field["source"]["ocr_confidence"], 0.95)
+
+
+class TestCrossFieldValidation(unittest.TestCase):
+    """Tests for cross-field coherence checks."""
+
+    def test_curp_fecha_match_no_penalty(self):
+        """When CURP date matches fecha_nacimiento, no penalty applied."""
+        from app.pipelines.extract import _apply_cross_field_checks
+        fields = [
+            {"key": "curp", "value": "PELJ850101HDFRPN09", "confidence": 0.9, "valid": True, "validation_errors": []},
+            {"key": "fecha_nacimiento", "value": "01/01/1985", "confidence": 0.8, "valid": True, "validation_errors": []},
+        ]
+        result = _apply_cross_field_checks(fields)
+        fecha = next(f for f in result if f["key"] == "fecha_nacimiento")
+        self.assertEqual(fecha["confidence"], 0.8)
+        self.assertEqual(len(fecha["validation_errors"]), 0)
+
+    def test_curp_fecha_mismatch_lowers_confidence(self):
+        """When CURP date doesn't match fecha_nacimiento, confidence is lowered."""
+        from app.pipelines.extract import _apply_cross_field_checks
+        fields = [
+            {"key": "curp", "value": "PELJ850101HDFRPN09", "confidence": 0.9, "valid": True, "validation_errors": []},
+            {"key": "fecha_nacimiento", "value": "15/03/1990", "confidence": 0.8, "valid": True, "validation_errors": []},
+        ]
+        result = _apply_cross_field_checks(fields)
+        fecha = next(f for f in result if f["key"] == "fecha_nacimiento")
+        self.assertLessEqual(fecha["confidence"], 0.55)
+        self.assertTrue(any("CURP" in e for e in fecha["validation_errors"]))
+
+    def test_rfc_fecha_mismatch_lowers_confidence(self):
+        """When RFC date doesn't match fecha_nacimiento, confidence is lowered."""
+        from app.pipelines.extract import _apply_cross_field_checks
+        fields = [
+            {"key": "rfc", "value": "PELJ850101ABC", "confidence": 0.9, "valid": True, "validation_errors": []},
+            {"key": "fecha_nacimiento", "value": "15/03/1990", "confidence": 0.8, "valid": True, "validation_errors": []},
+        ]
+        result = _apply_cross_field_checks(fields)
+        fecha = next(f for f in result if f["key"] == "fecha_nacimiento")
+        self.assertLessEqual(fecha["confidence"], 0.55)
+        self.assertTrue(any("RFC" in e for e in fecha["validation_errors"]))
+
+    def test_curp_nombre_mismatch_lowers_confidence(self):
+        """When name initials don't match CURP, nombre confidence is lowered."""
+        from app.pipelines.extract import _apply_cross_field_checks
+        fields = [
+            {"key": "curp", "value": "PELJ850101HDFRPN09", "confidence": 0.9, "valid": True, "validation_errors": []},
+            {"key": "nombre", "value": "CARLOS RAMIREZ DIAZ", "confidence": 0.8, "valid": True, "validation_errors": []},
+        ]
+        result = _apply_cross_field_checks(fields)
+        nombre = next(f for f in result if f["key"] == "nombre")
+        self.assertLessEqual(nombre["confidence"], 0.6)
+        self.assertTrue(any("CURP" in e for e in nombre["validation_errors"]))
+
+    def test_curp_nombre_match_no_penalty(self):
+        """When CURP initials P-E-L-J match PEREZ LOPEZ JUAN, no penalty."""
+        from app.pipelines.extract import _apply_cross_field_checks
+        fields = [
+            {"key": "curp", "value": "PELJ850101HDFRPN09", "confidence": 0.9, "valid": True, "validation_errors": []},
+            {"key": "nombre", "value": "JUAN PEREZ LOPEZ", "confidence": 0.8, "valid": True, "validation_errors": []},
+        ]
+        result = _apply_cross_field_checks(fields)
+        nombre = next(f for f in result if f["key"] == "nombre")
+        self.assertEqual(nombre["confidence"], 0.8)
+        self.assertEqual(len(nombre["validation_errors"]), 0)
+
+    def test_no_curp_no_rfc_no_penalty(self):
+        """When no CURP or RFC present, no cross-field penalty is applied."""
+        from app.pipelines.extract import _apply_cross_field_checks
+        fields = [
+            {"key": "nombre", "value": "JUAN PEREZ", "confidence": 0.9, "valid": True, "validation_errors": []},
+            {"key": "fecha_nacimiento", "value": "01/01/1985", "confidence": 0.8, "valid": True, "validation_errors": []},
+        ]
+        result = _apply_cross_field_checks(fields)
+        for f in result:
+            self.assertEqual(len(f["validation_errors"]), 0)
+
+
+class TestDateNormalization(unittest.TestCase):
+    """Tests for _normalize_date_to_yymmdd helper."""
+
+    def test_dd_mm_yyyy_slash(self):
+        from app.pipelines.extract import _normalize_date_to_yymmdd
+        self.assertEqual(_normalize_date_to_yymmdd("01/01/1985"), "850101")
+
+    def test_yyyy_mm_dd_dash(self):
+        from app.pipelines.extract import _normalize_date_to_yymmdd
+        self.assertEqual(_normalize_date_to_yymmdd("1985-01-01"), "850101")
+
+    def test_dd_mm_yyyy_dash(self):
+        from app.pipelines.extract import _normalize_date_to_yymmdd
+        self.assertEqual(_normalize_date_to_yymmdd("15-03-1990"), "900315")
+
+    def test_empty_returns_none(self):
+        from app.pipelines.extract import _normalize_date_to_yymmdd
+        self.assertIsNone(_normalize_date_to_yymmdd(""))
+        self.assertIsNone(_normalize_date_to_yymmdd("   "))
+
+    def test_unparseable_returns_none(self):
+        from app.pipelines.extract import _normalize_date_to_yymmdd
+        self.assertIsNone(_normalize_date_to_yymmdd("ENERO 2025"))
+
+
 if __name__ == "__main__":
     unittest.main()
-
