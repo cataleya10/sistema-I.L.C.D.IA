@@ -6,6 +6,11 @@ import unicodedata
 from datetime import datetime
 
 from app.pipelines.legacy_adapter import legacy_extract_fields
+from app.pipelines.table_postprocess import (
+    postprocess_payment_table,
+    postprocess_metadata,
+    compute_table_quality_report,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -3543,10 +3548,26 @@ def _extract_payment_detail_payload(base_text_raw: str, table_payload: dict | No
     canonical_columns, canonical_rows = _payment_to_canonical_rows(bank, row_objects)
     summary_tables = _extract_scotia_summary_tables(text) if bank == "SCOTIABANK" else []
 
+    # --- Pandas-based precision post-processing ---
+    try:
+        metadata = postprocess_metadata(metadata, bank=bank)
+        canonical_columns, canonical_rows = postprocess_payment_table(
+            canonical_columns, canonical_rows, bank=bank,
+        )
+    except Exception:
+        logger.debug("postprocess_payment_table failed, using raw data")
+
     if not metadata and not row_objects and not canonical_rows and not summary_tables:
         return None
 
-    return {
+    # Quality report for diagnostics / online-learning
+    quality_report: dict = {}
+    try:
+        quality_report = compute_table_quality_report(canonical_columns, canonical_rows)
+    except Exception:
+        pass
+
+    result: dict = {
         "source": "table_and_text" if row_objects else "text_only",
         "bank": bank,
         "metadata": metadata,
@@ -3560,6 +3581,9 @@ def _extract_payment_detail_payload(base_text_raw: str, table_payload: dict | No
             "summary_tables": summary_tables,
         },
     }
+    if quality_report:
+        result["quality_report"] = quality_report
+    return result
 
 
 def _build_replica_layout_payload(ocr_boxes, raw_text: str) -> dict | None:
