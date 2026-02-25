@@ -1,4 +1,4 @@
-﻿import re
+import re
 import json
 import os
 import logging
@@ -462,6 +462,44 @@ def _normalize_keyword(text: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", text.upper())
 
 
+def _is_junk_payment_header(header_cell: str) -> bool:
+    """Detect column headers that are noise from PDF layout (footer, contact info).
+
+    PyMuPDF sometimes captures text adjacent to tables (phone numbers, city
+    names, addresses from footers) as extra table columns.  This identifies
+    those junk headers so they can be stripped before they pollute the
+    extraction pipeline.
+    """
+    text = str(header_cell or "").strip()
+    if not text:
+        return True  # empty header → junk
+
+    # Strip to alphanumeric core
+    alphanum = re.sub(r"[^A-Za-z0-9]", "", text)
+    if not alphanum:
+        return True  # only punctuation/symbols
+
+    # Pure digits → phone numbers / codes (e.g. "9600", "3669 9000", "01 800 226 6783")
+    if alphanum.isdigit():
+        return True
+
+    # Starts with dash/hyphen → formatting artifacts (e.g. "– GUADALAJARA (33)")
+    first_non_space = text.lstrip()
+    if first_non_space and first_non_space[0] in ("\u2013", "\u2014", "\u2212", "-"):
+        return True
+
+    # Known geographic / contact-info noise words that are never payment fields
+    upper = text.upper()
+    _NOISE_FRAGMENTS = (
+        "GUADALAJARA", "MONTERREY", "RESTO DEL", "CIUDAD DE MEXICO",
+        "CDMX", "01 800", "01800", "LADA SIN COSTO",
+    )
+    if any(nf in upper for nf in _NOISE_FRAGMENTS):
+        return True
+
+    return False
+
+
 def _is_reasonable_acta_optional(value: str) -> bool:
     if not value:
         return False
@@ -844,7 +882,7 @@ _GENERIC_TABLE_JOIN_GAP_X = 16
 
 def _normalize_table_cell(text: str) -> str:
     cell = _normalize_text(str(text or "")).upper()
-    if not cell:
+    if not cell or cell == "NAN":
         return ""
     if len(cell) > 90:
         return cell[:90].rstrip() + "..."
@@ -1607,6 +1645,19 @@ def _extract_payment_table_rows_from_text(raw_text: str) -> list[list[str]]:
     advanced_rows = _extract_bbva_nomina_advanced_rows_from_text(raw_text)
     if advanced_rows:
         return advanced_rows
+
+    # Try BBVA vertical key-value receipt BEFORE generic text splitting so
+    # that "Grupo Pago Mismo Banco" / comprobante documents are not polluted
+    # by the generic splitter picking up footer fragments as table rows.
+    _normalized_lines_early = [
+        _ascii_fold(_normalize_text(line)).upper()
+        for line in raw_text.splitlines()
+        if _normalize_text(line)
+    ]
+    bbva_receipt_rows = _extract_bbva_transfer_receipt_rows(_normalized_lines_early, raw_text)
+    if bbva_receipt_rows:
+        return bbva_receipt_rows
+
     rows: list[list[str]] = []
     narrow_candidates: list[list[str]] = []
     for raw_line in raw_text.splitlines():
@@ -2204,30 +2255,62 @@ def _extract_banorte_bbva_detail_rows(lines: list[str], raw_text: str) -> list[l
 
 
 def _extract_bbva_transfer_receipt_rows(lines: list[str], raw_text: str) -> list[list[str]]:
+    """Extract BBVA vertical key-value transfer receipts.
+
+    Handles two document types:
+    A) Comprobante de traspaso: has COMPROBANTE + RESULTADO DEL TRASPASO
+    B) Grupo Pago Mismo Banco / Operación Autorizada: has
+       PAGO MISMO BANCO / OPERACION AUTORIZADA + CUENTA DE RETIRO + CUENTA DE DEPOSITO
+
+    Both may contain multiple payments (one per page).  Each payment becomes
+    one row in the returned table.
+    """
     if not lines:
         return []
     normalized_lines = [str(line or "").strip() for line in lines if str(line or "").strip()]
     normalized_keys = [_normalize_keyword(_ascii_fold(line).upper()) for line in normalized_lines]
     full = " ".join(normalized_lines)
     full_key = " ".join(normalized_keys)
-    if "COMPROBANTE" not in full_key:
-        return []
-    if not any(
+
+    logger.info("[BBVA_RECEIPT] full_key[:300] = %s", full_key[:300])
+    logger.info("[BBVA_RECEIPT] num_lines = %d", len(normalized_lines))
+
+    # --- Type A: original comprobante guard ---
+    is_comprobante = (
+        "COMPROBANTE" in full_key
+        and any(
+            token in full_key
+            for token in (
+                "RESULTADODELTRASPASO",
+                "TRASPASOSAOTROSBANCOS",
+                "TRASPASOAOTROSBANCOS",
+            )
+        )
+    )
+
+    # --- Type B: "Grupo Pago Mismo Banco" / "Operacion Autorizada" ---
+    is_grupo_pago = any(
         token in full_key
         for token in (
-            "RESULTADODELTRASPASO",
-            "TRASPASOSAOTROSBANCOS",
-            "TRASPASOAOTROSBANCOS",
+            "PAGOMISMOBANCO",
+            "GRUPOPAGOMISMOBANCO",
+            "OPERACIONAUTORIZADA",
         )
-    ):
-        return []
+    )
+
     has_deposit_label = any(
         key.startswith("CUENTADEDEPOSITO")
         or key.startswith("CUENTADEDEPSITO")
         or key.startswith("CUENTADESTINO")
+        or key.startswith("CUENTADEPOSITO")
         for key in normalized_keys
     )
-    if not has_deposit_label:
+
+    has_retiro_label = any(
+        key.startswith("CUENTADERETIRO") for key in normalized_keys
+    )
+
+    if not is_comprobante and not (is_grupo_pago and has_deposit_label and has_retiro_label):
         return []
 
     def keyword_close(left: str, right: str) -> bool:
@@ -2257,19 +2340,27 @@ def _extract_bbva_transfer_receipt_rows(lines: list[str], raw_text: str) -> list
             mismatches += 1
         return mismatches <= 1
 
-    def pick_line_value(labels: list[str], lookahead: int = 4, max_len: int = 120) -> str:
+    def _pick_value_from_segment(
+        seg_lines: list[str],
+        seg_keys: list[str],
+        labels: list[str],
+        seg_text: str,
+        lookahead: int = 4,
+        max_len: int = 120,
+    ) -> str:
+        """Pick a value from a specific text segment (one payment block)."""
         label_pairs = []
         for label in labels:
             key = _normalize_keyword(_ascii_fold(_normalize_text(label)).upper())
             if key:
                 label_pairs.append((label, key))
-        for idx, line in enumerate(normalized_lines):
-            line_key = normalized_keys[idx]
+        for idx, line in enumerate(seg_lines):
+            line_key = seg_keys[idx]
             for label, label_key in label_pairs:
                 if keyword_close(line_key, label_key):
-                    for next_idx in range(idx + 1, min(len(normalized_lines), idx + 1 + lookahead)):
-                        next_line = normalized_lines[next_idx]
-                        next_key = normalized_keys[next_idx]
+                    for next_idx in range(idx + 1, min(len(seg_lines), idx + 1 + lookahead)):
+                        next_line = seg_lines[next_idx]
+                        next_key = seg_keys[next_idx]
                         if not next_line:
                             continue
                         if any(keyword_close(next_key, candidate_key) for _, candidate_key in label_pairs):
@@ -2282,134 +2373,345 @@ def _extract_bbva_transfer_receipt_rows(lines: list[str], raw_text: str) -> list
                         remainder = remainder[len(prefix):].strip(" :")
                     if remainder:
                         return remainder[:max_len]
-        fallback = _payment_pick_labeled_value(raw_text, labels, max_len=max_len)
+        fallback = _payment_pick_labeled_value(seg_text, labels, max_len=max_len)
         if fallback:
             return fallback
         return ""
 
-    cuenta_retiro = _normalize_numeric_field(
-        pick_line_value(["CUENTA DE RETIRO"], max_len=30)
-    )
-    tipo_operacion = _normalize_text(
-        pick_line_value(["TIPO DE OPERACION"], max_len=90)
-    )
-    banco_destino = _normalize_text(
-        pick_line_value(["BANCO DESTINO"], max_len=80)
-    )
-    cuenta_destino = _normalize_numeric_field(
-        pick_line_value(
-            ["CUENTA DE DEPOSITO", "CUENTA DESTINO", "CUENTA DE ABONO"],
-            max_len=40,
+    # --- Split text into payment segments ---
+    # Multi-payment documents repeat the structure per page / per section.
+    # For "Grupo Pago" (Type B) we split on "TIPO DE OPERACION" — it marks
+    # the very first field of each payment block and is far less likely to
+    # appear spuriously in footers / summaries than "CUENTA DE RETIRO".
+    # For Type A (comprobante) we keep the original "CUENTA DE RETIRO" split.
+    segment_starts: list[int] = []
+    if is_grupo_pago:
+        for idx, key in enumerate(normalized_keys):
+            if key.startswith("TIPODEOPERACION"):
+                segment_starts.append(idx)
+    if not segment_starts:
+        # Fallback (Type A, or Type B where TIPO DE OPERACION was not found)
+        for idx, key in enumerate(normalized_keys):
+            if key.startswith("CUENTADERETIRO"):
+                segment_starts.append(idx)
+
+    if not segment_starts:
+        # Last resort: treat everything as one segment
+        segment_starts = [0]
+
+    # Build segments
+    segments: list[tuple[list[str], list[str], str]] = []
+    for seg_i, start in enumerate(segment_starts):
+        end = segment_starts[seg_i + 1] if seg_i + 1 < len(segment_starts) else len(normalized_lines)
+        seg_lines = normalized_lines[start:end]
+        seg_keys = normalized_keys[start:end]
+        seg_text = "\n".join(seg_lines)
+        segments.append((seg_lines, seg_keys, seg_text))
+
+    logger.info("[BBVA_RECEIPT] is_comprobante=%s, is_grupo_pago=%s, segments=%d, segment_starts=%s",
+                is_comprobante, is_grupo_pago, len(segments), segment_starts)
+
+    # --- Extract one row per segment ---
+    def _extract_one_payment(
+        seg_lines: list[str], seg_keys: list[str], seg_text: str,
+    ) -> list[str] | None:
+        def pick(labels: list[str], lookahead: int = 4, max_len: int = 120) -> str:
+            return _pick_value_from_segment(seg_lines, seg_keys, labels, seg_text, lookahead, max_len)
+
+        cuenta_retiro = _normalize_numeric_field(
+            pick(["CUENTA DE RETIRO"], max_len=30)
         )
-    )
-    importe = _normalize_payment_amount(
-        pick_line_value(["IMPORTE"], max_len=40)
-    )
-    forma_deposito = _normalize_text(
-        pick_line_value(["FORMA DE DEPOSITO"], max_len=80)
-    )
-    concepto = _normalize_text(
-        pick_line_value(["CONCEPTO DE PAGO", "CONCEPTO"], max_len=100)
-    )
-    raw_referencia = pick_line_value(["REFERENCIA NUMERICA", "REFERENCIA"], max_len=40)
-    referencia = _normalize_value_for_key("referencia", raw_referencia)
-    if not referencia:
-        short_reference = _normalize_numeric_field(raw_referencia)
-        if re.fullmatch(r"\d{1,3}", short_reference or ""):
-            referencia = short_reference
-    if not referencia:
-        for idx, line_key in enumerate(normalized_keys):
-            if "REFERENCIA" not in line_key:
-                continue
-            for next_idx in range(idx + 1, min(len(normalized_lines), idx + 3)):
-                candidate_line = normalized_lines[next_idx]
-                candidate_key = normalized_keys[next_idx]
-                if any(
-                    token in candidate_key
-                    for token in ("CLAVE", "NOMBRE", "IMPORTE", "CONCEPTO", "BANCO", "CUENTA", "FORMA")
-                ):
-                    continue
-                candidate = _normalize_value_for_key("referencia", candidate_line)
-                if not candidate:
-                    short_candidate = _normalize_numeric_field(candidate_line)
-                    if re.fullmatch(r"\d{1,3}", short_candidate or ""):
-                        candidate = short_candidate
-                if candidate:
-                    referencia = candidate
-                    break
-            if referencia:
-                break
-    clave_rastreo = _normalize_text(
-        pick_line_value(["CLAVE DE RASTREO", "CLAVE RASTREO"], max_len=80)
-    )
-
-    nombre = ""
-    beneficiary_match = re.search(
-        r"DATOS\s+DEL\s+BENEFICIARIO\s+NOMBRE\s*:?\s*([^\n\r]{4,120})",
-        str(raw_text or ""),
-        flags=re.IGNORECASE,
-    )
-    if beneficiary_match:
-        candidate = _normalize_name(beneficiary_match.group(1))
-        if candidate and _looks_like_person_name(candidate):
-            nombre = candidate
-    if not nombre:
-        candidate_short = _normalize_name(
-            pick_line_value(["NOMBRE CORTO"])
+        cuenta_destino = _normalize_numeric_field(
+            pick(
+                ["CUENTA DE DEPOSITO", "CUENTA DESTINO", "CUENTA DE ABONO", "CUENTA DEPOSITO",
+                 "CUENTA DE DEPSITO"],
+                max_len=40,
+            )
         )
-        if candidate_short and _looks_like_person_name(candidate_short):
-            nombre = candidate_short
+        importe = _normalize_payment_amount(
+            pick(["IMPORTE"], max_len=40)
+        )
 
-    estatus = ""
-    status_match = re.search(r"\b(APLICADO|ACEPTADO|TRANSMITIDO|RECHAZADO|PROCESADO)\b", full)
-    if status_match:
-        estatus = _normalize_text(status_match.group(1))
-    elif "ENPROCESODEVALIDACION" in full_key:
-        estatus = "EN PROCESO"
+        if is_grupo_pago:
+            # --- Type B: Grupo Pago Mismo Banco ---
+            # Fields match the PDF exactly
+            tipo_operacion = _normalize_text(
+                pick(["TIPO DE OPERACION"], max_len=90)
+            )
+            descripcion = _normalize_text(
+                pick(["DESCRIPCION"], max_len=100)
+            )
+            divisa = _normalize_text(
+                pick(["DIVISA DE LA CUENTA", "DIVISA"], max_len=20)
+            )
+            # Titular = account holder name
+            titular = _normalize_text(
+                pick(["TITULAR DE LA CUENTA", "TITULAR"], max_len=120)
+            )
+            # If pick returned nothing, try regex as fallback
+            if not titular:
+                titular_match = re.search(
+                    r"TITULAR\s+(?:DE\s+LA\s+CUENTA)?\s*:?\s*([A-Z .'\-]{4,120})",
+                    _ascii_fold(seg_text).upper(),
+                )
+                if titular_match:
+                    titular = _normalize_text(titular_match.group(1))
+            if not titular:
+                candidate_short = _normalize_text(pick(["NOMBRE CORTO"]))
+                if candidate_short:
+                    titular = candidate_short
 
-    populated = sum(
-        1
-        for value in [
-            cuenta_retiro,
-            cuenta_destino,
-            importe,
-            banco_destino,
-            referencia,
-            clave_rastreo,
-            nombre,
+            fecha_creacion = _normalize_text(
+                pick(["FECHA DE CREACION"], max_len=40)
+            )
+            fecha_aplicacion = _normalize_text(
+                pick(["FECHA DE APLICACION"], max_len=40)
+            )
+            hora_captura = _normalize_text(
+                pick(["HORA DE CAPTURA EN EL CANAL", "HORA DE CAPTURA"], max_len=20)
+            )
+            motivo_pago = _normalize_text(
+                pick(["MOTIVO DE PAGO"], max_len=80)
+            )
+            folio_firma = _normalize_text(
+                pick(["FOLIO DE FIRMA"], max_len=30)
+            )
+            folio_unico = _normalize_text(
+                pick(["FOLIO UNICO"], max_len=50)
+            )
+            # Estado
+            estado = ""
+            seg_full = " ".join(seg_lines)
+            estado_match = re.search(
+                r"ESTADO\s*:?\s*(OPERADO|APLICADO|ACEPTADO|TRANSMITIDO|RECHAZADO|PROCESADO|EN\s+PROCESO)",
+                _ascii_fold(seg_full).upper(),
+            )
+            if estado_match:
+                estado = _normalize_text(estado_match.group(1))
+            if not estado:
+                status_match = re.search(
+                    r"\b(APLICADO|ACEPTADO|TRANSMITIDO|RECHAZADO|PROCESADO|OPERADO)\b",
+                    seg_full,
+                )
+                if status_match:
+                    estado = _normalize_text(status_match.group(1))
+
+            # Quality gate
+            populated = sum(
+                1 for v in [cuenta_retiro, cuenta_destino, importe, folio_firma, estado]
+                if v
+            )
+            if populated < 3:
+                return None
+
+            return [
+                tipo_operacion,
+                descripcion,
+                importe,
+                cuenta_retiro,
+                cuenta_destino,
+                divisa,
+                titular,
+                fecha_creacion,
+                fecha_aplicacion,
+                hora_captura,
+                motivo_pago,
+                folio_firma,
+                folio_unico,
+                estado,
+            ]
+        else:
+            # --- Type A: Comprobante de traspaso ---
+            tipo_operacion = _normalize_text(
+                pick(["TIPO DE OPERACION"], max_len=90)
+            )
+            banco_destino = _normalize_text(
+                pick(["BANCO DESTINO"], max_len=80)
+            )
+            forma_deposito = _normalize_text(
+                pick(["FORMA DE DEPOSITO"], max_len=80)
+            )
+            concepto_raw = pick(["CONCEPTO DE PAGO", "CONCEPTO"], max_len=100)
+            concepto = _normalize_text(concepto_raw)
+            if not concepto:
+                desc_raw = pick(["DESCRIPCION"], max_len=100)
+                concepto = _normalize_text(desc_raw)
+            raw_referencia = pick(["REFERENCIA NUMERICA", "REFERENCIA"], max_len=40)
+            referencia = _normalize_value_for_key("referencia", raw_referencia)
+            if not referencia:
+                short_reference = _normalize_numeric_field(raw_referencia)
+                if re.fullmatch(r"\d{1,3}", short_reference or ""):
+                    referencia = short_reference
+            if not referencia:
+                for idx, line_key in enumerate(seg_keys):
+                    if "REFERENCIA" not in line_key:
+                        continue
+                    for next_idx in range(idx + 1, min(len(seg_lines), idx + 3)):
+                        candidate_line = seg_lines[next_idx]
+                        candidate_key = seg_keys[next_idx]
+                        if any(
+                            token in candidate_key
+                            for token in ("CLAVE", "NOMBRE", "IMPORTE", "CONCEPTO", "BANCO", "CUENTA", "FORMA")
+                        ):
+                            continue
+                        candidate = _normalize_value_for_key("referencia", candidate_line)
+                        if not candidate:
+                            short_candidate = _normalize_numeric_field(candidate_line)
+                            if re.fullmatch(r"\d{1,3}", short_candidate or ""):
+                                candidate = short_candidate
+                        if candidate:
+                            referencia = candidate
+                            break
+                    if referencia:
+                        break
+            clave_rastreo = _normalize_text(
+                pick(["CLAVE DE RASTREO", "CLAVE RASTREO"], max_len=80)
+            )
+            nombre = ""
+            beneficiary_match = re.search(
+                r"DATOS\s+DEL\s+BENEFICIARIO\s+NOMBRE\s*:?\s*([^\n\r]{4,120})",
+                seg_text,
+                flags=re.IGNORECASE,
+            )
+            if beneficiary_match:
+                candidate = _normalize_name(beneficiary_match.group(1))
+                if candidate and _looks_like_person_name(candidate):
+                    nombre = candidate
+            if not nombre:
+                candidate_short = _normalize_name(pick(["NOMBRE CORTO"]))
+                if candidate_short and _looks_like_person_name(candidate_short):
+                    nombre = candidate_short
+            if not nombre:
+                titular_match = re.search(
+                    r"TITULAR\s+DE\s+LA\s+CUENTA\s*:?\s*([A-Z .']{4,120})",
+                    _ascii_fold(seg_text).upper(),
+                )
+                if titular_match:
+                    candidate_tit = _normalize_name(titular_match.group(1))
+                    if candidate_tit and _looks_like_person_name(candidate_tit):
+                        nombre = candidate_tit
+            estatus = ""
+            seg_full = " ".join(seg_lines)
+            seg_full_key = " ".join(seg_keys)
+            estado_match = re.search(
+                r"ESTADO\s*:?\s*(OPERADO|APLICADO|ACEPTADO|TRANSMITIDO|RECHAZADO|PROCESADO|EN\s+PROCESO)",
+                _ascii_fold(seg_full).upper(),
+            )
+            if estado_match:
+                estatus = _normalize_text(estado_match.group(1))
+            if not estatus:
+                status_match = re.search(r"\b(APLICADO|ACEPTADO|TRANSMITIDO|RECHAZADO|PROCESADO|OPERADO)\b", seg_full)
+                if status_match:
+                    estatus = _normalize_text(status_match.group(1))
+            if not estatus and "ENPROCESODEVALIDACION" in seg_full_key:
+                estatus = "EN PROCESO"
+
+            folio_firma = _normalize_text(pick(["FOLIO DE FIRMA"], max_len=30))
+            folio_unico = _normalize_text(pick(["FOLIO UNICO"], max_len=50))
+            fecha_aplicacion = _normalize_text(pick(["FECHA DE APLICACION"], max_len=40))
+            motivo_pago = _normalize_text(pick(["MOTIVO DE PAGO"], max_len=80))
+
+            populated = sum(
+                1
+                for value in [
+                    cuenta_retiro, cuenta_destino, importe,
+                    banco_destino or folio_firma,
+                    referencia or clave_rastreo,
+                    nombre, estatus,
+                ]
+                if value
+            )
+            if populated < 3:
+                return None
+
+            return [
+                cuenta_retiro,
+                tipo_operacion,
+                banco_destino,
+                cuenta_destino,
+                importe,
+                forma_deposito,
+                concepto,
+                referencia,
+                clave_rastreo,
+                nombre,
+                estatus,
+                folio_firma,
+                folio_unico,
+                fecha_aplicacion,
+                motivo_pago,
+            ]
+
+    # --- Header depends on document type ---
+    if is_grupo_pago:
+        header = [
+            "TIPO DE OPERACION",
+            "DESCRIPCION",
+            "IMPORTE",
+            "CUENTA DE RETIRO",
+            "CUENTA DE DEPOSITO",
+            "DIVISA",
+            "TITULAR",
+            "FECHA DE CREACION",
+            "FECHA DE APLICACION",
+            "HORA DE CAPTURA",
+            "MOTIVO DE PAGO",
+            "FOLIO DE FIRMA",
+            "FOLIO UNICO",
+            "ESTADO",
         ]
-        if value
-    )
-    if populated < 4:
+    else:
+        header = [
+            "CUENTA DE RETIRO",
+            "TIPO DE OPERACION",
+            "BANCO DESTINO",
+            "CUENTA DE DEPOSITO",
+            "IMPORTE",
+            "FORMA DE DEPOSITO",
+            "CONCEPTO DE PAGO",
+            "REFERENCIA NUMERICA",
+            "CLAVE DE RASTREO",
+            "NOMBRE",
+            "ESTATUS",
+            "FOLIO DE FIRMA",
+            "FOLIO UNICO",
+            "FECHA DE APLICACION",
+            "MOTIVO DE PAGO",
+        ]
+
+    result_rows: list[list[str]] = []
+    seen_folios: set[str] = set()
+    for seg_idx, (seg_lines, seg_keys, seg_text) in enumerate(segments):
+        logger.info("[BBVA_RECEIPT] Segment %d: %d lines, first_key=%s",
+                    seg_idx, len(seg_lines), seg_keys[0] if seg_keys else "EMPTY")
+        row = _extract_one_payment(seg_lines, seg_keys, seg_text)
+        if row:
+            logger.info("[BBVA_RECEIPT] Segment %d produced row with %d cols: %s",
+                        seg_idx, len(row), row)
+            # Deduplicate by folio_unico (index 12 in both Type A and Type B).
+            # If two segments produce the same folio they are the same payment.
+            folio_val = row[12] if len(row) > 12 else ""
+            if folio_val:
+                if folio_val in seen_folios:
+                    logger.info("[BBVA_RECEIPT] Segment %d SKIPPED (dup folio=%s)", seg_idx, folio_val)
+                    continue  # skip duplicate payment
+                seen_folios.add(folio_val)
+            result_rows.append(row)
+        else:
+            logger.info("[BBVA_RECEIPT] Segment %d returned None (quality gate)", seg_idx)
+
+    if not result_rows:
         return []
 
-    header = [
-        "CUENTA DE RETIRO",
-        "TIPO DE OPERACION",
-        "BANCO DESTINO",
-        "CUENTA DE DEPOSITO",
-        "IMPORTE",
-        "FORMA DE DEPOSITO",
-        "CONCEPTO DE PAGO",
-        "REFERENCIA NUMERICA",
-        "CLAVE DE RASTREO",
-        "NOMBRE",
-        "ESTATUS",
-    ]
-    row = [
-        cuenta_retiro,
-        tipo_operacion,
-        banco_destino,
-        cuenta_destino,
-        importe,
-        forma_deposito,
-        concepto,
-        referencia,
-        clave_rastreo,
-        nombre,
-        estatus,
-    ]
-    return [header, row]
+    # Remove columns that are entirely empty across all rows
+    non_empty_cols: list[int] = []
+    for col_i in range(len(header)):
+        if any(row[col_i] for row in result_rows if col_i < len(row)):
+            non_empty_cols.append(col_i)
+    header = [header[i] for i in non_empty_cols]
+    result_rows = [[row[i] if i < len(row) else "" for i in non_empty_cols] for row in result_rows]
+
+    return [header] + result_rows
 
 
 def _normalize_payment_table_rows(rows: list[list[str]]) -> list[list[str]]:
@@ -2519,13 +2821,26 @@ def _extract_payment_table_rows_from_pdf_tables(pdf_tables: list[list[list[str]]
         return []
 
     # Step 1: clean each table
+    def _safe_cell(cell: object) -> str:
+        """Convert a PyMuPDF cell to string, treating None/NaN as empty."""
+        if cell is None:
+            return ""
+        if isinstance(cell, float):
+            import math
+            if math.isnan(cell):
+                return ""
+        text = str(cell).strip()
+        if text.upper() == "NAN":
+            return ""
+        return text
+
     cleaned_tables: list[list[list[str]]] = []
     for table_rows in pdf_tables:
         if not table_rows or len(table_rows) < 2:
             continue
         cleaned: list[list[str]] = []
         for row in table_rows:
-            cleaned_row = [str(cell or "").strip() for cell in row]
+            cleaned_row = [_safe_cell(cell) for cell in row]
             if any(c for c in cleaned_row):
                 cleaned.append(cleaned_row)
         if len(cleaned) >= 2:
@@ -2576,6 +2891,15 @@ def _extract_payment_table_rows_from_pdf_tables(pdf_tables: list[list[list[str]]
         if score > best_score:
             best_score = score
             best_rows = candidate
+
+    # Step 5: strip trailing junk columns (footer/contact noise from PyMuPDF)
+    if best_rows and len(best_rows) >= 2:
+        header = best_rows[0]
+        last_valid = len(header) - 1
+        while last_valid >= 0 and _is_junk_payment_header(header[last_valid]):
+            last_valid -= 1
+        if 0 <= last_valid < len(header) - 1:
+            best_rows = [row[:last_valid + 1] for row in best_rows]
 
     return best_rows
 
@@ -2650,17 +2974,31 @@ def _extract_payment_table_payload(base_text_raw: str, ocr_boxes, pdf_tables: li
         source = "generic_table_payload"
         selected_table_index = int(fallback_table.get("table_index", 0) or 0)
 
-    if source == "ocr_boxes":
-        rows = _merge_payment_rows_with_backup(rows, rows_text)
-    elif source == "text_lines":
-        rows = _merge_payment_rows_with_backup(rows, rows_ocr)
-    elif source == "pdf_structure":
-        # PDF structural tables are authoritative; use OCR as secondary
-        backup = rows_ocr if len(rows_ocr) >= 2 else rows_text
-        if len(backup) >= 2:
-            rows = _merge_payment_rows_with_backup(rows, backup)
-    else:
-        rows = _merge_payment_rows_with_backup(rows, rows_ocr)
+    # Detect if the winning rows come from a BBVA vertical key-value receipt.
+    # These are self-contained and must NOT be merged with generic text/pdf
+    # sources, which would add junk columns and duplicate rows.
+    # Type A (comprobante) header starts with "CUENTA DE RETIRO".
+    # Type B (grupo pago)  header starts with "TIPO DE OPERACION".
+    _first_header_key = (
+        _normalize_keyword(str(rows[0][0] or "")) if (rows and rows[0]) else ""
+    )
+    _is_bbva_receipt_rows = (
+        len(rows) >= 2
+        and _first_header_key.startswith(("CUENTADERETIRO", "TIPODEOPERACION"))
+    )
+
+    if not _is_bbva_receipt_rows:
+        if source == "ocr_boxes":
+            rows = _merge_payment_rows_with_backup(rows, rows_text)
+        elif source == "text_lines":
+            rows = _merge_payment_rows_with_backup(rows, rows_ocr)
+        elif source == "pdf_structure":
+            # PDF structural tables are authoritative; use OCR as secondary
+            backup = rows_ocr if len(rows_ocr) >= 2 else rows_text
+            if len(backup) >= 2:
+                rows = _merge_payment_rows_with_backup(rows, backup)
+        else:
+            rows = _merge_payment_rows_with_backup(rows, rows_ocr)
 
     rows = _append_scotia_summary_rows_to_table(rows, base_text_raw)
     rows = _normalize_payment_table_rows(rows)
@@ -2785,6 +3123,22 @@ def _build_payment_mapped_fields(payment_detail: dict) -> dict[str, str]:
         if value:
             mapped[target_key] = value
 
+    # Reconstruct nombre_beneficiario from available parts if not already present
+    if "nombre_beneficiario" not in mapped:
+        if "apellido_paterno" in mapped or "apellido_materno" in mapped:
+            # Document had separate columns — combine them
+            parts = [
+                mapped.get("nombre", ""),
+                mapped.get("apellido_paterno", ""),
+                mapped.get("apellido_materno", ""),
+            ]
+            full_name = " ".join(p for p in parts if p).strip()
+        else:
+            # Document had a single name column — nombre contains full name
+            full_name = mapped.get("nombre", "")
+        if full_name:
+            mapped["nombre_beneficiario"] = full_name
+
     return mapped
 
 
@@ -2837,6 +3191,33 @@ def _enrich_payment_table_payload(
             if rows:
                 enriched["canonical_rows"] = rows
                 enriched["canonical_row_count"] = len(rows)
+
+        # Propagate display_columns (original PDF header labels) to table payload
+        display_columns = detail_table.get("display_columns")
+        if isinstance(display_columns, dict) and display_columns:
+            enriched["display_columns"] = display_columns
+
+        # When summary_tables exist (BBVA Grupo Pago multi-payment), replace
+        # the raw structural rows with clean canonical data so the "Tabla
+        # detectada" panel does not show junk footer fragments.
+        # Only for BBVA grupo-pago — Scotiabank summary tables are additive
+        # and should not replace the main table.
+        summary_tables = detail_table.get("summary_tables")
+        if isinstance(summary_tables, list) and summary_tables:
+            enriched["summary_tables"] = summary_tables
+            if bank.upper() == "BBVA" and not enriched.get("canonical_rows"):
+                # canonical_rows is empty → grupo pago split is active
+                first_st = summary_tables[0]
+                if isinstance(first_st, dict) and first_st.get("columns"):
+                    clean_header = [str(c) for c in first_st["columns"]]
+                    clean_rows: list[list[str]] = [clean_header]
+                    for st in summary_tables:
+                        if isinstance(st, dict) and isinstance(st.get("rows"), list):
+                            for r in st["rows"]:
+                                if isinstance(r, list):
+                                    clean_rows.append([str(c or "") for c in r])
+                    enriched["rows"] = clean_rows
+                    enriched["source"] = "payment_detail_summary"
 
     mapped_fields = _build_payment_mapped_fields(payment_detail)
     if mapped_fields:
@@ -2907,6 +3288,20 @@ def _dedup_header_cell(cell: str) -> str:
         half = len(upper_tokens) // 2
         if upper_tokens[:half] == upper_tokens[half:]:
             return " ".join(tokens[:half])
+    # Try all possible repeat-unit lengths (smallest first)
+    n = len(upper_tokens)
+    for unit_len in range(2, n // 2 + 1):
+        if n % unit_len == 0:
+            unit = upper_tokens[:unit_len]
+            if all(upper_tokens[i:i + unit_len] == unit for i in range(unit_len, n, unit_len)):
+                return " ".join(tokens[:unit_len])
+    # Fallback: check if the second half is a fuzzy repeat (handles OCR typos)
+    if n >= 4:
+        for half in range(n // 3, (n + 1) // 2 + 1):
+            first_part = " ".join(upper_tokens[:half])
+            second_part = " ".join(upper_tokens[half:])
+            if first_part == second_part:
+                return " ".join(tokens[:half])
     return str(cell or "").strip()
 
 
@@ -2948,9 +3343,9 @@ def _payment_rows_quality_score(rows: list[list[str]]) -> int:
     # Penalizar celdas con múltiples montos (multi-record-per-line)
     amount_hits = len(re.findall(r"\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})\b", data_joined))
     if amount_hits >= 3:
-        score -= 40
+        score -= 60
     elif amount_hits >= 2:
-        score -= 20
+        score -= 35
 
     # Penalizar celdas con múltiples secuencias numéricas largas empaquetadas
     compact_number_hits = sum(1 for cell in data if len(re.findall(r"\b\d{10,24}\b", cell)) >= 2)
@@ -3098,7 +3493,8 @@ def _merge_payment_rows_with_backup(primary_rows: list[list[str]], backup_rows: 
         for token, p_idx in primary_idx.items():
             if p_idx >= len(row):
                 continue
-            if _normalize_text(row[p_idx]):
+            cell_val = _normalize_text(row[p_idx])
+            if cell_val and cell_val.upper() != "NAN":
                 continue
             alias = _payment_header_alias(token)
             b_idx = backup_idx.get(alias)
@@ -3114,10 +3510,49 @@ def _merge_payment_rows_with_backup(primary_rows: list[list[str]], backup_rows: 
 
     # Fast path: same row count → positional merge (order preserved)
     if len(primary_data) == len(backup_data):
-        merged = [primary_header]
+        merged = []
         for p_row, b_row in zip(primary_data, backup_data):
             merged.append(_fill_empty_cells(list(p_row), b_row))
-        return merged
+
+        # Supplement missing columns from backup
+        primary_aliases = {_payment_header_alias(t) for t in primary_idx if _payment_header_alias(t)}
+        missing_cols: list[tuple[str, int]] = []
+        for token, b_idx in backup_idx_raw.items():
+            alias = _payment_header_alias(token)
+            if alias and alias not in primary_aliases:
+                raw_label = str(backup_header[b_idx] if b_idx < len(backup_header) else token)
+                if _is_junk_payment_header(raw_label):
+                    continue  # skip footer/contact noise columns
+                missing_cols.append((raw_label, b_idx))
+
+        if missing_cols:
+            # Pre-compute dominant value per missing column for fallback
+            from collections import Counter
+            dominant_for_col_fp: dict[int, str] = {}
+            for _, b_col_idx in missing_cols:
+                counts: Counter[str] = Counter()
+                for b_row_d in backup_data:
+                    if b_col_idx < len(b_row_d):
+                        val = _normalize_text(str(b_row_d[b_col_idx] or ""))
+                        if val and val.upper() != "NAN":
+                            counts[val] += 1
+                if counts:
+                    dominant_for_col_fp[b_col_idx] = counts.most_common(1)[0][0]
+
+            result_header = list(primary_header)
+            for col_label, _ in missing_cols:
+                result_header.append(col_label)
+            for row_i, row in enumerate(merged):
+                b_row = backup_data[row_i] if row_i < len(backup_data) else []
+                for _, b_col_idx in missing_cols:
+                    if b_col_idx < len(b_row):
+                        val = str(b_row[b_col_idx] or "")
+                        row.append(val if val and val.upper() != "NAN" else dominant_for_col_fp.get(b_col_idx, ""))
+                    else:
+                        row.append(dominant_for_col_fp.get(b_col_idx, ""))
+            return [result_header] + merged
+
+        return [primary_header] + merged
 
     # Content-based matching: for each primary row find best backup match
     # Track which backup index matched each primary position for ordering
@@ -3177,6 +3612,65 @@ def _merge_payment_rows_with_backup(primary_rows: list[list[str]], backup_rows: 
     unmatched_backups.sort(key=lambda x: x[0], reverse=True)
     for insert_after, new_row in unmatched_backups:
         merged_data.insert(insert_after + 1, new_row)
+
+    # --- Supplement missing columns from backup ---
+    # If the backup has columns that the primary doesn't (e.g., ESTATUS,
+    # CONCEPTO), add them so no data is lost.
+    primary_aliases = {_payment_header_alias(t) for t in primary_idx if _payment_header_alias(t)}
+    missing_cols: list[tuple[str, int]] = []  # (backup_header_cell, backup_col_index)
+    for token, b_idx in backup_idx_raw.items():
+        alias = _payment_header_alias(token)
+        if alias and alias not in primary_aliases:
+            raw_label = str(backup_header[b_idx] if b_idx < len(backup_header) else token)
+            if _is_junk_payment_header(raw_label):
+                continue  # skip footer/contact noise columns
+            missing_cols.append((raw_label, b_idx))
+
+    if missing_cols:
+        # Pre-compute the dominant (most common non-empty) value per missing
+        # backup column.  Used as fallback when a primary row has no matched
+        # backup row (e.g. ESTATUS = "PROCESADO" for every row).
+        from collections import Counter
+        dominant_for_col: dict[int, str] = {}
+        for _, b_col_idx in missing_cols:
+            counts: Counter[str] = Counter()
+            for b_row in backup_data:
+                if b_col_idx < len(b_row):
+                    val = _normalize_text(str(b_row[b_col_idx] or ""))
+                    if val and val.upper() != "NAN":
+                        counts[val] += 1
+            if counts:
+                dominant_for_col[b_col_idx] = counts.most_common(1)[0][0]
+
+        # Find matched backup rows for each merged_data row
+        matched_backup_for_row: list[list[str] | None] = []
+        if len(primary_data) == len(backup_data):
+            # Fast-path merge used positional matching
+            matched_backup_for_row = [list(b) for b in backup_data]
+        else:
+            for p_i in range(len(merged_data)):
+                b_i = primary_to_backup.get(p_i)
+                if b_i is not None and b_i < len(backup_data):
+                    matched_backup_for_row.append(list(backup_data[b_i]))
+                else:
+                    matched_backup_for_row.append(None)
+
+        # Extend header and all data rows with the missing columns
+        result_header = list(primary_header if len(primary_data) == len(backup_data) else primary_header)
+        for col_label, _ in missing_cols:
+            result_header.append(col_label)
+
+        for row_i, row in enumerate(merged_data):
+            backup_row = matched_backup_for_row[row_i] if row_i < len(matched_backup_for_row) else None
+            for _, b_col_idx in missing_cols:
+                if backup_row and b_col_idx < len(backup_row):
+                    val = str(backup_row[b_col_idx] or "")
+                    row.append(val if val and val.upper() != "NAN" else dominant_for_col.get(b_col_idx, ""))
+                else:
+                    # No matched backup row — use dominant value as fallback
+                    row.append(dominant_for_col.get(b_col_idx, ""))
+
+        return [result_header] + merged_data
 
     return [primary_header] + merged_data
 
@@ -3767,6 +4261,37 @@ def _payment_header_keys_from_cells(cells: list[str]) -> list[str]:
     return normalized
 
 
+def _build_display_columns_map(raw_rows: list[list[str]], bank: str) -> dict[str, str]:
+    """Map canonical column keys → original PDF header labels.
+
+    Enables the frontend to show column headers exactly as they appear
+    in the source PDF rather than generic canonical names.
+    """
+    if not raw_rows:
+        return {}
+    raw_headers = raw_rows[0]
+    if not raw_headers:
+        return {}
+
+    normalized_keys = _payment_header_keys_from_cells(raw_headers)
+    display_map: dict[str, str] = {}
+    for raw_header, norm_key in zip(raw_headers, normalized_keys):
+        canonical_key = _canonical_payment_key(bank, norm_key)
+        if not canonical_key:
+            continue
+        label = _dedup_header_cell(str(raw_header or "").strip())
+        if label:
+            display_map[canonical_key] = label
+
+    # If nombre_beneficiario was mapped but we keep full name as "nombre",
+    # carry the original label forward.
+    if "nombre_beneficiario" in display_map and "nombre" not in display_map:
+        display_map["nombre"] = display_map["nombre_beneficiario"]
+    display_map.pop("nombre_beneficiario", None)
+
+    return display_map
+
+
 _SUMMARY_ROW_MARKERS = frozenset({
     "CANTIDAD DE MOVIMIENTOS ALTAS",
     "IMPORTE DE MOVIMIENTO ALTAS",
@@ -3796,6 +4321,78 @@ def _is_summary_row(row: list[str]) -> bool:
     return False
 
 
+_METADATA_NOISE_PATTERNS = (
+    "NUMERODECONTRATO",
+    "NUMERO DE CONTRATO",
+    "NUMERODESECUENCIA",
+    "NUMERO DE SECUENCIA",
+    "COMPROBANTE DE LA OPERACION",
+    "DATOS DEL CLIENTE PAGAD",
+    "DATOSDELCLIENTE",
+)
+
+
+def _is_metadata_row(row: list[str]) -> bool:
+    """Detect metadata label rows that leaked into the table.
+
+    Rows containing document metadata labels (contract numbers, sequence IDs,
+    etc.) should NOT be data rows in the payment table.
+    """
+    row_joined = " ".join(str(cell or "").strip().upper() for cell in row)
+    noise_count = sum(1 for pat in _METADATA_NOISE_PATTERNS if pat in row_joined)
+    if noise_count >= 2:
+        return True
+    # If a cell IS a known metadata label (not data), skip the row
+    for cell in row:
+        upper = str(cell or "").strip().upper()
+        if not upper:
+            continue
+        # Pure metadata labels (short text with colon-like patterns)
+        if upper in ("TIPO DE OPERACION:", "FECHA DE ENVIO DE PAGO:", "CUENTA", "IMPORTE", "NOMBRE"):
+            # Check if this looks like a re-emitted header instead of data
+            if upper in ("CUENTA", "IMPORTE", "NOMBRE"):
+                non_empty = [c for c in row if str(c or "").strip()]
+                # If most cells are header-like tokens, this is a re-emitted header
+                header_like = sum(1 for c in non_empty if _normalize_keyword(c).upper() in
+                    ("CUENTA", "IMPORTE", "NOMBRE", "REFERENCIA", "ESTATUS", "CONCEPTO",
+                     "APELLIDOPATERNO", "APELLIDOMATERNO"))
+                if header_like >= 3:
+                    return True
+    return False
+
+
+def _clean_metadata_from_cell(value: str) -> str:
+    """Remove metadata fragments from a data cell value."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    # Remove patterns like "NUMERODECONTRATOENLACE:80122978989"
+    text = re.sub(r"NUMERO\s*DE\s*CONTRATO\s*(?:ENLACE)?[:\s]*\d+", "", text, flags=re.IGNORECASE)
+    # Remove patterns like "NUMERODESECUENCIADELARCHIVO:992026011513432707Z426"
+    text = re.sub(r"NUMERO\s*DE\s*SECUENCIA\s*DEL?\s*ARCHIVO[:\s]*[\w]+", "", text, flags=re.IGNORECASE)
+    # Remove "COMPROBANTE DE LA OPERACION" repeated noise
+    text = re.sub(r"(?:COMPROBANTE\s+DE\s+LA\s+OPERACION\s*)+", "", text, flags=re.IGNORECASE)
+    # Remove "DISPERSION DE PAGO DE NOMINA" repeated noise (when it's noise, not data)
+    text = re.sub(r"(?:DISPERSION\s+DE\s+PAGO\s+DE\s+NOMINA\s*){2,}", "", text, flags=re.IGNORECASE)
+    # Remove "REPORTE DE OPERACIONES" noise
+    text = re.sub(r"REPORTE\s+DE\s+OPERACIONES\s*", "", text, flags=re.IGNORECASE)
+    # Remove "DATOSDELCLIENTEPAGAD..." noise
+    text = re.sub(r"DATOS\s*DEL?\s*CLIENTE\s*PAGAD\w*", "", text, flags=re.IGNORECASE)
+    # Remove "Estatus:Procesado" repeated noise
+    text = re.sub(r"(?:Estatus\s*:\s*\w+\s*){2,}", "", text, flags=re.IGNORECASE)
+    # Remove "Concepto:Pago de Nomina" repeated noise
+    text = re.sub(r"(?:Concepto\s*:\s*(?:Pago\s+de\s+(?:N[oó]mina|Nomina))\s*){2,}", "", text, flags=re.IGNORECASE)
+    # Remove "Concepto 2:" repeated noise
+    text = re.sub(r"(?:Concepto\s+\d+\s*:\s*){2,}", "", text, flags=re.IGNORECASE)
+    # Remove "Importe:$NNN.NN MXN" repeated noise
+    text = re.sub(r"(?:Importe\s*:\s*\$[\d,.]+\s*MXN\s*){2,}", "", text, flags=re.IGNORECASE)
+    # Remove "Apellido paterno:XXXX" / "Apellido materno:XXXX" labels
+    text = re.sub(r"Apellido\s+(?:paterno|materno)\s*:", "", text, flags=re.IGNORECASE)
+    # Collapse whitespace
+    text = re.sub(r"\s{2,}", " ", text).strip()
+    return text
+
+
 def _payment_rows_to_objects(rows: list[list[str]]) -> list[dict]:
     if len(rows) < 2:
         return []
@@ -3806,12 +4403,16 @@ def _payment_rows_to_objects(rows: list[list[str]]) -> list[dict]:
         # Skip summary sub-header/data rows (extracted separately)
         if _is_summary_row(row):
             continue
+        # Skip metadata label rows that leaked into the table
+        if _is_metadata_row(row):
+            continue
         item: dict[str, str] = {}
         for idx, key in enumerate(keys):
             if idx >= len(row):
                 item[key] = ""
             else:
-                item[key] = _normalize_text(str(row[idx] or ""))
+                cleaned = _clean_metadata_from_cell(str(row[idx] or ""))
+                item[key] = _normalize_text(cleaned)
         if any(str(v).strip() for v in item.values()):
             objects.append(item)
     return objects[:80]
@@ -3851,6 +4452,7 @@ def _canonical_payment_key(bank: str, raw_key: str) -> str:
         "apellidomaterno": "apellido_materno",
         "apellidopaternoapellidomaternoestatus": "apellido_combo_estatus",
         "estatus": "estatus",
+        "estado": "estado",
         "concepto": "concepto_pago",
         "conceptopago": "concepto_pago",
         "conceptodepago": "concepto_pago",
@@ -3932,6 +4534,7 @@ def _canonical_payment_key(bank: str, raw_key: str) -> str:
         "montopago": "importe",
         "cantidad": "importe",
         "importepago": "importe",
+        "importado": "importe",
         "saldo": "importe",
         "cuentacargo": "cuenta_retiro",
         "cuentaorigen": "cuenta_retiro",
@@ -3958,8 +4561,36 @@ def _canonical_payment_key(bank: str, raw_key: str) -> str:
     if fuzzy:
         return fuzzy
 
+    # Try to detect doubled canonical keys (e.g. "referenciareferencia" → "referencia")
+    # This happens when header dedup fails to strip multi-page OCR repeats.
+    if len(key) >= 10:
+        for split_pos in range(4, len(key) // 2 + 1):
+            prefix = key[:split_pos]
+            remainder = key[split_pos:]
+            if prefix == remainder:
+                deduped = base_map.get(prefix)
+                if deduped:
+                    return deduped
+                deduped_fuzzy = _FUZZY_ALIASES.get(prefix)
+                if deduped_fuzzy:
+                    return deduped_fuzzy
+
+    # Pure numeric keys are never valid column names (phone numbers, codes)
+    if key.isdigit():
+        return ""
+
     # Drop unrecognized keys that look like OCR noise (contain digits mixed with letters)
-    if re.search(r"\d", key) and re.search(r"[a-z]", key) and len(key) < 8:
+    if re.search(r"\d", key) and re.search(r"[a-z]", key):
+        return ""
+
+    # Drop excessively long unrecognized keys (likely OCR concatenation noise)
+    if len(key) > 40:
+        return ""
+
+    # Reject leftover geographic / contact-info noise that survived normalization
+    _NOISE_STEMS = ("GUADALAJARA", "MONTERREY", "RESTODEL", "CIUDADDEMEXICO", "LADASINCOSTO")
+    key_upper = key.upper()
+    if any(ns in key_upper for ns in _NOISE_STEMS):
         return ""
 
     return key
@@ -4013,19 +4644,46 @@ def _payment_to_canonical_rows(bank: str, rows: list[dict]) -> tuple[list[str], 
 
         full_name = _normalize_text(str(canonical_row.get("nombre_beneficiario") or ""))
         if full_name:
-            nombre, apellido_paterno, apellido_materno = _split_payment_name_parts(full_name)
-            if nombre and not canonical_row.get("nombre"):
-                canonical_row["nombre"] = nombre
+            # Only split into nombre/apellido parts if the document already
+            # has separate apellido columns (from original headers or combo handler).
+            # Otherwise, keep the full name intact — faithful to the PDF.
+            has_separate_apellidos = bool(
+                canonical_row.get("apellido_paterno")
+                or canonical_row.get("apellido_materno")
+            )
+            if has_separate_apellidos:
+                nombre, apellido_paterno, apellido_materno = _split_payment_name_parts(full_name)
+                if nombre and not canonical_row.get("nombre"):
+                    canonical_row["nombre"] = nombre
+                    if "nombre" not in canonical_keys:
+                        # Insert at the position of nombre_beneficiario to preserve PDF column order
+                        if "nombre_beneficiario" in canonical_keys:
+                            canonical_keys[canonical_keys.index("nombre_beneficiario")] = "nombre"
+                        else:
+                            canonical_keys.append("nombre")
+                if apellido_paterno and not canonical_row.get("apellido_paterno"):
+                    canonical_row["apellido_paterno"] = apellido_paterno
+                    if "apellido_paterno" not in canonical_keys:
+                        canonical_keys.append("apellido_paterno")
+                if apellido_materno and not canonical_row.get("apellido_materno"):
+                    canonical_row["apellido_materno"] = apellido_materno
+                    if "apellido_materno" not in canonical_keys:
+                        canonical_keys.append("apellido_materno")
+            else:
+                # Document has only a single name column — keep the full name
+                canonical_row["nombre"] = full_name
                 if "nombre" not in canonical_keys:
-                    canonical_keys.append("nombre")
-            if apellido_paterno and not canonical_row.get("apellido_paterno"):
-                canonical_row["apellido_paterno"] = apellido_paterno
-                if "apellido_paterno" not in canonical_keys:
-                    canonical_keys.append("apellido_paterno")
-            if apellido_materno and not canonical_row.get("apellido_materno"):
-                canonical_row["apellido_materno"] = apellido_materno
-                if "apellido_materno" not in canonical_keys:
-                    canonical_keys.append("apellido_materno")
+                    # Insert at the position of nombre_beneficiario to preserve PDF column order
+                    if "nombre_beneficiario" in canonical_keys:
+                        canonical_keys[canonical_keys.index("nombre_beneficiario")] = "nombre"
+                    else:
+                        canonical_keys.append("nombre")
+
+            # Remove the original nombre_beneficiario to avoid duplicate Nombre columns
+            canonical_row.pop("nombre_beneficiario", None)
+            # Only remove from canonical_keys if it wasn't already replaced in-place above
+            if "nombre_beneficiario" in canonical_keys:
+                canonical_keys.remove("nombre_beneficiario")
 
         if canonical_row:
             canonical_rows.append(canonical_row)
@@ -4091,6 +4749,38 @@ def _extract_payment_detail_payload(base_text_raw: str, table_payload: dict | No
     canonical_columns, canonical_rows = _payment_to_canonical_rows(bank, row_objects)
     summary_tables = _extract_scotia_summary_tables(text) if bank == "SCOTIABANK" else []
 
+    # Build display_columns: map canonical keys → original PDF header labels
+    display_columns = _build_display_columns_map(rows, bank)
+
+    # Reorder canonical_columns to match original PDF header order.
+    # The in-place replacement in _payment_to_canonical_rows handles most cases,
+    # but derived columns (from combo handlers) may still shift. This ensures
+    # the final order mirrors the PDF.
+    if rows and len(rows) >= 1:
+        header_keys = _payment_header_keys_from_cells(rows[0])
+        header_canonical_order: list[str] = []
+        for hk in header_keys:
+            ck = _canonical_payment_key(bank, hk)
+            if not ck:
+                continue
+            # Handle nombre_beneficiario → nombre replacement
+            if ck == "nombre_beneficiario":
+                ck = "nombre"
+            # Handle apellido_combo_estatus decomposition
+            if ck == "apellido_combo_estatus":
+                for derived in ("apellido_paterno", "apellido_materno", "estatus"):
+                    if derived in canonical_columns and derived not in header_canonical_order:
+                        header_canonical_order.append(derived)
+                continue
+            if ck not in header_canonical_order:
+                header_canonical_order.append(ck)
+        # Append any canonical_columns not derived from header (e.g., inferred columns)
+        for cc in canonical_columns:
+            if cc not in header_canonical_order:
+                header_canonical_order.append(cc)
+        # Filter to only include columns that exist in canonical_columns
+        canonical_columns = [c for c in header_canonical_order if c in canonical_columns]
+
     # --- Pandas-based precision post-processing ---
     try:
         metadata = postprocess_metadata(metadata, bank=bank)
@@ -4103,6 +4793,34 @@ def _extract_payment_detail_payload(base_text_raw: str, table_payload: dict | No
         )
     except Exception:
         logger.warning("postprocess_payment_table failed, using raw table data", exc_info=True)
+
+    # --- BBVA "Grupo Pago Mismo Banco": split multi-payment into separate tables ---
+    text_upper = _ascii_fold(text).upper() if text else ""
+    is_bbva_grupo_pago = (
+        bank == "BBVA"
+        and len(canonical_rows) > 1
+        and any(
+            token in text_upper
+            for token in ("PAGO MISMO BANCO", "OPERACION AUTORIZADA", "GRUPO PAGO")
+        )
+    )
+    if is_bbva_grupo_pago:
+        # Build display labels for summary_table columns
+        summary_col_labels: list[str] = []
+        for col in canonical_columns:
+            label = display_columns.get(col) or col.replace("_", " ").title()
+            summary_col_labels.append(label)
+
+        for i, crow in enumerate(canonical_rows, 1):
+            cell_values = [str(crow.get(col, "") or "") for col in canonical_columns]
+            summary_tables.append({
+                "title": f"Pago {i}",
+                "columns": list(summary_col_labels),
+                "rows": [cell_values],
+            })
+        # Clear main table so payments appear only as separate summary tables
+        canonical_rows = []
+        row_objects = []
 
     if not metadata and not row_objects and not canonical_rows and not summary_tables:
         return None
@@ -4127,6 +4845,7 @@ def _extract_payment_detail_payload(base_text_raw: str, table_payload: dict | No
             "canonical_columns": canonical_columns,
             "canonical_row_count": len(canonical_rows),
             "canonical_rows": canonical_rows,
+            "display_columns": display_columns,
             "summary_tables": summary_tables,
         },
     }

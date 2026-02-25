@@ -2,7 +2,9 @@ import { DocumentField } from '../../../shared/models/document.models';
 
 const TABLE_FIELD_KEYS = new Set(['tabla_celdas', 'tabla', 'celdas', 'table_cells']);
 const HEADER_HINTS = ['TIPO', 'CUENTA', 'REFERENCIA', 'CLAVE', 'NOMBRE', 'BANCO', 'CONCEPTO', 'FECHA', 'MOVIMIENTO', 'IMPORTE'];
-const CANONICAL_TABLE_COLUMNS = [
+
+// Fallback columns used ONLY when the API does not provide canonical_columns
+const FALLBACK_TABLE_COLUMNS = [
   'cuenta',
   'referencia',
   'importe',
@@ -13,17 +15,42 @@ const CANONICAL_TABLE_COLUMNS = [
   'concepto',
 ] as const;
 
-type CanonicalKey = (typeof CANONICAL_TABLE_COLUMNS)[number];
-
-const CANONICAL_LABELS: Record<CanonicalKey, string> = {
+// Comprehensive human-readable labels for ALL canonical column keys
+const CANONICAL_LABELS: Record<string, string> = {
   cuenta: 'Cuenta',
+  cuenta_retiro: 'Cuenta retiro',
+  cuenta_beneficiario: 'Cuenta beneficiario',
+  cuenta_deposito: 'Cuenta deposito',
   referencia: 'Referencia',
   importe: 'Importe',
   nombre: 'Nombre',
+  nombre_beneficiario: 'Nombre',
   apellido_paterno: 'Apellido paterno',
   apellido_materno: 'Apellido materno',
   estatus: 'Estatus',
+  concepto_pago: 'Concepto',
   concepto: 'Concepto',
+  numero_empleado: 'No. Empleado',
+  tipo_cuenta: 'Tipo cuenta',
+  tipo_operacion: 'Tipo operacion',
+  codigo: 'Codigo',
+  descripcion: 'Descripcion',
+  clave_rastreo: 'Clave rastreo',
+  banco_destino: 'Banco destino',
+  forma_deposito: 'Forma deposito',
+  motivo_pago: 'Motivo pago',
+  divisa: 'Divisa',
+  titular: 'Titular',
+  contrato: 'Contrato',
+  folio_firma: 'Folio firma',
+  folio_unico: 'Folio unico',
+  folio_operacion: 'Folio operacion',
+  folio_internet: 'Folio internet',
+  numero_lote: 'No. lote',
+  clave_beneficiario: 'Clave beneficiario',
+  dias_vigencia: 'Dias vigencia',
+  tipo_movimiento: 'Tipo movimiento',
+  banco_receptor: 'Banco receptor',
 };
 
 function normalizeToken(value: string | null | undefined): string {
@@ -45,7 +72,7 @@ function extractRows(payload: unknown): unknown[] | null {
   return null;
 }
 
-function readCanonicalRoot(payload: unknown): { canonicalRows: unknown[] } | null {
+function readCanonicalRoot(payload: unknown): { canonicalRows: unknown[]; canonicalColumns: string[]; displayColumns: Record<string, string> } | null {
   if (!payload || typeof payload !== 'object') {
     return null;
   }
@@ -53,9 +80,11 @@ function readCanonicalRoot(payload: unknown): { canonicalRows: unknown[] } | nul
   const typed = payload as {
     canonical_rows?: unknown;
     canonical_columns?: unknown;
+    display_columns?: Record<string, string>;
     table?: {
       canonical_rows?: unknown;
       canonical_columns?: unknown;
+      display_columns?: Record<string, string>;
     };
   };
 
@@ -67,7 +96,21 @@ function readCanonicalRoot(payload: unknown): { canonicalRows: unknown[] } | nul
     return null;
   }
 
-  return { canonicalRows };
+  // Read canonical_columns from the API payload (root or nested under table)
+  const rootCols = Array.isArray(typed.canonical_columns)
+    ? typed.canonical_columns.map((c) => normalizeToken(c)).filter((c) => c.length > 0)
+    : [];
+  const nestedCols = Array.isArray(typed.table?.canonical_columns)
+    ? typed.table!.canonical_columns.map((c) => normalizeToken(c)).filter((c) => c.length > 0)
+    : [];
+  const canonicalColumns = rootCols.length > 0 ? rootCols : nestedCols;
+
+  // Read display_columns: original PDF header labels
+  const rootDisplay = typed.display_columns && typeof typed.display_columns === 'object' ? typed.display_columns : {};
+  const nestedDisplay = typed.table?.display_columns && typeof typed.table.display_columns === 'object' ? typed.table.display_columns : {};
+  const displayColumns = Object.keys(rootDisplay).length > 0 ? rootDisplay : nestedDisplay;
+
+  return { canonicalRows, canonicalColumns, displayColumns };
 }
 
 function readFirstValue(row: Record<string, unknown>, keys: string[]): string {
@@ -109,7 +152,33 @@ function splitNameParts(fullName: string): { nombre: string; apellidoPaterno: st
   };
 }
 
-function canonicalRowToTableRow(row: Record<string, unknown>): string[] {
+/** Convert a canonical key to a human-readable column label. */
+function labelForColumn(key: string): string {
+  const token = normalizeToken(key);
+  if (CANONICAL_LABELS[token]) {
+    return CANONICAL_LABELS[token];
+  }
+  // Fallback: capitalize and replace underscores
+  const text = token.replace(/_/g, ' ').trim();
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : key;
+}
+
+/**
+ * Build a table row array from a canonical row dict using the given column keys.
+ * This is the dynamic version — it reads whatever columns the API provides.
+ */
+function dynamicRowToTableRow(row: Record<string, unknown>, columns: string[]): string[] {
+  return columns.map((col) => {
+    const value = String(row[col] ?? '').trim();
+    return value;
+  });
+}
+
+/**
+ * Fallback: map a canonical row to the 8 legacy hardcoded columns.
+ * Used only when the API does not provide canonical_columns.
+ */
+function legacyCanonicalRowToTableRow(row: Record<string, unknown>): string[] {
   const cuenta = readFirstValue(row, ['cuenta', 'cuenta_beneficiario', 'cuenta_retiro', 'cuenta_destino']);
   const referencia = readFirstValue(row, ['referencia', 'referencia_numerica']);
   const importe = readFirstValue(row, ['importe', 'importe_detectado', 'total']);
@@ -134,6 +203,14 @@ function extractCanonicalRows(payload: unknown): string[][] {
     return [];
   }
 
+  // Determine columns to display: prefer API-provided columns, fall back to hardcoded 8
+  const apiColumns = root.canonicalColumns;
+  const useDynamic = apiColumns.length > 0;
+  const displayColumns = useDynamic ? apiColumns : [...FALLBACK_TABLE_COLUMNS];
+
+  // Original PDF header labels from the API (if available)
+  const pdfDisplayMap = root.displayColumns || {};
+
   const rows = root.canonicalRows
     .map((item) => {
       if (!item || typeof item !== 'object') {
@@ -148,7 +225,11 @@ function extractCanonicalRows(payload: unknown): string[][] {
         }
         normalized[key] = value;
       }
-      return canonicalRowToTableRow(normalized);
+
+      if (useDynamic) {
+        return dynamicRowToTableRow(normalized, displayColumns);
+      }
+      return legacyCanonicalRowToTableRow(normalized);
     })
     .filter((row): row is string[] => Array.isArray(row) && row.some((value) => value.trim().length > 0));
 
@@ -156,7 +237,27 @@ function extractCanonicalRows(payload: unknown): string[][] {
     return [];
   }
 
-  return [CANONICAL_TABLE_COLUMNS.map((key) => CANONICAL_LABELS[key]), ...rows];
+  // Build header row: prefer original PDF labels, then generic canonical labels
+  const headerRow = displayColumns.map((col) => {
+    const token = normalizeToken(col);
+    return pdfDisplayMap[token] || pdfDisplayMap[col] || labelForColumn(col);
+  });
+
+  // Remove columns that are completely empty across all data rows
+  const colCount = headerRow.length;
+  const nonEmptyCols: boolean[] = new Array(colCount).fill(false);
+  for (const row of rows) {
+    for (let i = 0; i < colCount; i++) {
+      if (row[i] && row[i].trim().length > 0) {
+        nonEmptyCols[i] = true;
+      }
+    }
+  }
+
+  const filteredHeader = headerRow.filter((_, i) => nonEmptyCols[i]);
+  const filteredRows = rows.map((row) => row.filter((_, i) => nonEmptyCols[i]));
+
+  return [filteredHeader, ...filteredRows];
 }
 
 function collapseRepeatedHeaderCell(value: string): string {

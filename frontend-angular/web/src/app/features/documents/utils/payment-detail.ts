@@ -18,6 +18,49 @@ function titleFromKey(key: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
+/** Human-readable labels for canonical column keys. */
+const PAYMENT_COLUMN_LABELS: Record<string, string> = {
+  cuenta: 'Cuenta',
+  cuenta_retiro: 'Cuenta retiro',
+  cuenta_beneficiario: 'Cuenta beneficiario',
+  referencia: 'Referencia',
+  importe: 'Importe',
+  nombre: 'Nombre',
+  nombre_beneficiario: 'Nombre',
+  apellido_paterno: 'Apellido paterno',
+  apellido_materno: 'Apellido materno',
+  estatus: 'Estatus',
+  concepto_pago: 'Concepto',
+  concepto: 'Concepto',
+  numero_empleado: 'No. Empleado',
+  tipo_cuenta: 'Tipo cuenta',
+  tipo_operacion: 'Tipo operacion',
+  codigo: 'Codigo',
+  descripcion: 'Descripcion',
+  clave_rastreo: 'Clave rastreo',
+  banco_destino: 'Banco destino',
+  forma_deposito: 'Forma deposito',
+  motivo_pago: 'Motivo pago',
+  divisa: 'Divisa',
+  titular: 'Titular',
+  contrato: 'Contrato',
+  folio_firma: 'Folio firma',
+  folio_unico: 'Folio unico',
+  folio_operacion: 'Folio operacion',
+  folio_internet: 'Folio internet',
+  numero_lote: 'No. lote',
+  clave_beneficiario: 'Clave beneficiario',
+  estado: 'Estado',
+  fecha_creacion: 'Fecha creacion',
+  fecha_aplicacion: 'Fecha aplicacion',
+  hora_captura: 'Hora captura',
+};
+
+function labelForPaymentColumn(key: string): string {
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return PAYMENT_COLUMN_LABELS[normalized] || titleFromKey(key);
+}
+
 export function parsePaymentDetail(rawValue: string | null | undefined): PaymentDetailViewModel | null {
   const serialized = normalizeText(rawValue);
   if (!serialized) {
@@ -31,6 +74,7 @@ export function parsePaymentDetail(rawValue: string | null | undefined): Payment
       table?: {
         canonical_columns?: unknown;
         canonical_rows?: unknown;
+        display_columns?: Record<string, string>;
         summary_tables?: unknown;
       };
     };
@@ -42,6 +86,12 @@ export function parsePaymentDetail(rawValue: string | null | undefined): Payment
     const canonicalColumns = Array.isArray(payload?.table?.canonical_columns)
       ? payload.table!.canonical_columns.map((item) => normalizeText(item)).filter((item) => item.length > 0)
       : [];
+
+    // Read display_columns from API — original PDF header labels
+    const displayColumnsMap: Record<string, string> =
+      payload?.table?.display_columns && typeof payload.table.display_columns === 'object'
+        ? payload.table.display_columns
+        : {};
 
     const canonicalRowsRaw = Array.isArray(payload?.table?.canonical_rows) ? payload.table!.canonical_rows : [];
     const canonicalRows = canonicalRowsRaw
@@ -92,7 +142,11 @@ export function parsePaymentDetail(rawValue: string | null | undefined): Payment
     return {
       bank: normalizeText(payload?.bank) || 'DESCONOCIDO',
       metadataEntries,
-      canonicalColumns,
+      canonicalColumns: canonicalColumns.map((col) => {
+        // Prefer original PDF header label, then generic label, then titleCase
+        const normalized = col.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+        return displayColumnsMap[normalized] || displayColumnsMap[col] || labelForPaymentColumn(col);
+      }),
       canonicalRows,
       summaryTables,
     };

@@ -28,5 +28,8 @@ class Settings(BaseModel):
         "TEXT_LAYER_FASTPATH_TYPES",
         "INE,CURP,ACTA_NACIMIENTO,COMPROBANTE_DOMICILIO,NSS,DATOS_BANCARIOS,FACTURA,CONSTANCIA_SITUACION_FISCAL",
     )
+    llm_fallback_enabled: bool = _env_bool("LLM_FALLBACK_ENABLED", False)
+    anthropic_api_key: str | None = os.getenv("ANTHROPIC_API_KEY")
+    llm_fallback_model: str = os.getenv("LLM_FALLBACK_MODEL", "claude-haiku-4-5-20251001")
 
 settings = Settings()

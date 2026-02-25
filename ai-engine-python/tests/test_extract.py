@@ -885,7 +885,7 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertEqual(canonical_rows[0].get("cuenta"), "000000001069485436")
         self.assertEqual(canonical_rows[0].get("referencia"), "8837492015")
         self.assertEqual(canonical_rows[0].get("importe"), "$3,000.00")
-        self.assertIn("CARLOS ROBERTO", canonical_rows[0].get("nombre_beneficiario", ""))
+        self.assertIn("CARLOS ROBERTO", canonical_rows[0].get("nombre", ""))
         self.assertEqual(canonical_rows[0].get("estatus"), "APLICADO")
 
     def test_extract_factura_payment_table_from_bbva_transmision_text(self):
@@ -2067,10 +2067,11 @@ class TestCanonicalKeyMapping(unittest.TestCase):
         self.assertEqual(row.get("importe"), "$3,240.73")
         self.assertEqual(row.get("estatus"), "APLICADO")
         self.assertEqual(row.get("clave_rastreo"), "BANORTE12345")
-        # Name should be split from nombre_beneficiario
-        self.assertEqual(row.get("nombre"), "JUAN")
-        self.assertEqual(row.get("apellido_paterno"), "PEREZ")
-        self.assertEqual(row.get("apellido_materno"), "LOPEZ")
+        # Document has single "Nombre" column without separate apellido columns,
+        # so the full name is preserved without splitting.
+        self.assertEqual(row.get("nombre"), "JUAN PEREZ LOPEZ")
+        self.assertIsNone(row.get("apellido_paterno"))
+        self.assertIsNone(row.get("apellido_materno"))
 
 
 class TestBbvaTransferMetadata(unittest.TestCase):
@@ -2833,6 +2834,226 @@ CTA CARGO\tNO. CUENTA\tIMPORTE\tNOMBRE\tESTATUS
             # Should not contain raw OCR headers like "CTA CARGO"
             for col in columns:
                 self.assertNotIn("CTA CARGO", col.upper() if isinstance(col, str) else "")
+
+
+# ---------------------------------------------------------------------------
+# Header dedup + canonical key fallback tests
+# ---------------------------------------------------------------------------
+
+class TestDedupHeaderCell(unittest.TestCase):
+    """Tests for _dedup_header_cell — multi-page OCR header dedup."""
+
+    def test_simple_duplicate(self):
+        from app.pipelines.extract import _dedup_header_cell
+        self.assertEqual(_dedup_header_cell("CUENTA CUENTA"), "CUENTA")
+
+    def test_even_split_duplicate(self):
+        from app.pipelines.extract import _dedup_header_cell
+        result = _dedup_header_cell(
+            "APELLIDO PATERNO APELLIDO MATERNO ESTATUS "
+            "APELLIDO PATERNO APELLIDO MATERNO ESTATUS"
+        )
+        self.assertEqual(result, "APELLIDO PATERNO APELLIDO MATERNO ESTATUS")
+
+    def test_triple_duplicate(self):
+        from app.pipelines.extract import _dedup_header_cell
+        result = _dedup_header_cell("NOMBRE NOMBRE NOMBRE")
+        self.assertEqual(result, "NOMBRE")
+
+    def test_no_duplicate_unchanged(self):
+        from app.pipelines.extract import _dedup_header_cell
+        result = _dedup_header_cell("APELLIDO PATERNO")
+        self.assertEqual(result, "APELLIDO PATERNO")
+
+    def test_single_token_unchanged(self):
+        from app.pipelines.extract import _dedup_header_cell
+        self.assertEqual(_dedup_header_cell("IMPORTE"), "IMPORTE")
+
+    def test_referencia_duplicate(self):
+        from app.pipelines.extract import _dedup_header_cell
+        self.assertEqual(_dedup_header_cell("REFERENCIA REFERENCIA"), "REFERENCIA")
+
+    def test_concepto_duplicate(self):
+        from app.pipelines.extract import _dedup_header_cell
+        self.assertEqual(_dedup_header_cell("CONCEPTO CONCEPTO"), "CONCEPTO")
+
+
+class TestCanonicalPaymentKeyFallback(unittest.TestCase):
+    """Tests for _canonical_payment_key — doubled key detection."""
+
+    def test_doubled_referencia_maps(self):
+        from app.pipelines.extract import _canonical_payment_key
+        result = _canonical_payment_key("SANTANDER", "referenciareferencia")
+        self.assertEqual(result, "referencia")
+
+    def test_doubled_nombre_maps(self):
+        from app.pipelines.extract import _canonical_payment_key
+        result = _canonical_payment_key("SANTANDER", "nombrenombre")
+        self.assertEqual(result, "nombre_beneficiario")
+
+    def test_doubled_cuenta_maps(self):
+        from app.pipelines.extract import _canonical_payment_key
+        result = _canonical_payment_key("SANTANDER", "cuentacuenta")
+        self.assertEqual(result, "cuenta")
+
+    def test_doubled_concepto_maps(self):
+        from app.pipelines.extract import _canonical_payment_key
+        result = _canonical_payment_key("SANTANDER", "conceptoconcepto")
+        self.assertEqual(result, "concepto_pago")
+
+    def test_doubled_importe_maps(self):
+        from app.pipelines.extract import _canonical_payment_key
+        result = _canonical_payment_key("SANTANDER", "importeimporte")
+        self.assertEqual(result, "importe")
+
+    def test_long_garbage_key_dropped(self):
+        from app.pipelines.extract import _canonical_payment_key
+        garbage = "apellidopaternoapellidomaternoestatusapellidopaternoapellidomaternoestatus"
+        result = _canonical_payment_key("SANTANDER", garbage)
+        # Should be empty or a valid short key, not the 70+ char garbage
+        self.assertTrue(len(result) < 40 or result == "")
+
+    def test_normal_key_still_works(self):
+        from app.pipelines.extract import _canonical_payment_key
+        self.assertEqual(_canonical_payment_key("SANTANDER", "referencia"), "referencia")
+        self.assertEqual(_canonical_payment_key("SANTANDER", "importe"), "importe")
+        self.assertEqual(_canonical_payment_key("SANTANDER", "nombre"), "nombre_beneficiario")
+
+
+class TestMetadataRowFilter(unittest.TestCase):
+    """Tests for _is_metadata_row — metadata row detection."""
+
+    def test_contract_and_sequence_rows_detected(self):
+        from app.pipelines.extract import _is_metadata_row
+        row = [
+            "",
+            "REPORTE DE OPERACIONES",
+            "",
+            "NUMERO DE CONTRATO ENLACE: 80122978989 NUMERO DE SECUENCIA DEL ARCHIVO: 99",
+            "",
+        ]
+        self.assertTrue(_is_metadata_row(row))
+
+    def test_normal_data_row_not_filtered(self):
+        from app.pipelines.extract import _is_metadata_row
+        row = [
+            "56936397271",
+            "$1,629.08",
+            "LUIS ANGEL",
+            "SOLER",
+            "GUZMAN",
+            "PROCESADO",
+            "PAGO DE NOMINA",
+        ]
+        self.assertFalse(_is_metadata_row(row))
+
+
+class TestCleanMetadataFromCell(unittest.TestCase):
+    """Tests for _clean_metadata_from_cell — noise removal from cells."""
+
+    def test_removes_contract_number(self):
+        from app.pipelines.extract import _clean_metadata_from_cell
+        result = _clean_metadata_from_cell("NUMERODECONTRATOENLACE:80122978989 $1,537.35 ABEL")
+        self.assertNotIn("NUMERODECONTRATOENLACE", result)
+        self.assertIn("ABEL", result)
+
+    def test_removes_sequence_number(self):
+        from app.pipelines.extract import _clean_metadata_from_cell
+        result = _clean_metadata_from_cell("NUMERODESECUENCIADELARCHIVO:992026011513432707Z426 $2,776.28")
+        self.assertNotIn("NUMERODESECUENCIADELARCHIVO", result)
+
+    def test_preserves_clean_text(self):
+        from app.pipelines.extract import _clean_metadata_from_cell
+        result = _clean_metadata_from_cell("$1,629.08 LUIS ANGEL")
+        self.assertEqual(result, "$1,629.08 LUIS ANGEL")
+
+    def test_removes_repeated_comprobante(self):
+        from app.pipelines.extract import _clean_metadata_from_cell
+        result = _clean_metadata_from_cell(
+            "Comprobante de la operacion Comprobante de la operacion Comprobante de la operacion"
+        )
+        self.assertEqual(result.strip(), "")
+
+
+class TestBuildDisplayColumnsMap(unittest.TestCase):
+    """Tests for _build_display_columns_map — preserving original PDF header labels."""
+
+    def test_banorte_headers(self):
+        from app.pipelines.extract import _build_display_columns_map
+        raw_rows = [
+            ["No. Empleado", "Nombre", "Tipo Cuenta", "No. de Cuenta", "Importe", "Estatus", "Codigo", "Descripcion", "Clave Rastreo"],
+            ["000123456", "JUAN PEREZ", "03", "002180019912345678", "$3,240.73", "APLICADO", "00", "ACEPTADO", "BANORTE12345"],
+        ]
+        result = _build_display_columns_map(raw_rows, "BANORTE")
+        self.assertEqual(result.get("numero_empleado"), "No. Empleado")
+        self.assertEqual(result.get("nombre"), "Nombre")
+        self.assertEqual(result.get("tipo_cuenta"), "Tipo Cuenta")
+        self.assertEqual(result.get("cuenta"), "No. de Cuenta")
+        self.assertEqual(result.get("importe"), "Importe")
+        self.assertEqual(result.get("estatus"), "Estatus")
+        self.assertEqual(result.get("clave_rastreo"), "Clave Rastreo")
+
+    def test_empty_rows(self):
+        from app.pipelines.extract import _build_display_columns_map
+        self.assertEqual(_build_display_columns_map([], "BBVA"), {})
+
+    def test_bbva_headers(self):
+        from app.pipelines.extract import _build_display_columns_map
+        raw_rows = [
+            ["Cuenta", "Referencia", "Importe", "Nombre", "Estatus", "Concepto"],
+            ["123456", "REF001", "$1,000.00", "JUAN", "APLICADO", "NOMINA"],
+        ]
+        result = _build_display_columns_map(raw_rows, "BBVA")
+        self.assertEqual(result.get("cuenta"), "Cuenta")
+        self.assertEqual(result.get("referencia"), "Referencia")
+        self.assertEqual(result.get("nombre"), "Nombre")
+
+
+class TestConditionalNameSplitting(unittest.TestCase):
+    """Tests for conditional name splitting — only split when document has separate apellido columns."""
+
+    def test_single_nombre_column_keeps_full_name(self):
+        """When document has only 'Nombre' column, keep the full name without splitting."""
+        from app.pipelines.extract import _payment_rows_to_objects, _payment_to_canonical_rows
+        rows = [
+            ["Cuenta", "Nombre", "Importe", "Estatus"],
+            ["123456", "CARLOS ROBERTO LOPEZ GARCIA", "$3,000.00", "APLICADO"],
+        ]
+        objects = _payment_rows_to_objects(rows)
+        _, canonical_rows = _payment_to_canonical_rows("BBVA", objects)
+        self.assertEqual(len(canonical_rows), 1)
+        row = canonical_rows[0]
+        self.assertEqual(row.get("nombre"), "CARLOS ROBERTO LOPEZ GARCIA")
+        self.assertIsNone(row.get("apellido_paterno"))
+        self.assertIsNone(row.get("apellido_materno"))
+
+    def test_separate_apellido_columns_still_split(self):
+        """When document has separate apellido columns, splitting works normally."""
+        from app.pipelines.extract import _payment_rows_to_objects, _payment_to_canonical_rows
+        rows = [
+            ["Cuenta", "Nombre", "Apellido Paterno", "Apellido Materno", "Importe", "Estatus"],
+            ["123456", "CARLOS", "LOPEZ", "GARCIA", "$3,000.00", "APLICADO"],
+        ]
+        objects = _payment_rows_to_objects(rows)
+        _, canonical_rows = _payment_to_canonical_rows("BBVA", objects)
+        self.assertEqual(len(canonical_rows), 1)
+        row = canonical_rows[0]
+        self.assertEqual(row.get("apellido_paterno"), "LOPEZ")
+        self.assertEqual(row.get("apellido_materno"), "GARCIA")
+
+    def test_combo_header_splits_normally(self):
+        """When document has combo 'Apellido Paterno Apellido Materno Estatus', splitting still works."""
+        from app.pipelines.extract import _payment_rows_to_objects, _payment_to_canonical_rows
+        rows = [
+            ["Cuenta", "Nombre", "Apellido Paterno Apellido Materno Estatus", "Importe"],
+            ["123456", "CARLOS", "LOPEZ GARCIA APLICADO", "$3,000.00"],
+        ]
+        objects = _payment_rows_to_objects(rows)
+        _, canonical_rows = _payment_to_canonical_rows("BBVA", objects)
+        self.assertEqual(len(canonical_rows), 1)
+        row = canonical_rows[0]
+        self.assertEqual(row.get("estatus"), "APLICADO")
+        self.assertEqual(row.get("apellido_paterno"), "LOPEZ")
 
 
 if __name__ == "__main__":

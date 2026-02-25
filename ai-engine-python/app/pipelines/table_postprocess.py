@@ -209,6 +209,138 @@ def _is_garbage_cell(value: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Merged-row splitting
+# ---------------------------------------------------------------------------
+
+_AMOUNT_PATTERN = re.compile(r"\$\s*\d{1,3}(?:[,]\d{3})*(?:[.]\d{2})\b")
+
+
+def _count_amounts_in_cell(value: str) -> int:
+    """Count monetary amounts ($X,XXX.XX patterns) in a cell value."""
+    return len(_AMOUNT_PATTERN.findall(str(value or "")))
+
+
+def _row_has_merged_records(row: dict[str, str]) -> bool:
+    """Detect if a canonical row contains multiple merged payment records.
+
+    Indicators: multiple dollar amounts in a nombre/importe cell, or
+    multiple distinct long numeric sequences in referencia.
+    """
+    # Check nombre-related cells for multiple amounts
+    for key in ("nombre_beneficiario", "nombre", "importe"):
+        val = str(row.get(key) or "")
+        if _count_amounts_in_cell(val) >= 2:
+            return True
+    # Check referencia for multiple long numeric sequences
+    ref_val = str(row.get("referencia") or "")
+    long_nums = re.findall(r"\b\d{10,}\b", ref_val)
+    if len(long_nums) >= 3:
+        return True
+    return False
+
+
+def _split_merged_row(row: dict[str, str]) -> list[dict[str, str]]:
+    """Split a merged row into individual records based on amount/name patterns.
+
+    Handles the common pattern where OCR merges adjacent lines:
+    "$1,629.08 LUIS ANGEL $1,050.45 RICARDO" → two separate records.
+    """
+    # Find the cell with the most amounts (usually nombre_beneficiario or nombre)
+    best_key = ""
+    best_count = 0
+    for key in ("nombre_beneficiario", "nombre"):
+        val = str(row.get(key) or "")
+        count = _count_amounts_in_cell(val)
+        if count > best_count:
+            best_count = count
+            best_key = key
+    if best_count < 2:
+        return [row]
+
+    val = str(row.get(best_key) or "")
+    # Split by amount pattern: "$1,629.08 LUIS ANGEL $1,050.45 RICARDO"
+    # → ["$1,629.08 LUIS ANGEL", "$1,050.45 RICARDO"]
+    parts = _AMOUNT_PATTERN.split(val)
+    amounts = _AMOUNT_PATTERN.findall(val)
+
+    if len(amounts) < 2:
+        return [row]
+
+    # Build individual records
+    records: list[dict[str, str]] = []
+    for i, amount in enumerate(amounts):
+        new_row = dict(row)
+        # The name part follows each amount
+        name_part = parts[i + 1].strip() if i + 1 < len(parts) else ""
+        # Clean trailing/leading noise from name
+        name_part = re.sub(r"^\s*[-:,;]\s*", "", name_part).strip()
+        new_row["importe"] = _clean_amount(amount)
+        new_row[best_key] = name_part
+
+        # Try to split other multi-value cells (apellidos, concepto, referencia, estatus)
+        for split_key in ("apellido_paterno", "apellido_materno", "concepto_pago",
+                          "estatus", "apellido_combo_estatus"):
+            split_val = str(row.get(split_key) or "")
+            if not split_val:
+                continue
+            # For apellido_paterno + apellido_materno merged: "SOLER GUZMAN AMAYA ZACARIAS"
+            # Try splitting evenly by word count
+            words = split_val.split()
+            n_records = len(amounts)
+            if len(words) >= n_records * 2 and split_key in ("apellido_combo_estatus",):
+                # Merged apellidos + estatus — distribute evenly
+                chunk_size = len(words) // n_records
+                start = i * chunk_size
+                end = start + chunk_size if i < n_records - 1 else len(words)
+                new_row[split_key] = " ".join(words[start:end])
+            elif len(words) >= n_records and split_key in ("apellido_paterno", "apellido_materno"):
+                chunk_size = max(1, len(words) // n_records)
+                start = i * chunk_size
+                end = start + chunk_size if i < n_records - 1 else len(words)
+                new_row[split_key] = " ".join(words[start:end])
+            elif split_key == "estatus":
+                # All records typically have the same status
+                pass
+            elif split_key == "concepto_pago":
+                # Usually the same concepto for all
+                pass
+
+        # Split referencia: multiple long number sequences
+        ref_val = str(row.get("referencia") or "")
+        ref_nums = re.findall(r"\b\d{10,}\b", ref_val)
+        if len(ref_nums) >= len(amounts):
+            # Each record gets its own referencia sequence(s)
+            refs_per_record = max(1, len(ref_nums) // len(amounts))
+            start = i * refs_per_record
+            end = start + refs_per_record if i < len(amounts) - 1 else len(ref_nums)
+            new_row["referencia"] = " ".join(ref_nums[start:end])
+
+        if any(str(v).strip() for v in new_row.values()):
+            records.append(new_row)
+
+    return records if records else [row]
+
+
+def _split_merged_rows(
+    canonical_rows: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Split all merged rows in the table into individual records."""
+    result: list[dict[str, str]] = []
+    split_count = 0
+    for row in canonical_rows:
+        if _row_has_merged_records(row):
+            split = _split_merged_row(row)
+            result.extend(split)
+            if len(split) > 1:
+                split_count += len(split) - 1
+        else:
+            result.append(row)
+    if split_count > 0:
+        logger.info("postprocess: split %d merged records into individual rows", split_count)
+    return result
+
+
 def postprocess_payment_table(
     canonical_columns: list[str],
     canonical_rows: list[dict[str, str]],
@@ -233,6 +365,9 @@ def postprocess_payment_table(
     if not canonical_rows:
         return canonical_columns, canonical_rows
 
+    # --- Step -1: Split merged rows (multi-record-per-cell) ---
+    canonical_rows = _split_merged_rows(canonical_rows)
+
     try:
         df = pd.DataFrame(canonical_rows)
     except Exception:
@@ -247,6 +382,29 @@ def postprocess_payment_table(
         df[col] = df[col].apply(
             lambda v: "" if _is_garbage_cell(str(v or "")) else str(v or "")
         )
+
+    # --- Step 0b: Remove metadata noise from all cells ---
+    _META_NOISE_RES = [
+        re.compile(r"NUMERO\s*DE\s*CONTRATO\s*(?:ENLACE)?[:\s]*[\w]+", re.IGNORECASE),
+        re.compile(r"NUMERO\s*DE\s*SECUENCIA\s*DEL?\s*ARCHIVO[:\s]*[\w]+", re.IGNORECASE),
+        re.compile(r"(?:COMPROBANTE\s+DE\s+LA\s+OPERACION\s*)+", re.IGNORECASE),
+        re.compile(r"DATOS\s*DEL?\s*CLIENTE\s*PAGAD\w*", re.IGNORECASE),
+        re.compile(r"REPORTE\s+DE\s+OPERACIONES\s*", re.IGNORECASE),
+        re.compile(r"(?:Estatus\s*:\s*\w+\s*){2,}", re.IGNORECASE),
+        re.compile(r"(?:Concepto\s*:\s*(?:Pago\s+de\s+(?:N[oó]mina|Nomina))\s*){2,}", re.IGNORECASE),
+        re.compile(r"(?:Concepto\s+\d+\s*:\s*){2,}", re.IGNORECASE),
+        re.compile(r"(?:Importe\s*:\s*\$[\d,.]+\s*MXN\s*){2,}", re.IGNORECASE),
+        re.compile(r"Apellido\s+(?:paterno|materno)\s*:", re.IGNORECASE),
+    ]
+
+    def _strip_metadata_noise(value: str) -> str:
+        text = str(value or "").strip()
+        for pat in _META_NOISE_RES:
+            text = pat.sub("", text)
+        return re.sub(r"\s{2,}", " ", text).strip()
+
+    for col in df.columns:
+        df[col] = df[col].apply(_strip_metadata_noise)
 
     # --- Step 1: Column-wise type-aware cleaning ---
     for col in df.columns:
@@ -360,6 +518,8 @@ def postprocess_payment_table(
     # --- Step 7: Convert back to canonical format ---
     # Replace NaN/None with empty string
     df = df.fillna("")
+    # Also replace literal "nan"/"NAN" strings left over from PyMuPDF float NaN
+    df = df.replace(to_replace=r"(?i)^nan$", value="", regex=True)
 
     # Rebuild columns list preserving original order + any new columns
     result_columns = list(canonical_columns)

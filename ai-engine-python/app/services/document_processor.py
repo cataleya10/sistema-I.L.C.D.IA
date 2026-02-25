@@ -487,6 +487,34 @@ async def process_document(file, document_id: str, source: str, options: str | N
         fields = await validate_fields(fields)
         fields = _normalize_fields(doc_type, fields)
         fields = _postprocess_fields(doc_type, fields)
+
+    # === LLM FALLBACK (solo si hay campos críticos faltantes) ===
+    if settings.llm_fallback_enabled and ocr_text:
+        _tentative_required = CRITICAL_FIELDS.get(doc_type, [])
+        _tentative_missing = [
+            k for k in _tentative_required
+            if not _select_required_field(doc_type, k, fields)
+        ]
+        if _tentative_missing:
+            try:
+                from app.services.llm_fallback import try_llm_fallback, merge_llm_fields
+                _llm_fields = await try_llm_fallback(
+                    doc_type, ocr_text, _tentative_missing, fields,
+                    api_key=settings.anthropic_api_key,
+                    model=settings.llm_fallback_model,
+                )
+                if _llm_fields:
+                    fields = merge_llm_fields(fields, _llm_fields)
+                    logger.info(
+                        "LLM fallback añadió %d campos para doc_type=%s document_id=%s",
+                        len(_llm_fields), doc_type, document_id,
+                    )
+            except Exception:
+                logger.exception(
+                    "LLM fallback falló, continuando sin él (doc_type=%s, document_id=%s)",
+                    doc_type, document_id,
+                )
+
     critical_keys = set(CRITICAL_FIELDS.get(doc_type, []))
     for field in fields:
         if field.get("key") in critical_keys and field.get("valid") and field.get("confidence", 0) < 0.8:

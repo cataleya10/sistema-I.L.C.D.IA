@@ -486,5 +486,140 @@ class TestCleanNameNFC(unittest.TestCase):
         self.assertEqual(result, "JUAN PÉREZ LÓPEZ")
 
 
+# ---------------------------------------------------------------------------
+# Merged-row splitting tests
+# ---------------------------------------------------------------------------
+
+class TestRowHasMergedRecords(unittest.TestCase):
+    """Tests for _row_has_merged_records detection."""
+
+    def test_single_amount_not_merged(self):
+        from app.pipelines.table_postprocess import _row_has_merged_records
+        row = {"nombre_beneficiario": "$1,629.08 LUIS ANGEL", "importe": "$1,629.08"}
+        self.assertFalse(_row_has_merged_records(row))
+
+    def test_two_amounts_in_nombre_detected(self):
+        from app.pipelines.table_postprocess import _row_has_merged_records
+        row = {"nombre_beneficiario": "$1,629.08 LUIS ANGEL $1,050.45 RICARDO"}
+        self.assertTrue(_row_has_merged_records(row))
+
+    def test_three_amounts_detected(self):
+        from app.pipelines.table_postprocess import _row_has_merged_records
+        row = {"nombre_beneficiario": "$1,629.08 LUIS $1,050.45 RICARDO $500.00 ANA"}
+        self.assertTrue(_row_has_merged_records(row))
+
+    def test_multiple_long_references_detected(self):
+        from app.pipelines.table_postprocess import _row_has_merged_records
+        row = {"referencia": "56936397271 1620260115134348251383 56926066072 1620260115134346391346"}
+        self.assertTrue(_row_has_merged_records(row))
+
+    def test_single_reference_not_merged(self):
+        from app.pipelines.table_postprocess import _row_has_merged_records
+        row = {"referencia": "56936397271"}
+        self.assertFalse(_row_has_merged_records(row))
+
+
+class TestSplitMergedRow(unittest.TestCase):
+    """Tests for _split_merged_row — splitting merged payment records."""
+
+    def test_two_records_split_into_two(self):
+        from app.pipelines.table_postprocess import _split_merged_row
+        row = {
+            "nombre_beneficiario": "$1,629.08 LUIS ANGEL $1,050.45 RICARDO",
+            "apellido_paterno": "SOLER AMAYA",
+            "apellido_materno": "GUZMAN ZACARIAS",
+            "concepto_pago": "PROCESADO PAGO DE NOMINA PROCESADO PAGO DE NOMINA",
+            "referencia": "56936397271 1620260115134348251383 56926066072 1620260115134346391346",
+        }
+        result = _split_merged_row(row)
+        self.assertEqual(len(result), 2)
+        # First record should have LUIS ANGEL
+        self.assertIn("LUIS ANGEL", result[0].get("nombre_beneficiario", ""))
+        # Second record should have RICARDO
+        self.assertIn("RICARDO", result[1].get("nombre_beneficiario", ""))
+        # Both should have amounts
+        self.assertEqual(result[0]["importe"], "$1,629.08")
+        self.assertEqual(result[1]["importe"], "$1,050.45")
+
+    def test_single_record_not_split(self):
+        from app.pipelines.table_postprocess import _split_merged_row
+        row = {
+            "nombre_beneficiario": "$1,629.08 LUIS ANGEL",
+            "importe": "$1,629.08",
+        }
+        result = _split_merged_row(row)
+        self.assertEqual(len(result), 1)
+
+    def test_references_distributed(self):
+        from app.pipelines.table_postprocess import _split_merged_row
+        row = {
+            "nombre_beneficiario": "$1,537.35 JUAN $1,629.08 BERNABE",
+            "referencia": "569356888401620260115134347661372 56933163072",
+        }
+        result = _split_merged_row(row)
+        self.assertEqual(len(result), 2)
+        # Each should get a reference
+        for r in result:
+            self.assertTrue(r.get("referencia", "").strip())
+
+
+class TestSplitMergedRows(unittest.TestCase):
+    """Tests for _split_merged_rows — batch splitting."""
+
+    def test_mixed_rows_only_splits_merged(self):
+        from app.pipelines.table_postprocess import _split_merged_rows
+        rows = [
+            {"nombre_beneficiario": "$1,629.08 LUIS ANGEL", "importe": "$1,629.08"},
+            {"nombre_beneficiario": "$1,629.08 LUIS $1,050.45 RICARDO", "importe": ""},
+            {"nombre_beneficiario": "$500.00 ANA", "importe": "$500.00"},
+        ]
+        result = _split_merged_rows(rows)
+        # First and third should stay as-is, second should split into 2
+        self.assertEqual(len(result), 4)
+
+    def test_no_merged_rows_returns_same(self):
+        from app.pipelines.table_postprocess import _split_merged_rows
+        rows = [
+            {"nombre_beneficiario": "$1,000.00 JUAN", "importe": "$1,000.00"},
+            {"nombre_beneficiario": "$2,000.00 PEDRO", "importe": "$2,000.00"},
+        ]
+        result = _split_merged_rows(rows)
+        self.assertEqual(len(result), 2)
+
+
+class TestMetadataNoiseRemoval(unittest.TestCase):
+    """Tests that metadata noise is removed from table cells."""
+
+    def test_postprocess_removes_metadata_noise(self):
+        from app.pipelines.table_postprocess import postprocess_payment_table
+        rows = [
+            {
+                "nombre_beneficiario": "NUMERODECONTRATOENLACE:80122978989 $1,537.35 ABEL",
+                "importe": "$1,537.35",
+                "referencia": "56936397271",
+            },
+        ]
+        cols = ["nombre_beneficiario", "importe", "referencia"]
+        result_cols, result_rows = postprocess_payment_table(cols, rows, bank="SANTANDER")
+        self.assertEqual(len(result_rows), 1)
+        nombre = result_rows[0].get("nombre_beneficiario", "")
+        self.assertNotIn("NUMERODECONTRATOENLACE", nombre)
+        self.assertNotIn("80122978989", nombre)
+
+    def test_repeated_estatus_cleaned(self):
+        from app.pipelines.table_postprocess import postprocess_payment_table
+        rows = [
+            {
+                "nombre_beneficiario": "Estatus:Procesado Estatus:Procesado GONZALEZ",
+                "importe": "$3,000.00",
+                "referencia": "12345678901",
+            },
+        ]
+        cols = ["nombre_beneficiario", "importe", "referencia"]
+        _, result_rows = postprocess_payment_table(cols, rows, bank="SANTANDER")
+        nombre = result_rows[0].get("nombre_beneficiario", "")
+        self.assertNotIn("Estatus:Procesado Estatus:Procesado", nombre)
+
+
 if __name__ == "__main__":
     unittest.main()
