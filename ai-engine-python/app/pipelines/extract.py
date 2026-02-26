@@ -948,7 +948,17 @@ def _generic_column_anchors_from_line(line_boxes: list[dict]) -> list[dict]:
     if not line_boxes:
         return []
 
-    sorted_boxes = sorted(line_boxes, key=lambda box: box["rect"][0])
+    # Defensive: filter boxes that have valid rect coordinates
+    valid_boxes = [
+        box for box in line_boxes
+        if isinstance(box.get("rect"), (list, tuple))
+        and len(box["rect"]) >= 4
+        and all(isinstance(v, (int, float)) for v in box["rect"][:4])
+    ]
+    if not valid_boxes:
+        return []
+
+    sorted_boxes = sorted(valid_boxes, key=lambda box: box["rect"][0])
     grouped: list[list[dict]] = []
     cluster = [sorted_boxes[0]]
     for box in sorted_boxes[1:]:
@@ -977,6 +987,12 @@ def _generic_column_anchors_from_line(line_boxes: list[dict]) -> list[dict]:
     return anchors
 
 
+# Maximum horizontal pixel distance a box can be from its nearest anchor
+# before it is discarded as orphan noise.  Prevents far-off OCR boxes
+# (footer fragments, page margins) from being force-assigned to columns.
+_GENERIC_TABLE_ANCHOR_MAX_DIST = 120.0
+
+
 def _generic_row_with_cells_by_anchors(
     row_boxes: list[dict],
     anchors: list[dict],
@@ -989,12 +1005,19 @@ def _generic_row_with_cells_by_anchors(
         text = _normalize_table_cell_exact(box.get("text", ""))
         if not text:
             continue
-        x1, y1, x2, y2 = box["rect"]
+        rect = box.get("rect")
+        if not isinstance(rect, (list, tuple)) or len(rect) < 4:
+            continue
+        x1, y1, x2, y2 = rect[:4]
         center = (x1 + x2) / 2
         best_idx = min(
             range(len(anchors)),
             key=lambda idx: abs(center - anchors[idx]["x"]),
         )
+        # Guard: skip boxes too far from any anchor (orphan noise)
+        best_dist = abs(center - anchors[best_idx]["x"])
+        if best_dist > _GENERIC_TABLE_ANCHOR_MAX_DIST:
+            continue
         columns[best_idx].append((x1, text, (x1, y1, x2, y2)))
 
     row: list[str] = []
@@ -1064,14 +1087,26 @@ def _extract_generic_tables_from_boxes(ocr_boxes) -> list[dict]:
         if len(block) < 2:
             continue
 
-        ref_line = max(
-            block,
-            key=lambda item: (
-                int(_table_line_gap_stats({"boxes": item["boxes"]}).get("large_gap_count", 0)),
-                len(item["boxes"]),
-            ),
-        )
-        anchors = _generic_column_anchors_from_line(ref_line["boxes"])
+        # Prefer the first line of the block as column-anchor reference.
+        # Table headers are virtually always the first row.  The previous
+        # "widest line" heuristic picked data rows whose multi-word values
+        # (e.g. "VELAZQUEZ CHABLE MAURO FRANCISCO") created phantom column
+        # anchors.  Use the first line when it produces ≥ 3 anchors; fall
+        # back to the widest line only when the first line is too narrow.
+        first_line = block[0]
+        first_anchors = _generic_column_anchors_from_line(first_line["boxes"])
+
+        if len(first_anchors) >= 3:
+            anchors = first_anchors
+        else:
+            ref_line = max(
+                block,
+                key=lambda item: (
+                    int(_table_line_gap_stats({"boxes": item["boxes"]}).get("large_gap_count", 0)),
+                    len(item["boxes"]),
+                ),
+            )
+            anchors = _generic_column_anchors_from_line(ref_line["boxes"])
         if len(anchors) < 2:
             continue
 
@@ -1087,6 +1122,26 @@ def _extract_generic_tables_from_boxes(ocr_boxes) -> list[dict]:
 
         if len(rows) < 2:
             continue
+
+        # Column-consistency check: if most data rows fill far fewer columns
+        # than the header, the anchors likely came from a noisy line.
+        # Strip trailing all-empty columns that no data row uses.
+        header_len = len(rows[0]) if rows else 0
+        if header_len > 3 and len(rows) > 2:
+            data_rows = rows[1:]
+            data_cells_list = row_cells[1:] if len(row_cells) > 1 else []
+            # Find rightmost column that has data in any row
+            max_used_col = 0
+            for dr in data_rows:
+                for ci in range(len(dr) - 1, -1, -1):
+                    if _normalize_table_cell_exact(dr[ci]):
+                        max_used_col = max(max_used_col, ci)
+                        break
+            # Trim phantom trailing columns that no data row uses
+            trim_to = max_used_col + 1
+            if trim_to < header_len:
+                rows = [r[:trim_to] for r in rows]
+                row_cells = [c[:trim_to] for c in row_cells]
 
         signature = _table_rows_signature(rows)
         if not signature or signature in seen_signatures:
@@ -1257,7 +1312,16 @@ def _payment_rows_plain_from_lines(lines: list[dict]) -> list[list[str]]:
 def _payment_table_column_anchors(header_boxes: list[dict]) -> list[dict]:
     if not header_boxes:
         return []
-    sorted_boxes = sorted(header_boxes, key=lambda b: b["rect"][0])
+    # Defensive: filter boxes with valid rect coordinates
+    valid_boxes = [
+        b for b in header_boxes
+        if isinstance(b.get("rect"), (list, tuple))
+        and len(b["rect"]) >= 4
+        and all(isinstance(v, (int, float)) for v in b["rect"][:4])
+    ]
+    if not valid_boxes:
+        return []
+    sorted_boxes = sorted(valid_boxes, key=lambda b: b["rect"][0])
     anchors: list[list[dict]] = []
     cluster = [sorted_boxes[0]]
     for box in sorted_boxes[1:]:
@@ -1290,12 +1354,19 @@ def _payment_table_row_by_anchors(row_boxes: list[dict], anchors: list[dict]) ->
         text = _normalize_table_cell(box.get("text", ""))
         if not text:
             continue
-        x1, _, x2, _ = box["rect"]
+        rect = box.get("rect")
+        if not isinstance(rect, (list, tuple)) or len(rect) < 4:
+            continue
+        x1, _, x2, _ = rect[:4]
         center = (x1 + x2) / 2
         best_idx = min(
             range(len(anchors)),
             key=lambda idx: abs(center - anchors[idx]["x"]),
         )
+        # Guard: skip boxes too far from any anchor (orphan noise)
+        best_dist = abs(center - anchors[best_idx]["x"])
+        if best_dist > _GENERIC_TABLE_ANCHOR_MAX_DIST:
+            continue
         columns[best_idx].append((x1, text))
 
     row: list[str] = []
@@ -1312,12 +1383,14 @@ _AMOUNT_IN_CELL_PAT = re.compile(r"^\$?\s*(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))\b
 
 # Unified status vocabulary — used by all payment functions and shared with table_postprocess.py
 _ALL_PAYMENT_STATUSES = (
+    "EN PROCESO",  # multi-word first for regex alternation priority
     "PROCESADO", "APLICADO", "ACEPTADO", "TRANSMITIDO", "RECHAZADO",
-    "DEVUELTO", "CANCELADO", "LIQUIDADO",
+    "DEVUELTO", "CANCELADO", "LIQUIDADO", "OPERADO",
+    "PAGADO", "PENDIENTE", "DEPOSITADO", "AUTORIZADO",
 )
 _STATUS_WORDS_RE = "|".join(_ALL_PAYMENT_STATUSES)
 _STATUS_PREFIX_PAT = re.compile(rf"^({_STATUS_WORDS_RE})\b\s*")
-_STATUS_SEARCH_PAT = re.compile(rf"\b({_STATUS_WORDS_RE})\b")
+_STATUS_SEARCH_PAT = re.compile(rf"(?<!\w)({_STATUS_WORDS_RE})(?!\w)")
 
 
 def _fix_payment_ocr_column_errors(structured_rows: list[list[str]]) -> list[list[str]]:
@@ -1520,6 +1593,14 @@ def _split_payment_name_parts(full_name: str) -> tuple[str, str, str]:
 
 
 def _extract_bbva_nomina_advanced_rows_from_text(raw_text: str) -> list[list[str]]:
+    try:
+        return _extract_bbva_nomina_advanced_rows_impl(raw_text)
+    except Exception:
+        logger.debug("_extract_bbva_nomina_advanced_rows: error", exc_info=True)
+        return []
+
+
+def _extract_bbva_nomina_advanced_rows_impl(raw_text: str) -> list[list[str]]:
     folded = _ascii_fold(str(raw_text or "")).upper()
     if "NOMINA" not in folded:
         return []
@@ -1535,7 +1616,7 @@ def _extract_bbva_nomina_advanced_rows_from_text(raw_text: str) -> list[list[str
         r"\b(?P<cuenta>\d{10,24})\s+"
         r"(?P<referencia>" + _REF_PAT + r")\s+"
         r"(?P<importe>\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))\s+"
-        r"(?P<nombre>[A-ZÑÁÉÍÓÚÜ ]{4,120}?)"
+        r"(?P<nombre>[A-ZÑÁÉÍÓÚÜ .'\'\-]{4,120}?)"
         r"(?=\s+\d{10,24}\s+" + _REF_PAT + r"\s+\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})"
         rf"|\s+(?:{_STATUS_WORDS_RE})\b"
         r"|\s*$)"
@@ -1642,21 +1723,27 @@ def _smart_split_narrow_line(line: str) -> list[str]:
 def _extract_payment_table_rows_from_text(raw_text: str) -> list[list[str]]:
     if not raw_text:
         return []
-    advanced_rows = _extract_bbva_nomina_advanced_rows_from_text(raw_text)
-    if advanced_rows:
-        return advanced_rows
+    try:
+        advanced_rows = _extract_bbva_nomina_advanced_rows_from_text(raw_text)
+        if advanced_rows:
+            return advanced_rows
+    except Exception:
+        logger.debug("_extract_payment_table_rows_from_text: bbva advanced failed", exc_info=True)
 
     # Try BBVA vertical key-value receipt BEFORE generic text splitting so
     # that "Grupo Pago Mismo Banco" / comprobante documents are not polluted
     # by the generic splitter picking up footer fragments as table rows.
-    _normalized_lines_early = [
-        _ascii_fold(_normalize_text(line)).upper()
-        for line in raw_text.splitlines()
-        if _normalize_text(line)
-    ]
-    bbva_receipt_rows = _extract_bbva_transfer_receipt_rows(_normalized_lines_early, raw_text)
-    if bbva_receipt_rows:
-        return bbva_receipt_rows
+    try:
+        _normalized_lines_early = [
+            _ascii_fold(_normalize_text(line)).upper()
+            for line in raw_text.splitlines()
+            if _normalize_text(line)
+        ]
+        bbva_receipt_rows = _extract_bbva_transfer_receipt_rows(_normalized_lines_early, raw_text)
+        if bbva_receipt_rows:
+            return bbva_receipt_rows
+    except Exception:
+        logger.debug("_extract_payment_table_rows_from_text: bbva receipt failed", exc_info=True)
 
     rows: list[list[str]] = []
     narrow_candidates: list[list[str]] = []
@@ -1688,12 +1775,32 @@ def _extract_payment_table_rows_from_text(raw_text: str) -> list[list[str]]:
     # Only use narrow-split rows when 2+ found (real narrow-column table, not a one-off)
     if len(narrow_candidates) >= 2:
         rows.extend(narrow_candidates)
+    # Dedup rows to avoid multi-page OCR duplicates
     if rows:
+        seen_sigs: set[str] = set()
+        deduped: list[list[str]] = []
+        for r in rows:
+            sig = "|".join(str(c or "").strip() for c in r)
+            if sig not in seen_sigs:
+                seen_sigs.add(sig)
+                deduped.append(r)
+        rows = deduped
+    # A useful payment table needs at least 2 rows (header + data).
+    # Fall through to compact-text extractor if we don't have enough.
+    if len(rows) >= 2:
         return rows
     return _extract_payment_table_rows_from_compact_text(raw_text)
 
 
 def _extract_scotia_transfer_rows(lines: list[str]) -> list[list[str]]:
+    try:
+        return _extract_scotia_transfer_rows_impl(lines)
+    except Exception:
+        logger.debug("_extract_scotia_transfer_rows: error", exc_info=True)
+        return []
+
+
+def _extract_scotia_transfer_rows_impl(lines: list[str]) -> list[list[str]]:
     if not lines:
         return []
     full = " ".join(lines)
@@ -1717,7 +1824,7 @@ def _extract_scotia_transfer_rows(lines: list[str]) -> list[list[str]]:
     ]
 
     rows: list[list[str]] = []
-    seen_keys: set[tuple[str, str, str]] = set()
+    seen_keys: set[tuple[str, ...]] = set()
     i = 0
     while i < len(lines):
         line = lines[i]
@@ -1728,7 +1835,7 @@ def _extract_scotia_transfer_rows(lines: list[str]) -> list[list[str]]:
 
         block: list[str] = []
         j = i
-        while j < len(lines) and len(block) < 18:
+        while j < len(lines) and len(block) < 25:
             curr = lines[j]
             curr_key = _normalize_keyword(curr)
             if j > i and "DAALTA" in curr_key:
@@ -1741,21 +1848,24 @@ def _extract_scotia_transfer_rows(lines: list[str]) -> list[list[str]]:
         joined = " ".join(block)
         amount_match = re.search(r"\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})", joined)
         date_match = re.search(r"\b\d{2}/\d{2}/\d{4}\b", joined)
-        clave_match = re.search(r"\bA\d{2,4}\b", joined)
+        clave_match = re.search(r"\b[A-Z]\d{2,6}\b", joined)
         cuenta_match = re.search(r"\b\d{18,24}\b", joined)
         concepto_match = re.search(r"\bPAG[O0]\s*0?\d{1,4}\b", joined)
         movimiento_match = re.search(r"\b\d{2}\s+ABONO\s+EN\s+CUENTA\b", joined)
-        referencia_match = re.search(r"\b([0-9OIL]{1,3})\b(?=\s+\d{18,24})", joined)
+        referencia_match = re.search(r"\b([0-9OIL]{1,8})\b(?=\s+\d{18,24})", joined)
 
         cuenta = cuenta_match.group(0) if cuenta_match else ""
         banco = ""
         vigencia = ""
         if cuenta:
-            post = joined.split(cuenta, 1)[1]
-            trailing = re.search(r"\b(\d{1,2})\b(?:\s+\b(\d)\b)?", post)
-            if trailing:
-                banco = trailing.group(1) or ""
-                vigencia = trailing.group(2) or ""
+            try:
+                post = joined.split(cuenta, 1)[1]
+                trailing = re.search(r"\b(\d{1,2})\b(?:\s+\b(\d)\b)?", post)
+                if trailing:
+                    banco = trailing.group(1) or ""
+                    vigencia = trailing.group(2) or ""
+            except (ValueError, IndexError):
+                pass
 
         beneficiary_parts: list[str] = []
         for raw in block:
@@ -1787,7 +1897,7 @@ def _extract_scotia_transfer_rows(lines: list[str]) -> list[list[str]]:
                 continue
             if re.search(r"\$", candidate) or re.search(r"\d{2}/\d{2}/\d{4}", candidate):
                 continue
-            if re.fullmatch(r"A\d{2,4}", candidate):
+            if re.fullmatch(r"[A-Z]\d{2,6}", candidate):
                 continue
             if re.fullmatch(r"PAG[O0]\d{1,4}", candidate):
                 continue
@@ -1797,7 +1907,7 @@ def _extract_scotia_transfer_rows(lines: list[str]) -> list[list[str]]:
             if normalized_name not in beneficiary_parts:
                 beneficiary_parts.append(normalized_name)
 
-        beneficiary = " ".join(beneficiary_parts[:3]).strip()
+        beneficiary = " ".join(beneficiary_parts[:4]).strip()
         beneficiary = re.sub(r"^CUENTA\s+", "", beneficiary)
         beneficiary = re.sub(r"\s+\b1\b$", "", beneficiary)
         row = [
@@ -1813,7 +1923,8 @@ def _extract_scotia_transfer_rows(lines: list[str]) -> list[list[str]]:
             vigencia,
             _normalize_table_cell(concepto_match.group(0) if concepto_match else ""),
         ]
-        dedup_key = (row[4], row[7], row[10])
+        # Dedup key includes importe + clave + cuenta + concepto for precision
+        dedup_key = (row[2], row[4], row[7], row[10])
         if row[7] and (row[2] or row[3] or row[10]) and dedup_key not in seen_keys:
             seen_keys.add(dedup_key)
             rows.append(row)
@@ -1821,8 +1932,10 @@ def _extract_scotia_transfer_rows(lines: list[str]) -> list[list[str]]:
 
     if not rows:
         return []
+    if len(rows) > 500:
+        logger.warning("_extract_scotia_transfer_rows: truncating %d rows to 500", len(rows))
     summary_rows = _extract_scotia_summary_rows(lines)
-    return [header, *rows[:25], *summary_rows]
+    return [header, *rows[:500], *summary_rows]
 
 
 def _extract_scotia_summary_rows(lines: list[str]) -> list[list[str]]:
@@ -1925,7 +2038,14 @@ def _extract_scotia_summary_block_values(lines: list[str], total: bool) -> list[
 def _extract_payment_table_rows_from_compact_text(raw_text: str) -> list[list[str]]:
     if not raw_text:
         return []
+    try:
+        return _extract_payment_table_rows_from_compact_text_impl(raw_text)
+    except Exception:
+        logger.debug("_extract_payment_table_rows_from_compact_text: error", exc_info=True)
+        return []
 
+
+def _extract_payment_table_rows_from_compact_text_impl(raw_text: str) -> list[list[str]]:
     lines = [_ascii_fold(_normalize_text(line)).upper() for line in raw_text.splitlines() if _normalize_text(line)]
     if not lines:
         return []
@@ -2107,7 +2227,7 @@ _BANORTE_STATUS_RE = r"(?:APLICADO|ACEPTADO|PROCESADO|TRANSMITIDO|RECHAZADO)"
 # "0000000001  ARLY ERNESTO ESPINOZA JOB  01  00000001290307408  $3,201.73  APLICADO  00  ACEPTADO"
 _BANORTE_ROW_PAT = re.compile(
     r"^\s*(?P<employee>\d{6,12})\s+"
-    r"(?P<nombre>[A-Z][A-Z ]{3,59}?)\s+"
+    r"(?P<nombre>[A-ZÑÁÉÍÓÚÜ][A-ZÑÁÉÍÓÚÜ .'\'\-]{3,79}?)\s+"
     r"(?P<tipo>\d{2})\s+"
     r"(?P<cuenta>\d{12,24})\s+"
     r"(?P<importe>\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))\s+"
@@ -2119,6 +2239,14 @@ _BANORTE_ROW_PAT = re.compile(
 
 
 def _extract_banorte_bbva_detail_rows(lines: list[str], raw_text: str) -> list[list[str]]:
+    try:
+        return _extract_banorte_bbva_detail_rows_impl(lines, raw_text)
+    except Exception:
+        logger.debug("_extract_banorte_bbva_detail_rows: error", exc_info=True)
+        return []
+
+
+def _extract_banorte_bbva_detail_rows_impl(lines: list[str], raw_text: str) -> list[list[str]]:
     full = " ".join(lines)
     if "REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS" not in full:
         return []
@@ -2240,7 +2368,7 @@ def _extract_banorte_bbva_detail_rows(lines: list[str], raw_text: str) -> list[l
             clave_rastreo = _normalize_table_cell(ref_match.group(0))
 
     if not name:
-        candidate_name = re.search(r"\b([A-Z]{2,}(?:\s+[A-Z]{2,}){2,6})\b", chunk)
+        candidate_name = re.search(r"\b([A-Z\u00d1\u00c1\u00c9\u00cd\u00d3\u00da\u00dc]{2,}(?:\s+[A-Z\u00d1\u00c1\u00c9\u00cd\u00d3\u00da\u00dc]{2,}){2,6})\b", chunk)
         if candidate_name:
             guessed = _normalize_name(candidate_name.group(1))
             if _looks_like_person_name(guessed):
@@ -2681,16 +2809,25 @@ def _extract_bbva_transfer_receipt_rows(lines: list[str], raw_text: str) -> list
 
     result_rows: list[list[str]] = []
     seen_folios: set[str] = set()
+    # Determine folio column index from header for accurate dedup
+    folio_idx = -1
+    for _fi, _fh in enumerate(header):
+        if _normalize_keyword(_fh).lower() in ("foliounico", "folio_unico"):
+            folio_idx = _fi
+            break
     for seg_idx, (seg_lines, seg_keys, seg_text) in enumerate(segments):
         logger.info("[BBVA_RECEIPT] Segment %d: %d lines, first_key=%s",
                     seg_idx, len(seg_lines), seg_keys[0] if seg_keys else "EMPTY")
-        row = _extract_one_payment(seg_lines, seg_keys, seg_text)
+        try:
+            row = _extract_one_payment(seg_lines, seg_keys, seg_text)
+        except Exception:
+            logger.debug("[BBVA_RECEIPT] Segment %d FAILED (exception)", seg_idx, exc_info=True)
+            row = None
         if row:
             logger.info("[BBVA_RECEIPT] Segment %d produced row with %d cols: %s",
                         seg_idx, len(row), row)
-            # Deduplicate by folio_unico (index 12 in both Type A and Type B).
-            # If two segments produce the same folio they are the same payment.
-            folio_val = row[12] if len(row) > 12 else ""
+            # Deduplicate by folio_unico using header-derived index.
+            folio_val = row[folio_idx] if 0 <= folio_idx < len(row) else ""
             if folio_val:
                 if folio_val in seen_folios:
                     logger.info("[BBVA_RECEIPT] Segment %d SKIPPED (dup folio=%s)", seg_idx, folio_val)
@@ -2724,6 +2861,14 @@ def _normalize_payment_table_rows(rows: list[list[str]]) -> list[list[str]]:
     2. Fallback: si ESTATUS sigue vacío, busca la palabra de estatus en toda la fila.
     3. Uniforma NOMBRE y APELLIDO* a MAYÚSCULAS.
     """
+    try:
+        return _normalize_payment_table_rows_impl(rows)
+    except Exception:
+        logger.debug("_normalize_payment_table_rows: error, returning original", exc_info=True)
+        return rows
+
+
+def _normalize_payment_table_rows_impl(rows: list[list[str]]) -> list[list[str]]:
     if len(rows) < 2:
         return rows
 
@@ -2810,15 +2955,17 @@ def _normalize_payment_table_rows(rows: list[list[str]]) -> list[list[str]]:
     return result
 
 
-def _extract_payment_table_rows_from_pdf_tables(pdf_tables: list[list[list[str]]] | None) -> list[list[str]]:
+def _extract_payment_table_rows_from_pdf_tables(pdf_tables: list[list[list[str]]] | None) -> tuple[list[list[str]], list[list[list[str]]]]:
     """Convert PyMuPDF find_tables() output into payment table rows.
 
     Tables from multiple pages with matching headers are merged into a single
     result so that multi-page Banorte/BBVA tables are fully captured.
-    Returns rows in the standard ``[header_row, data_row, ...]`` format.
+    Returns a tuple of (best_rows, secondary_tables) where:
+      - best_rows: rows in the standard ``[header_row, data_row, ...]`` format
+      - secondary_tables: list of additional tables (different header structure)
     """
     if not pdf_tables:
-        return []
+        return [], []
 
     # Step 1: clean each table
     def _safe_cell(cell: object) -> str:
@@ -2847,7 +2994,7 @@ def _extract_payment_table_rows_from_pdf_tables(pdf_tables: list[list[list[str]]
             cleaned_tables.append(cleaned)
 
     if not cleaned_tables:
-        return []
+        return [], []
 
     # Step 2: group tables with identical header structure (multi-page merge)
     def _header_sig(header: list[str]) -> str:
@@ -2885,12 +3032,14 @@ def _extract_payment_table_rows_from_pdf_tables(pdf_tables: list[list[list[str]]
     # Step 4: pick the best merged candidate
     best_rows: list[list[str]] = []
     best_score = -999
-    for candidate in merged_candidates:
+    best_idx = -1
+    for i, candidate in enumerate(merged_candidates):
         score = _payment_rows_quality_score(candidate)
         # No inner bonus — the outer _extract_payment_table_payload adds +20 for PDF source
         if score > best_score:
             best_score = score
             best_rows = candidate
+            best_idx = i
 
     # Step 5: strip trailing junk columns (footer/contact noise from PyMuPDF)
     if best_rows and len(best_rows) >= 2:
@@ -2901,7 +3050,23 @@ def _extract_payment_table_rows_from_pdf_tables(pdf_tables: list[list[list[str]]
         if 0 <= last_valid < len(header) - 1:
             best_rows = [row[:last_valid + 1] for row in best_rows]
 
-    return best_rows
+    # Step 6: collect secondary tables (non-best candidates with valid data)
+    secondary_tables: list[list[list[str]]] = []
+    for i, candidate in enumerate(merged_candidates):
+        if i == best_idx:
+            continue
+        if len(candidate) >= 2:
+            # Strip trailing junk columns from secondary tables too
+            hdr = candidate[0]
+            last_v = len(hdr) - 1
+            while last_v >= 0 and _is_junk_payment_header(hdr[last_v]):
+                last_v -= 1
+            if 0 <= last_v < len(hdr) - 1:
+                candidate = [row[:last_v + 1] for row in candidate]
+            if len(candidate) >= 2 and len(candidate[0]) >= 2:
+                secondary_tables.append(candidate)
+
+    return best_rows, secondary_tables
 
 
 def _pdf_tables_to_generic_payloads(pdf_tables: list[list[list[str]]] | None) -> list[dict]:
@@ -2930,6 +3095,14 @@ def _pdf_tables_to_generic_payloads(pdf_tables: list[list[list[str]]] | None) ->
 
 
 def _extract_payment_table_payload(base_text_raw: str, ocr_boxes, pdf_tables: list[list[list[str]]] | None = None) -> dict | None:
+    try:
+        return _extract_payment_table_payload_impl(base_text_raw, ocr_boxes, pdf_tables)
+    except Exception:
+        logger.warning("_extract_payment_table_payload: unexpected error, returning None", exc_info=True)
+        return None
+
+
+def _extract_payment_table_payload_impl(base_text_raw: str, ocr_boxes, pdf_tables: list[list[list[str]]] | None = None) -> dict | None:
     all_tables = _extract_all_table_payloads(base_text_raw, ocr_boxes)
     # Merge structurally-detected PDF tables into the generic pool
     pdf_generic = _pdf_tables_to_generic_payloads(pdf_tables)
@@ -2938,7 +3111,7 @@ def _extract_payment_table_payload(base_text_raw: str, ocr_boxes, pdf_tables: li
 
     rows_ocr = _extract_payment_table_rows_from_boxes(ocr_boxes)
     rows_text = _extract_payment_table_rows_from_text(base_text_raw)
-    rows_pdf = _extract_payment_table_rows_from_pdf_tables(pdf_tables)
+    rows_pdf, secondary_pdf_tables = _extract_payment_table_rows_from_pdf_tables(pdf_tables)
 
     score_ocr = _payment_rows_quality_score(rows_ocr) if len(rows_ocr) >= 2 else -999
     score_text = _payment_rows_quality_score(rows_text) if len(rows_text) >= 2 else -999
@@ -3006,6 +3179,9 @@ def _extract_payment_table_payload(base_text_raw: str, ocr_boxes, pdf_tables: li
         "source": source,
         "rows": rows,
     }
+    # Attach secondary PDF tables (different header structure than the primary)
+    if secondary_pdf_tables:
+        payload["secondary_pdf_tables"] = secondary_pdf_tables
     if all_tables:
         payload["all_tables"] = all_tables
         payload["all_table_count"] = len(all_tables)
@@ -3143,6 +3319,17 @@ def _build_payment_mapped_fields(payment_detail: dict) -> dict[str, str]:
 
 
 def _enrich_payment_table_payload(
+    table_payload: dict | None,
+    payment_detail: dict | None,
+) -> dict | None:
+    try:
+        return _enrich_payment_table_payload_impl(table_payload, payment_detail)
+    except Exception:
+        logger.debug("_enrich_payment_table_payload: error during enrichment, returning original", exc_info=True)
+        return table_payload
+
+
+def _enrich_payment_table_payload_impl(
     table_payload: dict | None,
     payment_detail: dict | None,
 ) -> dict | None:
@@ -3466,6 +3653,14 @@ def _merge_payment_rows_with_backup(primary_rows: list[list[str]], backup_rows: 
     2. If row counts differ, find the best-matching backup row for each
        primary row using cell similarity, preventing cross-contamination.
     """
+    try:
+        return _merge_payment_rows_with_backup_impl(primary_rows, backup_rows)
+    except Exception:
+        logger.debug("_merge_payment_rows_with_backup: error, returning primary", exc_info=True)
+        return primary_rows
+
+
+def _merge_payment_rows_with_backup_impl(primary_rows: list[list[str]], backup_rows: list[list[str]]) -> list[list[str]]:
     if len(primary_rows) < 2 or len(backup_rows) < 2:
         return primary_rows
 
@@ -4394,28 +4589,37 @@ def _clean_metadata_from_cell(value: str) -> str:
 
 
 def _payment_rows_to_objects(rows: list[list[str]]) -> list[dict]:
-    if len(rows) < 2:
+    if not rows or len(rows) < 2:
         return []
-    header = rows[0]
-    keys = _payment_header_keys_from_cells(header)
-    objects: list[dict] = []
-    for row in rows[1:]:
-        # Skip summary sub-header/data rows (extracted separately)
-        if _is_summary_row(row):
-            continue
-        # Skip metadata label rows that leaked into the table
-        if _is_metadata_row(row):
-            continue
-        item: dict[str, str] = {}
-        for idx, key in enumerate(keys):
-            if idx >= len(row):
-                item[key] = ""
-            else:
-                cleaned = _clean_metadata_from_cell(str(row[idx] or ""))
-                item[key] = _normalize_text(cleaned)
-        if any(str(v).strip() for v in item.values()):
-            objects.append(item)
-    return objects[:80]
+    try:
+        header = rows[0]
+        keys = _payment_header_keys_from_cells(header)
+        if not keys:
+            return []
+        objects: list[dict] = []
+        for row in rows[1:]:
+            try:
+                # Skip summary sub-header/data rows (extracted separately)
+                if _is_summary_row(row):
+                    continue
+                # Skip metadata label rows that leaked into the table
+                if _is_metadata_row(row):
+                    continue
+                item: dict[str, str] = {}
+                for idx, key in enumerate(keys):
+                    if idx >= len(row):
+                        item[key] = ""
+                    else:
+                        cleaned = _clean_metadata_from_cell(str(row[idx] or ""))
+                        item[key] = _normalize_text(cleaned)
+                if any(str(v).strip() for v in item.values()):
+                    objects.append(item)
+            except Exception:
+                continue
+        return objects[:500]
+    except Exception:
+        logger.debug("_payment_rows_to_objects: error converting rows", exc_info=True)
+        return []
 
 
 def _canonical_payment_key(bank: str, raw_key: str) -> str:
@@ -4515,11 +4719,12 @@ def _canonical_payment_key(bank: str, raw_key: str) -> str:
         "claverastreo": "clave_rastreo",
     }
 
-    if bank == "SCOTIABANK" and key in scotia_map:
+    bank_upper = (bank or "").upper()
+    if "SCOTIA" in bank_upper and key in scotia_map:
         return scotia_map[key]
-    if bank == "BBVA" and key in bbva_map:
+    if "BBVA" in bank_upper and key in bbva_map:
         return bbva_map[key]
-    if bank == "BANORTE" and key in banorte_map:
+    if "BANORTE" in bank_upper and key in banorte_map:
         return banorte_map[key]
 
     mapped = base_map.get(key)
@@ -4587,10 +4792,45 @@ def _canonical_payment_key(bank: str, raw_key: str) -> str:
     if len(key) > 40:
         return ""
 
+    # Drop very short keys (≤ 3 chars) that are never valid column headers.
+    # These are phantom columns from data values like "DA", "ES", "MXN".
+    if len(key) <= 3:
+        return ""
+
+    key_upper = key.upper()
+
+    # Reject single common Spanish words that are data values, NOT column
+    # headers.  These leak through when a data row is mistakenly used as
+    # the column-anchor reference (e.g. "ALTA", "ABONO", person surnames).
+    _DATA_VALUE_WORDS = frozenset({
+        "ALTA", "BAJA", "ABONO", "CARGO", "RETIRO", "DEPOSITO",
+        "PAGO", "PAGOS", "TRANSFERENCIA", "TRASPASO",
+        "PROCESADO", "APLICADO", "ACEPTADO", "TRANSMITIDO",
+        "RECHAZADO", "DEVUELTO", "CANCELADO", "LIQUIDADO",
+        "ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO",
+        "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE",
+        "LUNES", "MARTES", "MIERCOLES", "JUEVES", "VIERNES", "SABADO", "DOMINGO",
+    })
+    if key_upper in _DATA_VALUE_WORDS:
+        return ""
+
     # Reject leftover geographic / contact-info noise that survived normalization
     _NOISE_STEMS = ("GUADALAJARA", "MONTERREY", "RESTODEL", "CIUDADDEMEXICO", "LADASINCOSTO")
-    key_upper = key.upper()
     if any(ns in key_upper for ns in _NOISE_STEMS):
+        return ""
+
+    # Reject keys that look like person names or surnames (single uppercase
+    # words that don't match any known column vocabulary).  Valid column
+    # keys always contain at least one of these substrings.
+    _COLUMN_SUBSTRINGS = (
+        "CUENTA", "REFERENCIA", "IMPORTE", "NOMBRE", "APELLIDO",
+        "ESTATUS", "ESTADO", "CONCEPTO", "TIPO", "BANCO", "CLAVE",
+        "FOLIO", "NUMERO", "FECHA", "DIVISA", "TITULAR", "CONTRATO",
+        "CODIGO", "DESCRIPCION", "MOTIVO", "DEPOSITO", "FORMA",
+        "RASTREO", "OPERACION", "MOVIMIENTO", "EMPLEADO", "LOTE",
+        "VIGENCIA", "RECEPTOR", "BENEFICIARIO", "REGISTRO",
+    )
+    if not any(sub in key_upper for sub in _COLUMN_SUBSTRINGS):
         return ""
 
     return key
@@ -4602,95 +4842,112 @@ def _payment_to_canonical_rows(bank: str, rows: list[dict]) -> tuple[list[str], 
     canonical_rows: list[dict] = []
     canonical_keys: list[str] = []
     for row in rows:
-        canonical_row: dict[str, str] = {}
-        for raw_key, raw_value in row.items():
-            canon_key = _canonical_payment_key(bank, str(raw_key or ""))
-            if not canon_key:
-                continue
-            value = _normalize_text(str(raw_value or ""))
-            if not value:
-                continue
-            if canon_key in canonical_row:
-                merged = f"{canonical_row[canon_key]} {value}".strip()
-                canonical_row[canon_key] = _normalize_text(merged)
-            else:
-                canonical_row[canon_key] = value
-            if canon_key not in canonical_keys:
-                canonical_keys.append(canon_key)
+        try:
+            canonical_row: dict[str, str] = {}
+            for raw_key, raw_value in row.items():
+                canon_key = _canonical_payment_key(bank, str(raw_key or ""))
+                if not canon_key:
+                    continue
+                value = _normalize_text(str(raw_value or ""))
+                if not value:
+                    continue
+                if canon_key in canonical_row:
+                    # Avoid merging duplicate amounts (would produce garbage like "$1,234 $1,234")
+                    if canon_key == "importe":
+                        pass  # keep first value
+                    else:
+                        merged = f"{canonical_row[canon_key]} {value}".strip()
+                        canonical_row[canon_key] = _normalize_text(merged)
+                else:
+                    canonical_row[canon_key] = value
+                if canon_key not in canonical_keys:
+                    canonical_keys.append(canon_key)
 
-        combo = _normalize_text(str(canonical_row.get("apellido_combo_estatus") or ""))
-        if combo:
-            status_match = re.search(r"\b(APLICADO|PROCESADO|ACEPTADO|TRANSMITIDO|RECHAZADO)\b", combo)
-            if status_match and not canonical_row.get("estatus"):
-                canonical_row["estatus"] = _normalize_text(status_match.group(1))
-                if "estatus" not in canonical_keys:
-                    canonical_keys.append("estatus")
+            combo = _normalize_text(str(canonical_row.get("apellido_combo_estatus") or ""))
+            if combo:
+                _status_combo_pat = rf"\b({'|'.join(_ALL_PAYMENT_STATUSES)})\b"
+                status_match = re.search(_status_combo_pat, combo)
+                if status_match and not canonical_row.get("estatus"):
+                    canonical_row["estatus"] = _normalize_text(status_match.group(1))
+                    if "estatus" not in canonical_keys:
+                        canonical_keys.append("estatus")
 
-            combo_name = re.sub(r"\b(APLICADO|PROCESADO|ACEPTADO|TRANSMITIDO|RECHAZADO)\b", "", combo).strip()
-            combo_parts = [part for part in _normalize_name(combo_name).split() if part]
-            if combo_parts:
-                if len(combo_parts) >= 1 and not canonical_row.get("apellido_paterno"):
-                    canonical_row["apellido_paterno"] = combo_parts[0]
-                    if "apellido_paterno" not in canonical_keys:
-                        canonical_keys.append("apellido_paterno")
-                if len(combo_parts) >= 2 and not canonical_row.get("apellido_materno"):
-                    canonical_row["apellido_materno"] = combo_parts[1]
-                    if "apellido_materno" not in canonical_keys:
-                        canonical_keys.append("apellido_materno")
+                combo_name = re.sub(_status_combo_pat, "", combo).strip()
+                combo_parts = [part for part in _normalize_name(combo_name).split() if part]
+                if combo_parts:
+                    if len(combo_parts) >= 1 and not canonical_row.get("apellido_paterno"):
+                        canonical_row["apellido_paterno"] = combo_parts[0]
+                        if "apellido_paterno" not in canonical_keys:
+                            canonical_keys.append("apellido_paterno")
+                    if len(combo_parts) >= 2 and not canonical_row.get("apellido_materno"):
+                        canonical_row["apellido_materno"] = combo_parts[1]
+                        if "apellido_materno" not in canonical_keys:
+                            canonical_keys.append("apellido_materno")
 
-            canonical_row.pop("apellido_combo_estatus", None)
-            if "apellido_combo_estatus" in canonical_keys:
-                canonical_keys.remove("apellido_combo_estatus")
+                canonical_row.pop("apellido_combo_estatus", None)
+                if "apellido_combo_estatus" in canonical_keys:
+                    canonical_keys.remove("apellido_combo_estatus")
 
-        full_name = _normalize_text(str(canonical_row.get("nombre_beneficiario") or ""))
-        if full_name:
-            # Only split into nombre/apellido parts if the document already
-            # has separate apellido columns (from original headers or combo handler).
-            # Otherwise, keep the full name intact — faithful to the PDF.
-            has_separate_apellidos = bool(
-                canonical_row.get("apellido_paterno")
-                or canonical_row.get("apellido_materno")
-            )
-            if has_separate_apellidos:
-                nombre, apellido_paterno, apellido_materno = _split_payment_name_parts(full_name)
-                if nombre and not canonical_row.get("nombre"):
-                    canonical_row["nombre"] = nombre
+            full_name = _normalize_text(str(canonical_row.get("nombre_beneficiario") or ""))
+            if full_name:
+                # Only split into nombre/apellido parts if the document already
+                # has separate apellido columns (from original headers or combo handler).
+                # Otherwise, keep the full name intact — faithful to the PDF.
+                has_separate_apellidos = bool(
+                    canonical_row.get("apellido_paterno")
+                    or canonical_row.get("apellido_materno")
+                )
+                if has_separate_apellidos:
+                    nombre, apellido_paterno, apellido_materno = _split_payment_name_parts(full_name)
+                    if nombre and not canonical_row.get("nombre"):
+                        canonical_row["nombre"] = nombre
+                        if "nombre" not in canonical_keys:
+                            # Insert at the position of nombre_beneficiario to preserve PDF column order
+                            if "nombre_beneficiario" in canonical_keys:
+                                canonical_keys[canonical_keys.index("nombre_beneficiario")] = "nombre"
+                            else:
+                                canonical_keys.append("nombre")
+                    if apellido_paterno and not canonical_row.get("apellido_paterno"):
+                        canonical_row["apellido_paterno"] = apellido_paterno
+                        if "apellido_paterno" not in canonical_keys:
+                            canonical_keys.append("apellido_paterno")
+                    if apellido_materno and not canonical_row.get("apellido_materno"):
+                        canonical_row["apellido_materno"] = apellido_materno
+                        if "apellido_materno" not in canonical_keys:
+                            canonical_keys.append("apellido_materno")
+                else:
+                    # Document has only a single name column — keep the full name
+                    canonical_row["nombre"] = full_name
                     if "nombre" not in canonical_keys:
                         # Insert at the position of nombre_beneficiario to preserve PDF column order
                         if "nombre_beneficiario" in canonical_keys:
                             canonical_keys[canonical_keys.index("nombre_beneficiario")] = "nombre"
                         else:
                             canonical_keys.append("nombre")
-                if apellido_paterno and not canonical_row.get("apellido_paterno"):
-                    canonical_row["apellido_paterno"] = apellido_paterno
-                    if "apellido_paterno" not in canonical_keys:
-                        canonical_keys.append("apellido_paterno")
-                if apellido_materno and not canonical_row.get("apellido_materno"):
-                    canonical_row["apellido_materno"] = apellido_materno
-                    if "apellido_materno" not in canonical_keys:
-                        canonical_keys.append("apellido_materno")
-            else:
-                # Document has only a single name column — keep the full name
-                canonical_row["nombre"] = full_name
-                if "nombre" not in canonical_keys:
-                    # Insert at the position of nombre_beneficiario to preserve PDF column order
-                    if "nombre_beneficiario" in canonical_keys:
-                        canonical_keys[canonical_keys.index("nombre_beneficiario")] = "nombre"
-                    else:
-                        canonical_keys.append("nombre")
 
-            # Remove the original nombre_beneficiario to avoid duplicate Nombre columns
-            canonical_row.pop("nombre_beneficiario", None)
-            # Only remove from canonical_keys if it wasn't already replaced in-place above
-            if "nombre_beneficiario" in canonical_keys:
-                canonical_keys.remove("nombre_beneficiario")
+                # Remove the original nombre_beneficiario to avoid duplicate Nombre columns
+                canonical_row.pop("nombre_beneficiario", None)
+                # Only remove from canonical_keys if it wasn't already replaced in-place above
+                if "nombre_beneficiario" in canonical_keys:
+                    canonical_keys.remove("nombre_beneficiario")
 
-        if canonical_row:
-            canonical_rows.append(canonical_row)
+            if canonical_row:
+                canonical_rows.append(canonical_row)
+        except Exception:
+            logger.debug("_payment_to_canonical_rows: skipping row due to error", exc_info=True)
+            continue
     return canonical_keys, canonical_rows
 
 
 def _extract_payment_detail_payload(base_text_raw: str, table_payload: dict | None) -> dict | None:
+    try:
+        return _extract_payment_detail_payload_impl(base_text_raw, table_payload)
+    except Exception:
+        logger.debug("_extract_payment_detail_payload: error, returning None", exc_info=True)
+        return None
+
+
+def _extract_payment_detail_payload_impl(base_text_raw: str, table_payload: dict | None) -> dict | None:
     text = str(base_text_raw or "")
     if not text.strip():
         return None
@@ -4748,6 +5005,50 @@ def _extract_payment_detail_payload(base_text_raw: str, table_payload: dict | No
     row_objects = _payment_rows_to_objects(rows) if rows else []
     canonical_columns, canonical_rows = _payment_to_canonical_rows(bank, row_objects)
     summary_tables = _extract_scotia_summary_tables(text) if bank == "SCOTIABANK" else []
+
+    # Convert secondary PDF tables (different header structures) into summary_tables
+    secondary_pdf_tables: list[list[list[str]]] = []
+    if isinstance(table_payload, dict):
+        secondary_pdf_tables = table_payload.get("secondary_pdf_tables") or []
+    for sec_idx, sec_table in enumerate(secondary_pdf_tables):
+        try:
+            if not sec_table or len(sec_table) < 2:
+                continue
+            sec_objects = _payment_rows_to_objects(sec_table)
+            sec_cols, sec_rows = _payment_to_canonical_rows(bank, sec_objects)
+            if not sec_rows:
+                # Fall back to raw header/data if canonical conversion yields nothing
+                sec_header = [str(c or "") for c in sec_table[0]]
+                sec_data_rows = [
+                    [str(c or "") for c in row]
+                    for row in sec_table[1:]
+                    if any(str(c or "").strip() for c in row)
+                ]
+                if sec_data_rows:
+                    summary_tables.append({
+                        "title": f"Tabla {sec_idx + 2}",
+                        "columns": sec_header,
+                        "rows": sec_data_rows,
+                    })
+            else:
+                # Build display labels for summary columns
+                sec_display = _build_display_columns_map(sec_table, bank)
+                sec_labels = [
+                    sec_display.get(col) or col.replace("_", " ").title()
+                    for col in sec_cols
+                ]
+                sec_formatted_rows = [
+                    [str(crow.get(col, "") or "") for col in sec_cols]
+                    for crow in sec_rows
+                ]
+                if sec_formatted_rows:
+                    summary_tables.append({
+                        "title": f"Tabla {sec_idx + 2}",
+                        "columns": sec_labels,
+                        "rows": sec_formatted_rows,
+                    })
+        except Exception:
+            logger.debug("Failed to convert secondary PDF table %d", sec_idx, exc_info=True)
 
     # Build display_columns: map canonical keys → original PDF header labels
     display_columns = _build_display_columns_map(rows, bank)

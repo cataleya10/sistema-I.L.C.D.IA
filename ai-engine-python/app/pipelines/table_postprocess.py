@@ -362,11 +362,28 @@ def postprocess_payment_table(
     tuple[list[str], list[dict[str, str]]]
         Cleaned (columns, rows) in the same format as input.
     """
+    # --- Defensive input validation ---
+    if not isinstance(canonical_columns, list):
+        canonical_columns = list(canonical_columns) if canonical_columns else []
+    if not isinstance(canonical_rows, list):
+        canonical_rows = list(canonical_rows) if canonical_rows else []
     if not canonical_rows:
         return canonical_columns, canonical_rows
 
+    # Ensure every row is a dict with string values
+    safe_rows: list[dict[str, str]] = []
+    for r in canonical_rows:
+        if isinstance(r, dict):
+            safe_rows.append({str(k): str(v or "") for k, v in r.items()})
+    if not safe_rows:
+        return canonical_columns, canonical_rows
+    canonical_rows = safe_rows
+
     # --- Step -1: Split merged rows (multi-record-per-cell) ---
-    canonical_rows = _split_merged_rows(canonical_rows)
+    try:
+        canonical_rows = _split_merged_rows(canonical_rows)
+    except Exception:
+        logger.debug("postprocess: merged-row splitting failed, continuing with original rows", exc_info=True)
 
     try:
         df = pd.DataFrame(canonical_rows)
@@ -407,18 +424,27 @@ def postprocess_payment_table(
         df[col] = df[col].apply(_strip_metadata_noise)
 
     # --- Step 1: Column-wise type-aware cleaning ---
+    def _safe_apply(fn):
+        """Wrap a cell cleaner so individual cell errors don't crash the column."""
+        def _wrapper(v):
+            try:
+                return fn(v)
+            except Exception:
+                return str(v or "").strip()
+        return _wrapper
+
     for col in df.columns:
         col_lower = str(col).lower()
         if col_lower in _AMOUNT_COLUMNS:
-            df[col] = df[col].apply(_clean_amount)
+            df[col] = df[col].apply(_safe_apply(_clean_amount))
         elif col_lower in _ACCOUNT_COLUMNS:
-            df[col] = df[col].apply(_clean_account)
+            df[col] = df[col].apply(_safe_apply(_clean_account))
         elif col_lower in _NAME_COLUMNS:
-            df[col] = df[col].apply(_clean_name)
+            df[col] = df[col].apply(_safe_apply(_clean_name))
         elif col_lower in _STATUS_COLUMNS:
-            df[col] = df[col].apply(_clean_status)
+            df[col] = df[col].apply(_safe_apply(_clean_status))
         elif col_lower in _NUMERIC_ID_COLUMNS:
-            df[col] = df[col].apply(_clean_numeric_id)
+            df[col] = df[col].apply(_safe_apply(_clean_numeric_id))
         else:
             # Generic: strip whitespace
             df[col] = df[col].apply(lambda v: str(v or "").strip())
@@ -529,7 +555,11 @@ def postprocess_payment_table(
     # Only keep columns that actually exist in the DataFrame
     result_columns = [c for c in result_columns if c in df.columns]
 
-    result_rows = df.to_dict(orient="records")
+    try:
+        result_rows = df.to_dict(orient="records")
+    except Exception:
+        logger.debug("postprocess: failed to convert DataFrame back to dicts", exc_info=True)
+        return canonical_columns, canonical_rows
     # Ensure all values are strings
     clean_rows: list[dict[str, str]] = []
     for row in result_rows:
@@ -564,35 +594,43 @@ def postprocess_metadata(
     """
     if not metadata:
         return metadata
+    if not isinstance(metadata, dict):
+        return metadata
 
     cleaned: dict[str, str] = {}
     for key, value in metadata.items():
-        text = str(value or "").strip()
-        if not text:
-            continue
-        key_lower = key.lower()
+        try:
+            text = str(value or "").strip()
+            if not text:
+                continue
+            key_lower = key.lower()
 
-        # Count fields — ensure purely numeric (check BEFORE amounts since
-        # "cantidad_total_movimientos" contains "total" but is a count)
-        if any(token in key_lower for token in ("cantidad", "registros")) and "importe" not in key_lower:
-            digits = re.sub(r"\D", "", text)
-            if digits:
-                text = str(int(digits))
-        # Amount fields
-        elif any(token in key_lower for token in ("importe", "monto")) or (key_lower.endswith("_total") and "cantidad" not in key_lower):
-            text = _clean_amount(text)
-        # Account/contract fields
-        elif any(token in key_lower for token in ("cuenta", "contrato")):
-            text = _clean_account(text)
-        # Name fields
-        elif any(token in key_lower for token in ("nombre", "titular", "usuario", "empresa")):
-            text = _clean_name(text)
-        # Folio/reference fields
-        elif any(token in key_lower for token in ("folio", "lote", "referencia")):
-            text = _clean_numeric_id(text)
+            # Count fields — ensure purely numeric (check BEFORE amounts since
+            # "cantidad_total_movimientos" contains "total" but is a count)
+            if any(token in key_lower for token in ("cantidad", "registros")) and "importe" not in key_lower:
+                digits = re.sub(r"\D", "", text)
+                if digits:
+                    text = str(int(digits))
+            # Amount fields
+            elif any(token in key_lower for token in ("importe", "monto")) or (key_lower.endswith("_total") and "cantidad" not in key_lower):
+                text = _clean_amount(text)
+            # Account/contract fields
+            elif any(token in key_lower for token in ("cuenta", "contrato")):
+                text = _clean_account(text)
+            # Name fields
+            elif any(token in key_lower for token in ("nombre", "titular", "usuario", "empresa")):
+                text = _clean_name(text)
+            # Folio/reference fields
+            elif any(token in key_lower for token in ("folio", "lote", "referencia")):
+                text = _clean_numeric_id(text)
 
-        if text:
-            cleaned[key] = text
+            if text:
+                cleaned[key] = text
+        except Exception:
+            # Preserve original value if cleaning fails
+            raw = str(value or "").strip()
+            if raw:
+                cleaned[key] = raw
 
     return cleaned
 

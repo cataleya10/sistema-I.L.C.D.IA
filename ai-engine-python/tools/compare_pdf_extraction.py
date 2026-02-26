@@ -349,20 +349,31 @@ def main() -> None:
     print(f"{C.BOLD}Leyendo PDF: {pdf_path}{C.END}")
 
     # 1) Read PDF
-    raw_text, pdf_tables = read_pdf(pdf_path)
-    bank = _payment_detect_bank(raw_text)
+    try:
+        raw_text, pdf_tables = read_pdf(pdf_path)
+    except Exception as exc:
+        print(f"{C.RED}Error al leer PDF: {exc}{C.END}", file=sys.stderr)
+        sys.exit(1)
+    bank = _payment_detect_bank(raw_text) or ""
     print(f"  Banco detectado: {C.CYAN}{bank or '(no detectado)'}{C.END}")
     print(f"  Texto raw: {len(raw_text)} caracteres")
     print(f"  Tablas PyMuPDF: {len(pdf_tables)} tabla(s)")
 
     # 2) BBVA Advanced Text Extraction (regex ground truth)
-    text_rows = _extract_bbva_nomina_advanced_rows_from_text(raw_text)
-    if not text_rows:
-        text_rows = _extract_payment_table_rows_from_text(raw_text)
+    try:
+        text_rows = _extract_bbva_nomina_advanced_rows_from_text(raw_text) or []
+        if not text_rows:
+            text_rows = _extract_payment_table_rows_from_text(raw_text) or []
+    except Exception:
+        text_rows = []
     text_score = _payment_rows_quality_score(text_rows) if text_rows else -999
 
     # 3) PDF Structural Extraction
-    pdf_rows = _extract_payment_table_rows_from_pdf_tables(pdf_tables)
+    try:
+        pdf_rows, _secondary = _extract_payment_table_rows_from_pdf_tables(pdf_tables)
+        pdf_rows = pdf_rows or []
+    except Exception:
+        pdf_rows = []
     pdf_score = (_payment_rows_quality_score(pdf_rows) + 20) if pdf_rows else -999
 
     print(f"\n  Calidad texto: {text_score}  |  Calidad PDF+20: {pdf_score}")
@@ -388,13 +399,22 @@ def main() -> None:
         print_table("3. Resultado Fusionado (Merge)", merged_rows)
 
     # 6) Convert to canonical through the real pipeline
-    text_objects = _payment_rows_to_objects(text_rows) if text_rows else []
-    text_canonical_cols, text_canonical_rows = _payment_to_canonical_rows(bank, text_objects)
+    try:
+        text_objects = _payment_rows_to_objects(text_rows) if text_rows else []
+        text_canonical_cols, text_canonical_rows = _payment_to_canonical_rows(bank, text_objects)
+    except Exception:
+        text_canonical_cols, text_canonical_rows = [], []
 
-    merged_objects = _payment_rows_to_objects(merged_rows) if merged_rows else []
-    final_canonical_cols, final_canonical_rows = _payment_to_canonical_rows(bank, merged_objects)
+    try:
+        merged_objects = _payment_rows_to_objects(merged_rows) if merged_rows else []
+        final_canonical_cols, final_canonical_rows = _payment_to_canonical_rows(bank, merged_objects)
+    except Exception:
+        final_canonical_cols, final_canonical_rows = [], []
 
-    display_map = _build_display_columns_map(merged_rows, bank)
+    try:
+        display_map = _build_display_columns_map(merged_rows, bank)
+    except Exception:
+        display_map = {}
 
     # 7) Show canonical tables
     if args.verbose or not args.json:

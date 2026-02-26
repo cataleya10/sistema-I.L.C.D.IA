@@ -92,12 +92,14 @@
   ],
   "clave_elector": [
     "CLAVE DE ELECTOR",
-    "CLAVE ELECTOR"
+    "CLAVE ELECTOR",
+    "CLAVEDEELECTOR"
   ],
   "vigencia": [
     "VIGENCIA",
     "VIGENTE HASTA",
-    "VENCE"
+    "VENCE",
+    "EMISON2019MGENCA"
   ],
   "seccion": [
     "SECCION",

@@ -1919,15 +1919,16 @@ class TestPdfTableExtraction(unittest.TestCase):
                 ["56905029323", "162026011", "$353.60", "EDGAR HASSAN", "APLICADO"],
             ],
         ]
-        rows = _extract_payment_table_rows_from_pdf_tables(tables)
+        rows, secondary = _extract_payment_table_rows_from_pdf_tables(tables)
         self.assertEqual(len(rows), 4)  # header + 3 data rows
         self.assertIn("CUENTA", rows[0])
         self.assertIn("56783223195", rows[1][0])
+        self.assertIsInstance(secondary, list)
 
     def test_pdf_tables_empty_returns_empty(self):
         from app.pipelines.extract import _extract_payment_table_rows_from_pdf_tables
-        self.assertEqual(_extract_payment_table_rows_from_pdf_tables(None), [])
-        self.assertEqual(_extract_payment_table_rows_from_pdf_tables([]), [])
+        self.assertEqual(_extract_payment_table_rows_from_pdf_tables(None), ([], []))
+        self.assertEqual(_extract_payment_table_rows_from_pdf_tables([]), ([], []))
 
     def test_pdf_tables_to_generic_payloads(self):
         from app.pipelines.extract import _pdf_tables_to_generic_payloads
@@ -1944,8 +1945,8 @@ class TestPdfTableExtraction(unittest.TestCase):
         tables = [
             [["", "", ""], ["", None, ""], ["", "", ""]],
         ]
-        result = _extract_payment_table_rows_from_pdf_tables(tables)
-        self.assertEqual(result, [])
+        rows, secondary = _extract_payment_table_rows_from_pdf_tables(tables)
+        self.assertEqual(rows, [])
 
     def test_payment_table_payload_prefers_pdf_structure(self):
         """When PDF structural table is high quality, it should win over OCR/text."""
@@ -1991,7 +1992,7 @@ class TestPdfTableExtraction(unittest.TestCase):
             ["56905029323", "162026011", "$353.60", "EDGAR HASSAN", "APLICADO"],
             ["12345678901", "162026011", "$240.00", "JOSE CARLOS", "PROCESADO"],
         ]
-        rows = _extract_payment_table_rows_from_pdf_tables([page1_table, page2_table])
+        rows, secondary = _extract_payment_table_rows_from_pdf_tables([page1_table, page2_table])
         # header + 4 unique data rows
         self.assertEqual(len(rows), 5)
         self.assertEqual(rows[0], header)
@@ -2007,8 +2008,33 @@ class TestPdfTableExtraction(unittest.TestCase):
         row1 = ["56783223195", "$610.44", "MARLA GRISELDA", "APLICADO"]
         page1 = [header, row1]
         page2 = [header, row1]  # exact duplicate
-        rows = _extract_payment_table_rows_from_pdf_tables([page1, page2])
+        rows, secondary = _extract_payment_table_rows_from_pdf_tables([page1, page2])
         self.assertEqual(len(rows), 2)  # header + 1 unique data row
+
+
+    def test_secondary_tables_returned_for_different_headers(self):
+        """Tables with different header structures should be returned as secondary."""
+        from app.pipelines.extract import _extract_payment_table_rows_from_pdf_tables
+        # Main payment table
+        main_table = [
+            ["CUENTA", "REFERENCIA", "IMPORTE", "NOMBRE", "ESTATUS"],
+            ["56783223195", "162026011", "$610.44", "MARLA GRISELDA", "APLICADO"],
+            ["56936397470", "162026011", "$1,537.35", "ROLANDO", "APLICADO"],
+        ]
+        # A different table (e.g. summary)
+        summary_table = [
+            ["TIPO OPERACION", "CANTIDAD", "IMPORTE TOTAL"],
+            ["DISPERSION", "15", "$24,500.00"],
+            ["INDIVIDUAL", "3", "$5,200.00"],
+        ]
+        rows, secondary = _extract_payment_table_rows_from_pdf_tables([main_table, summary_table])
+        # Main table should be picked as best
+        self.assertEqual(len(rows), 3)
+        self.assertIn("CUENTA", rows[0])
+        # Secondary table should be in secondary list
+        self.assertEqual(len(secondary), 1)
+        self.assertEqual(len(secondary[0]), 3)  # header + 2 data rows
+        self.assertIn("TIPO OPERACION", secondary[0][0])
 
 
 class TestCanonicalKeyMapping(unittest.TestCase):
