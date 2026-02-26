@@ -84,14 +84,14 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
         <a class="ghost" [routerLink]="['/documents', document.id, 'results']">Ver resultados</a>
       </div>
 
-      <div class="grid">
+      <div class="grid" [class.grid--full]="isFacturaType">
         <app-document-viewer
           [fileUrl]="previewFileUrl"
           [mimeType]="previewMimeType"
           [loading]="isPreviewLoading"
           [errorMessage]="previewError"
         ></app-document-viewer>
-        <div class="fields">
+        <div class="fields" *ngIf="!isFacturaType">
           <h3>Resultados extraidos</h3>
           <p class="review" *ngIf="document.needs_review">Revision requerida por baja confianza o validacion.</p>
           <table class="results" *ngIf="displayFields.length">
@@ -432,6 +432,9 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
         grid-template-columns: minmax(380px, 1.15fr) minmax(460px, 1fr);
         gap: 20px;
         align-items: start;
+      }
+      .grid--full {
+        grid-template-columns: 1fr;
       }
       app-document-viewer,
       .fields {
@@ -801,6 +804,11 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
   previewMimeType: string | null = null;
   previewError: string | null = null;
   displayFields: DocumentDetail['fields'] = [];
+
+  /** True when the current document is FACTURA — hides "Resultados extraídos" in favour of Tabla detectada. */
+  get isFacturaType(): boolean {
+    return this.document?.document_type === 'FACTURA';
+  }
   tableView: TableViewModel = { headerRows: [], bodyRows: [] };
   tableLayoutMode: TableLayoutMode = 'standard';
   tableRenderMode: 'standard' | 'report' = 'standard';
