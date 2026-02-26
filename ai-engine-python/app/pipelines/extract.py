@@ -4,6 +4,7 @@ import os
 import logging
 import unicodedata
 from datetime import datetime
+from typing import Any
 
 from app.pipelines.legacy_adapter import legacy_extract_fields
 from app.pipelines.table_postprocess import (
@@ -3215,10 +3216,24 @@ def _extract_payment_table_payload_impl(base_text_raw: str, ocr_boxes, pdf_table
 
     rows = _append_scotia_summary_rows_to_table(rows, base_text_raw)
     rows = _normalize_payment_table_rows(rows)
-    payload = {
+
+    # ── L1 + L2: Validate cells and cross-coherence ─────────────────────
+    validation_warnings: list[str] = []
+    try:
+        validation_warnings.extend(_validate_payment_table_cells(rows))
+    except Exception:
+        logger.debug("L1 cell validation failed", exc_info=True)
+    try:
+        validation_warnings.extend(_validate_payment_table_coherence(rows))
+    except Exception:
+        logger.debug("L2 coherence validation failed", exc_info=True)
+
+    payload: dict[str, Any] = {
         "source": source,
         "rows": rows,
     }
+    if validation_warnings:
+        payload["validation_warnings"] = validation_warnings
     # Attach secondary PDF tables (different header structure than the primary)
     if secondary_pdf_tables:
         payload["secondary_pdf_tables"] = secondary_pdf_tables
@@ -4036,6 +4051,457 @@ def _normalize_payment_count(value: str) -> str:
     if len(raw) > 6:
         return raw[:6]
     return str(int(raw))
+
+
+# ── Level 1: Field-level data validation for payment table cells ───────────
+
+_VALID_AMOUNT_FMT_RE = re.compile(r"^\$[\d,]+\.\d{2}$")
+_VALID_DATE_FMT_RE = re.compile(r"^\d{2}/\d{2}/\d{4}$")
+_VALID_ACCOUNT_FMT_RE = re.compile(r"^\d{6,20}$")
+_VALID_CLABE_FMT_RE = re.compile(r"^\d{18}$")
+
+_AMOUNT_HEADER_TOKENS = frozenset({
+    "IMPORTE", "MONTO", "IMPORTEDETECTADO", "IMPORTETOTALMOVIMIENTOS",
+    "IMPORTEMOVIMIENTOALTAS", "IMPORTEMOVIMIENTOSBAJAS",
+    "TOTALIMPORTEDEMOVIMIENTOALTAS", "TOTALIMPORTEDEMOVIMIENTOSBAJAS",
+})
+
+_ACCOUNT_HEADER_TOKENS = frozenset({
+    "CUENTA", "CUENTARETIRO", "CUENTABENEFICIARIO", "CUENTADEPOSITO",
+    "CONTRATO", "NUMEROCONTRATO", "CLABE",
+})
+
+_DATE_HEADER_TOKENS = frozenset({
+    "FECHA", "FECHAPAGO", "FECHAOPERACION", "FECHAAPLICACION",
+    "FECHAHORAPROCESO", "FECHAHORACAPTURA",
+})
+
+_STATUS_HEADER_TOKENS = frozenset({"ESTATUS", "STATUS"})
+
+_COUNT_HEADER_TOKENS = frozenset({
+    "CANTIDADDEMOVIMIENTOSALTAS", "CANTIDADDEMOVIMIENTOSBAJAS",
+    "TOTALCANTIDADDEMOVIMIENTOSALTAS", "TOTALCANTIDADDEMOVIMIENTOSBAJAS",
+})
+
+
+def _classify_table_columns(header: list[str]) -> dict[int, str]:
+    """Classify each header column into a semantic type for validation."""
+    classification: dict[int, str] = {}
+    for idx, cell in enumerate(header):
+        key = _normalize_keyword(str(cell or ""))
+        if not key:
+            continue
+        if key in _COUNT_HEADER_TOKENS:
+            classification[idx] = "count"
+        elif key in _AMOUNT_HEADER_TOKENS or "IMPORTE" in key or "MONTO" in key:
+            classification[idx] = "amount"
+        elif key in _ACCOUNT_HEADER_TOKENS or "CUENTA" in key or "CLABE" in key:
+            classification[idx] = "account"
+        elif key in _DATE_HEADER_TOKENS or "FECHA" in key:
+            classification[idx] = "date"
+        elif key in _STATUS_HEADER_TOKENS:
+            classification[idx] = "status"
+    return classification
+
+
+def _validate_payment_table_cells(rows: list[list[str]]) -> list[str]:
+    """Level 1: Validate individual cell values against expected formats.
+
+    Returns a list of human-readable warning strings for cells that don't
+    match the expected format for their column type.  Does NOT modify rows.
+    """
+    if not rows or len(rows) < 2:
+        return []
+
+    header = rows[0]
+    col_types = _classify_table_columns(header)
+    if not col_types:
+        return []
+
+    warnings: list[str] = []
+
+    for row_idx, row in enumerate(rows[1:], start=2):
+        for col_idx, col_type in col_types.items():
+            if col_idx >= len(row):
+                continue
+            cell = str(row[col_idx] or "").strip()
+            if not cell:
+                continue
+
+            if col_type == "amount":
+                if not _VALID_AMOUNT_FMT_RE.fullmatch(cell):
+                    warnings.append(
+                        f"Fila {row_idx}, col '{header[col_idx]}': "
+                        f"formato de importe inválido '{cell[:40]}'"
+                    )
+                else:
+                    # Check for impossible zero amounts in data rows
+                    digits = re.sub(r"\D", "", cell)
+                    if digits and int(digits) == 0:
+                        warnings.append(
+                            f"Fila {row_idx}, col '{header[col_idx]}': "
+                            f"importe es $0.00"
+                        )
+
+            elif col_type == "account":
+                digits = re.sub(r"\D", "", cell)
+                if not _VALID_ACCOUNT_FMT_RE.fullmatch(digits):
+                    warnings.append(
+                        f"Fila {row_idx}, col '{header[col_idx]}': "
+                        f"cuenta con longitud inválida ({len(digits)} dígitos) '{cell[:30]}'"
+                    )
+
+            elif col_type == "date":
+                # Strip time portion if present
+                date_part = cell.split(" ")[0] if " " in cell else cell
+                if _VALID_DATE_FMT_RE.fullmatch(date_part):
+                    try:
+                        dd, mm, yyyy = date_part.split("/")
+                        d, m, y = int(dd), int(mm), int(yyyy)
+                        if m < 1 or m > 12:
+                            warnings.append(
+                                f"Fila {row_idx}, col '{header[col_idx]}': "
+                                f"mes fuera de rango ({m}) en '{date_part}'"
+                            )
+                        elif d < 1 or d > 31:
+                            warnings.append(
+                                f"Fila {row_idx}, col '{header[col_idx]}': "
+                                f"día fuera de rango ({d}) en '{date_part}'"
+                            )
+                        elif y < 1990 or y > 2099:
+                            warnings.append(
+                                f"Fila {row_idx}, col '{header[col_idx]}': "
+                                f"año fuera de rango ({y}) en '{date_part}'"
+                            )
+                    except (ValueError, IndexError):
+                        warnings.append(
+                            f"Fila {row_idx}, col '{header[col_idx]}': "
+                            f"fecha no parseable '{date_part}'"
+                        )
+
+            elif col_type == "status":
+                upper_cell = cell.upper().strip()
+                if upper_cell and upper_cell not in _ALL_PAYMENT_STATUSES:
+                    # Try substring match before flagging
+                    found = any(s in upper_cell for s in _ALL_PAYMENT_STATUSES)
+                    if not found:
+                        warnings.append(
+                            f"Fila {row_idx}, col '{header[col_idx]}': "
+                            f"estatus no reconocido '{cell[:30]}'"
+                        )
+
+            elif col_type == "count":
+                digits = re.sub(r"\D", "", cell)
+                if not digits:
+                    warnings.append(
+                        f"Fila {row_idx}, col '{header[col_idx]}': "
+                        f"cantidad no numérica '{cell[:30]}'"
+                    )
+
+    return warnings
+
+
+# ── Level 2: Cross-coherence validation ────────────────────────────────────
+
+def _parse_amount_to_cents(amount_str: str) -> int | None:
+    """Parse a $X,XXX.XX formatted amount into integer cents for safe arithmetic."""
+    if not amount_str:
+        return None
+    m = re.search(r"\$?([\d,]+)\.(\d{2})", str(amount_str))
+    if not m:
+        return None
+    try:
+        integer_part = int(m.group(1).replace(",", ""))
+        cents_part = int(m.group(2))
+        return integer_part * 100 + cents_part
+    except (ValueError, OverflowError):
+        return None
+
+
+def _format_cents_as_amount(cents: int) -> str:
+    """Format integer cents back to $X,XXX.XX string."""
+    sign = "-" if cents < 0 else ""
+    cents = abs(cents)
+    integer_part = cents // 100
+    cents_part = cents % 100
+    return f"{sign}${integer_part:,}.{cents_part:02d}"
+
+
+def _validate_payment_table_coherence(rows: list[list[str]]) -> list[str]:
+    """Level 2: Validate cross-row coherence in the payment table.
+
+    Checks:
+    1. Sum of individual IMPORTE values vs summary IMPORTE row (Scotiabank)
+    2. Count of data rows vs CANTIDAD DE MOVIMIENTOS summary (Scotiabank)
+    Returns a list of warning strings.  Does NOT modify rows.
+    """
+    if not rows or len(rows) < 3:
+        return []
+
+    header = rows[0]
+    col_types = _classify_table_columns(header)
+    if not col_types:
+        return []
+
+    # Find the primary importe and count columns
+    importe_col: int | None = None
+    count_col: int | None = None
+    for idx, ctype in col_types.items():
+        if ctype == "amount" and importe_col is None:
+            importe_col = idx
+        if ctype == "count" and count_col is None:
+            count_col = idx
+
+    warnings: list[str] = []
+
+    # Identify summary rows vs data rows.
+    # Summary rows have header-like labels (e.g. "CANTIDAD DE MOVIMIENTOS ALTAS")
+    # in the first cell.  These are appended by _append_scotia_summary_rows_to_table.
+    _SUMMARY_MARKERS = frozenset({
+        "CANTIDADDEMOVIMIENTOSALTAS",
+        "IMPORTEDEMOVIMIENTOALTAS",
+        "CANTIDADDEMOVIMIENTOSBAJAS",
+        "IMPORTEDEMOVIMIENTOSBAJAS",
+        "TOTALCANTIDADDEMOVIMIENTOSALTAS",
+        "TOTALIMPORTEDEMOVIMIENTOALTAS",
+        "TOTALCANTIDADDEMOVIMIENTOSBAJAS",
+        "TOTALIMPORTEDEMOVIMIENTOSBAJAS",
+    })
+
+    def _is_summary_row(row: list[str]) -> bool:
+        """Return True if *any* cell in the row looks like a summary header."""
+        for cell in row:
+            key = _normalize_keyword(str(cell or ""))
+            if key in _SUMMARY_MARKERS:
+                return True
+            # Also detect standalone summary header rows
+            if any(marker in key for marker in ("CANTIDADDEMOVIMIENTO", "IMPORTEDEMOVIMIENTO")):
+                return True
+        return False
+
+    # Separate data rows from summary rows
+    data_rows: list[list[str]] = []
+    summary_header_row: list[str] | None = None
+    summary_value_row: list[str] | None = None
+
+    i = 1  # skip header
+    while i < len(rows):
+        row = rows[i]
+        if _is_summary_row(row):
+            summary_header_row = row
+            # The next row should be the values
+            if i + 1 < len(rows):
+                summary_value_row = rows[i + 1]
+            break  # Stop at first summary block
+        data_rows.append(row)
+        i += 1
+
+    if not data_rows:
+        return []
+
+    # ── Check 1: Sum of importes vs summary importe ─────────────────────
+    if importe_col is not None and summary_header_row and summary_value_row:
+        # Find the summary importe value
+        summary_importe_idx: int | None = None
+        for s_idx, s_cell in enumerate(summary_header_row):
+            key = _normalize_keyword(str(s_cell or ""))
+            if "IMPORTE" in key and "TOTAL" not in key and "BAJAS" not in key:
+                summary_importe_idx = s_idx
+                break
+
+        if summary_importe_idx is not None and summary_importe_idx < len(summary_value_row):
+            summary_amount_str = _normalize_payment_amount(
+                str(summary_value_row[summary_importe_idx] or "")
+            )
+            summary_cents = _parse_amount_to_cents(summary_amount_str)
+
+            if summary_cents is not None and summary_cents > 0:
+                total_cents = 0
+                parsed_count = 0
+                for d_row in data_rows:
+                    if importe_col < len(d_row):
+                        cell_cents = _parse_amount_to_cents(str(d_row[importe_col] or ""))
+                        if cell_cents is not None:
+                            total_cents += cell_cents
+                            parsed_count += 1
+
+                if parsed_count > 0 and total_cents != summary_cents:
+                    diff_cents = abs(total_cents - summary_cents)
+                    # Only warn if difference exceeds 1% of the summary amount
+                    # to tolerate minor OCR rounding errors
+                    threshold = max(summary_cents * 0.01, 100)  # at least $1.00
+                    if diff_cents > threshold:
+                        warnings.append(
+                            f"Suma de importes individuales "
+                            f"({_format_cents_as_amount(total_cents)}) "
+                            f"no coincide con resumen "
+                            f"({_format_cents_as_amount(summary_cents)}), "
+                            f"diferencia: {_format_cents_as_amount(diff_cents)}"
+                        )
+
+    # ── Check 2: Row count vs CANTIDAD DE MOVIMIENTOS ───────────────────
+    if summary_header_row and summary_value_row:
+        summary_count_idx: int | None = None
+        for s_idx, s_cell in enumerate(summary_header_row):
+            key = _normalize_keyword(str(s_cell or ""))
+            if "CANTIDAD" in key and "TOTAL" not in key and "BAJAS" not in key:
+                summary_count_idx = s_idx
+                break
+
+        if summary_count_idx is not None and summary_count_idx < len(summary_value_row):
+            expected_count_str = _normalize_payment_count(
+                str(summary_value_row[summary_count_idx] or "")
+            )
+            if expected_count_str:
+                try:
+                    expected_count = int(expected_count_str)
+                    actual_count = len(data_rows)
+                    if expected_count > 0 and actual_count != expected_count:
+                        warnings.append(
+                            f"Cantidad de filas de datos ({actual_count}) "
+                            f"no coincide con resumen "
+                            f"CANTIDAD DE MOVIMIENTOS ({expected_count})"
+                        )
+                except ValueError:
+                    pass
+
+    return warnings
+
+
+# ── Level 3: OCR quality assessment ────────────────────────────────────────
+
+def _assess_ocr_quality(ocr_text: str, ocr_boxes: list[dict] | None = None) -> dict[str, Any]:
+    """Assess the quality of the OCR output.
+
+    Returns a dict with:
+      - score: float 0.0–1.0 (1.0 = perfect)
+      - warnings: list[str] of quality issues detected
+      - metrics: dict with detailed quality metrics
+    """
+    result: dict[str, Any] = {
+        "score": 1.0,
+        "warnings": [],
+        "metrics": {},
+    }
+
+    text = str(ocr_text or "")
+    if not text.strip():
+        result["score"] = 0.0
+        result["warnings"].append("Texto OCR vacío — documento posiblemente en blanco o ilegible")
+        return result
+
+    total_chars = len(text)
+    penalties: list[float] = []
+
+    # ── Metric 1: Character composition ──────────────────────────────────
+    alpha_count = sum(1 for ch in text if ch.isalpha())
+    digit_count = sum(1 for ch in text if ch.isdigit())
+    space_count = sum(1 for ch in text if ch.isspace())
+    printable_count = alpha_count + digit_count + space_count
+    # Punctuation and common symbols are acceptable
+    common_punct = sum(1 for ch in text if ch in ".,;:!?/$%-()[]{}\"'@#&*+=<>_|~\\^`")
+    clean_count = printable_count + common_punct
+    noise_count = total_chars - clean_count
+    noise_ratio = noise_count / max(total_chars, 1)
+
+    result["metrics"]["total_chars"] = total_chars
+    result["metrics"]["alpha_ratio"] = round(alpha_count / max(total_chars, 1), 3)
+    result["metrics"]["noise_ratio"] = round(noise_ratio, 3)
+
+    if noise_ratio > 0.15:
+        penalties.append(0.3)
+        result["warnings"].append(
+            f"Alto nivel de ruido OCR: {noise_ratio:.0%} caracteres no reconocibles"
+        )
+    elif noise_ratio > 0.08:
+        penalties.append(0.15)
+        result["warnings"].append(
+            f"Nivel moderado de ruido OCR: {noise_ratio:.0%} caracteres no reconocibles"
+        )
+
+    # ── Metric 2: Line quality — very short lines often indicate garbled OCR
+    lines = [line for line in text.splitlines() if line.strip()]
+    if lines:
+        avg_line_len = sum(len(line) for line in lines) / len(lines)
+        very_short = sum(1 for line in lines if len(line.strip()) < 3)
+        short_ratio = very_short / max(len(lines), 1)
+        result["metrics"]["avg_line_length"] = round(avg_line_len, 1)
+        result["metrics"]["very_short_line_ratio"] = round(short_ratio, 3)
+
+        if short_ratio > 0.4 and len(lines) > 5:
+            penalties.append(0.2)
+            result["warnings"].append(
+                f"Muchas líneas muy cortas ({short_ratio:.0%}): posible OCR fragmentado"
+            )
+
+    # ── Metric 3: Repeated character sequences (OCR stutter) ─────────────
+    stutter_matches = re.findall(r"(.)\1{4,}", text)
+    if len(stutter_matches) > 2:
+        penalties.append(0.15)
+        result["warnings"].append(
+            f"Repeticiones excesivas de caracteres detectadas ({len(stutter_matches)} ocurrencias)"
+        )
+    result["metrics"]["stutter_sequences"] = len(stutter_matches)
+
+    # ── Metric 4: Confidence from OCR boxes ──────────────────────────────
+    if ocr_boxes:
+        confidences = []
+        for box in ocr_boxes:
+            conf = box.get("confidence")
+            if conf is not None:
+                try:
+                    confidences.append(float(conf))
+                except (ValueError, TypeError):
+                    pass
+        if confidences:
+            avg_conf = sum(confidences) / len(confidences)
+            low_conf_count = sum(1 for c in confidences if c < 0.6)
+            low_conf_ratio = low_conf_count / len(confidences)
+            result["metrics"]["avg_box_confidence"] = round(avg_conf, 3)
+            result["metrics"]["low_conf_box_ratio"] = round(low_conf_ratio, 3)
+
+            if avg_conf < 0.5:
+                penalties.append(0.3)
+                result["warnings"].append(
+                    f"Confianza OCR promedio muy baja: {avg_conf:.2f}"
+                )
+            elif avg_conf < 0.7:
+                penalties.append(0.15)
+                result["warnings"].append(
+                    f"Confianza OCR promedio baja: {avg_conf:.2f}"
+                )
+
+            if low_conf_ratio > 0.3:
+                penalties.append(0.1)
+                result["warnings"].append(
+                    f"{low_conf_ratio:.0%} de cajas con confianza < 0.6"
+                )
+
+    # ── Metric 5: Recognizable structure (dates, amounts, IDs) ───────────
+    structure_hits = 0
+    if re.search(r"\d{2}/\d{2}/\d{4}", text):
+        structure_hits += 1
+    if re.search(r"\$[\d,]+\.\d{2}", text):
+        structure_hits += 1
+    if CURP_PATTERN.search(text.upper()):
+        structure_hits += 1
+    if RFC_WITH_HOMOCLAVE.search(text.upper()):
+        structure_hits += 1
+    if re.search(r"\b\d{10,18}\b", text):
+        structure_hits += 1
+
+    result["metrics"]["structure_hits"] = structure_hits
+    if structure_hits == 0 and total_chars > 200:
+        penalties.append(0.1)
+        result["warnings"].append(
+            "No se detectaron patrones estructurados (fechas, montos, IDs) en el texto"
+        )
+
+    # ── Final score ──────────────────────────────────────────────────────
+    total_penalty = min(sum(penalties), 0.95)  # never go below 0.05
+    result["score"] = round(1.0 - total_penalty, 3)
+
+    return result
 
 
 def _extract_scotia_payment_metadata(raw_text: str) -> dict[str, str]:
@@ -9696,6 +10162,30 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
             name_curps = [match.group(0) for match in CURP_PATTERN.finditer(filename.upper())]
             for value in name_curps:
                 fields.append(_make_field("curp", "CURP", _normalize_alnum(value), ocr_boxes, confidence=0.9))
+
+    # ── L3: OCR quality assessment ─────────────────────────────────────────
+    try:
+        ocr_quality = _assess_ocr_quality(base_text_raw, ocr_boxes)
+        if ocr_quality.get("score", 1.0) < 0.85:
+            fields.append(
+                _make_field(
+                    "ocr_quality",
+                    "Calidad OCR",
+                    json.dumps(ocr_quality, ensure_ascii=False),
+                    ocr_boxes,
+                    confidence=ocr_quality.get("score", 0.5),
+                )
+            )
+            # Lower confidence of ALL other fields proportionally when OCR is bad
+            quality_score = ocr_quality.get("score", 1.0)
+            if quality_score < 0.6:
+                penalty_factor = max(quality_score, 0.3)
+                for f in fields:
+                    if f.get("key") not in {"texto_detectado", "ocr_quality"}:
+                        original_conf = float(f.get("confidence", 0.8))
+                        f["confidence"] = round(original_conf * penalty_factor, 4)
+    except Exception:
+        logger.debug("L3 OCR quality assessment failed", exc_info=True)
 
     cleaned = _postprocess_fields(document_type, fields)
     contracted = _apply_field_contracts(document_type, cleaned)

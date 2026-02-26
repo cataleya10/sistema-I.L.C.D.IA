@@ -3082,5 +3082,312 @@ class TestConditionalNameSplitting(unittest.TestCase):
         self.assertEqual(row.get("apellido_paterno"), "LOPEZ")
 
 
+# ── Level 1: Field-level validation tests ──────────────────────────────────
+
+class TestValidatePaymentTableCells(unittest.TestCase):
+    """Tests for _validate_payment_table_cells (Level 1 validation)."""
+
+    def test_valid_rows_no_warnings(self):
+        from app.pipelines.extract import _validate_payment_table_cells
+        rows = [
+            ["CUENTA", "NOMBRE", "IMPORTE", "ESTATUS"],
+            ["123456789012345678", "JUAN PEREZ", "$1,500.00", "APLICADO"],
+            ["987654321098765432", "MARIA LOPEZ", "$2,300.50", "PROCESADO"],
+        ]
+        warnings = _validate_payment_table_cells(rows)
+        self.assertEqual(warnings, [])
+
+    def test_invalid_amount_format(self):
+        from app.pipelines.extract import _validate_payment_table_cells
+        rows = [
+            ["CUENTA", "IMPORTE"],
+            ["123456789012345678", "1500"],
+        ]
+        warnings = _validate_payment_table_cells(rows)
+        self.assertTrue(any("formato de importe" in w for w in warnings))
+
+    def test_zero_amount_warning(self):
+        from app.pipelines.extract import _validate_payment_table_cells
+        rows = [
+            ["CUENTA", "IMPORTE"],
+            ["123456789012345678", "$0.00"],
+        ]
+        warnings = _validate_payment_table_cells(rows)
+        self.assertTrue(any("$0.00" in w for w in warnings))
+
+    def test_invalid_account_length(self):
+        from app.pipelines.extract import _validate_payment_table_cells
+        rows = [
+            ["CUENTA", "IMPORTE"],
+            ["123", "$1,500.00"],
+        ]
+        warnings = _validate_payment_table_cells(rows)
+        self.assertTrue(any("longitud inválida" in w for w in warnings))
+
+    def test_invalid_date_month(self):
+        from app.pipelines.extract import _validate_payment_table_cells
+        rows = [
+            ["FECHA", "IMPORTE"],
+            ["15/13/2024", "$1,500.00"],
+        ]
+        warnings = _validate_payment_table_cells(rows)
+        self.assertTrue(any("mes fuera de rango" in w for w in warnings))
+
+    def test_invalid_date_day(self):
+        from app.pipelines.extract import _validate_payment_table_cells
+        rows = [
+            ["FECHA", "IMPORTE"],
+            ["32/01/2024", "$1,500.00"],
+        ]
+        warnings = _validate_payment_table_cells(rows)
+        self.assertTrue(any("día fuera de rango" in w for w in warnings))
+
+    def test_unrecognized_status(self):
+        from app.pipelines.extract import _validate_payment_table_cells
+        rows = [
+            ["ESTATUS", "IMPORTE"],
+            ["DESCONOCIDO", "$1,500.00"],
+        ]
+        warnings = _validate_payment_table_cells(rows)
+        self.assertTrue(any("estatus no reconocido" in w for w in warnings))
+
+    def test_valid_status_no_warning(self):
+        from app.pipelines.extract import _validate_payment_table_cells
+        rows = [
+            ["ESTATUS", "IMPORTE"],
+            ["EN PROCESO", "$1,500.00"],
+        ]
+        warnings = _validate_payment_table_cells(rows)
+        status_warnings = [w for w in warnings if "estatus" in w]
+        self.assertEqual(status_warnings, [])
+
+    def test_empty_rows_no_crash(self):
+        from app.pipelines.extract import _validate_payment_table_cells
+        self.assertEqual(_validate_payment_table_cells([]), [])
+        self.assertEqual(_validate_payment_table_cells([["H1"]]), [])
+
+    def test_date_with_time_valid(self):
+        from app.pipelines.extract import _validate_payment_table_cells
+        rows = [
+            ["FECHA", "IMPORTE"],
+            ["15/06/2024 14:30", "$1,500.00"],
+        ]
+        warnings = _validate_payment_table_cells(rows)
+        date_warnings = [w for w in warnings if "fecha" in w.lower() or "día" in w or "mes" in w]
+        self.assertEqual(date_warnings, [])
+
+
+# ── Level 2: Cross-coherence validation tests ──────────────────────────────
+
+class TestValidatePaymentTableCoherence(unittest.TestCase):
+    """Tests for _validate_payment_table_coherence (Level 2 validation)."""
+
+    def test_matching_sum_no_warning(self):
+        from app.pipelines.extract import _validate_payment_table_coherence
+        rows = [
+            ["CUENTA", "IMPORTE"],
+            ["123456789012345678", "$1,000.00"],
+            ["987654321098765432", "$2,000.00"],
+            ["CANTIDAD DE MOVIMIENTOS ALTAS", "IMPORTE DE MOVIMIENTO ALTAS"],
+            ["2", "$3,000.00"],
+        ]
+        warnings = _validate_payment_table_coherence(rows)
+        sum_warnings = [w for w in warnings if "Suma de importes" in w]
+        self.assertEqual(sum_warnings, [])
+
+    def test_mismatched_sum_warns(self):
+        from app.pipelines.extract import _validate_payment_table_coherence
+        rows = [
+            ["CUENTA", "IMPORTE"],
+            ["123456789012345678", "$1,000.00"],
+            ["987654321098765432", "$2,000.00"],
+            ["CANTIDAD DE MOVIMIENTOS ALTAS", "IMPORTE DE MOVIMIENTO ALTAS"],
+            ["2", "$5,000.00"],
+        ]
+        warnings = _validate_payment_table_coherence(rows)
+        self.assertTrue(any("Suma de importes" in w for w in warnings))
+
+    def test_matching_count_no_warning(self):
+        from app.pipelines.extract import _validate_payment_table_coherence
+        rows = [
+            ["CUENTA", "IMPORTE"],
+            ["123456789012345678", "$1,000.00"],
+            ["987654321098765432", "$2,000.00"],
+            ["CANTIDAD DE MOVIMIENTOS ALTAS", "IMPORTE DE MOVIMIENTO ALTAS"],
+            ["2", "$3,000.00"],
+        ]
+        warnings = _validate_payment_table_coherence(rows)
+        count_warnings = [w for w in warnings if "Cantidad de filas" in w]
+        self.assertEqual(count_warnings, [])
+
+    def test_mismatched_count_warns(self):
+        from app.pipelines.extract import _validate_payment_table_coherence
+        rows = [
+            ["CUENTA", "IMPORTE"],
+            ["123456789012345678", "$1,000.00"],
+            ["987654321098765432", "$2,000.00"],
+            ["CANTIDAD DE MOVIMIENTOS ALTAS", "IMPORTE DE MOVIMIENTO ALTAS"],
+            ["5", "$3,000.00"],
+        ]
+        warnings = _validate_payment_table_coherence(rows)
+        self.assertTrue(any("Cantidad de filas" in w for w in warnings))
+
+    def test_no_summary_rows_no_crash(self):
+        from app.pipelines.extract import _validate_payment_table_coherence
+        rows = [
+            ["CUENTA", "IMPORTE"],
+            ["123456789012345678", "$1,000.00"],
+        ]
+        warnings = _validate_payment_table_coherence(rows)
+        self.assertEqual(warnings, [])
+
+    def test_empty_rows(self):
+        from app.pipelines.extract import _validate_payment_table_coherence
+        self.assertEqual(_validate_payment_table_coherence([]), [])
+
+    def test_small_difference_tolerated(self):
+        """Differences within 1% threshold should not trigger a warning."""
+        from app.pipelines.extract import _validate_payment_table_coherence
+        rows = [
+            ["CUENTA", "IMPORTE"],
+            ["123456789012345678", "$10,000.00"],
+            ["CANTIDAD DE MOVIMIENTOS ALTAS", "IMPORTE DE MOVIMIENTO ALTAS"],
+            ["1", "$10,050.00"],
+        ]
+        warnings = _validate_payment_table_coherence(rows)
+        sum_warnings = [w for w in warnings if "Suma de importes" in w]
+        self.assertEqual(sum_warnings, [])
+
+
+class TestParseAmountToCents(unittest.TestCase):
+    """Tests for _parse_amount_to_cents helper."""
+
+    def test_standard_amount(self):
+        from app.pipelines.extract import _parse_amount_to_cents
+        self.assertEqual(_parse_amount_to_cents("$1,500.00"), 150000)
+
+    def test_no_dollar_sign(self):
+        from app.pipelines.extract import _parse_amount_to_cents
+        self.assertEqual(_parse_amount_to_cents("1,500.00"), 150000)
+
+    def test_large_amount(self):
+        from app.pipelines.extract import _parse_amount_to_cents
+        self.assertEqual(_parse_amount_to_cents("$1,234,567.89"), 123456789)
+
+    def test_cents_only(self):
+        from app.pipelines.extract import _parse_amount_to_cents
+        self.assertEqual(_parse_amount_to_cents("$0.50"), 50)
+
+    def test_empty_returns_none(self):
+        from app.pipelines.extract import _parse_amount_to_cents
+        self.assertIsNone(_parse_amount_to_cents(""))
+        self.assertIsNone(_parse_amount_to_cents("abc"))
+
+
+# ── Level 3: OCR quality assessment tests ──────────────────────────────────
+
+class TestAssessOcrQuality(unittest.TestCase):
+    """Tests for _assess_ocr_quality (Level 3 validation)."""
+
+    def test_clean_text_high_score(self):
+        from app.pipelines.extract import _assess_ocr_quality
+        text = (
+            "SCOTIABANK\n"
+            "FECHA: 15/06/2024\n"
+            "CUENTA: 123456789012345678\n"
+            "IMPORTE: $1,500.00\n"
+            "NOMBRE: JUAN PEREZ GARCIA\n"
+            "ESTATUS: APLICADO\n"
+        )
+        result = _assess_ocr_quality(text)
+        self.assertGreaterEqual(result["score"], 0.85)
+        self.assertEqual(result["warnings"], [])
+
+    def test_empty_text_zero_score(self):
+        from app.pipelines.extract import _assess_ocr_quality
+        result = _assess_ocr_quality("")
+        self.assertEqual(result["score"], 0.0)
+        self.assertTrue(any("vacío" in w for w in result["warnings"]))
+
+    def test_noisy_text_low_score(self):
+        from app.pipelines.extract import _assess_ocr_quality
+        # Generate text with lots of noise characters
+        clean = "BANCO FECHA CUENTA IMPORTE NOMBRE ESTATUS\n" * 5
+        noise = "\x01\x02\x03\x04\x05" * 40
+        text = clean + noise
+        result = _assess_ocr_quality(text)
+        self.assertLess(result["score"], 0.85)
+
+    def test_stutter_detection(self):
+        from app.pipelines.extract import _assess_ocr_quality
+        text = "NORMAL TEXT " + "AAAAAAA " * 5 + "BBBBBBB " * 5 + "MORE NORMAL TEXT\n" * 10
+        result = _assess_ocr_quality(text)
+        self.assertGreater(result["metrics"]["stutter_sequences"], 0)
+
+    def test_box_confidence_metric(self):
+        from app.pipelines.extract import _assess_ocr_quality
+        text = "SOME TEXT FOR TESTING OCR QUALITY\n" * 5
+        boxes = [
+            {"text": "SOME", "confidence": 0.95},
+            {"text": "TEXT", "confidence": 0.90},
+            {"text": "FOR", "confidence": 0.88},
+        ]
+        result = _assess_ocr_quality(text, boxes)
+        self.assertIn("avg_box_confidence", result["metrics"])
+        self.assertGreater(result["metrics"]["avg_box_confidence"], 0.85)
+
+    def test_low_confidence_boxes_penalized(self):
+        from app.pipelines.extract import _assess_ocr_quality
+        text = "SOME TEXT FOR TESTING OCR QUALITY\n" * 5
+        boxes = [
+            {"text": "X", "confidence": 0.3},
+            {"text": "Y", "confidence": 0.2},
+            {"text": "Z", "confidence": 0.4},
+        ]
+        result = _assess_ocr_quality(text, boxes)
+        self.assertLess(result["score"], 0.85)
+
+    def test_structure_hits_counted(self):
+        from app.pipelines.extract import _assess_ocr_quality
+        text = "FECHA 15/06/2024 IMPORTE $1,500.00 CUENTA 123456789012345678\n"
+        result = _assess_ocr_quality(text)
+        self.assertGreaterEqual(result["metrics"]["structure_hits"], 2)
+
+
+class TestClassifyTableColumns(unittest.TestCase):
+    """Tests for _classify_table_columns helper."""
+
+    def test_standard_header(self):
+        from app.pipelines.extract import _classify_table_columns
+        header = ["CUENTA", "NOMBRE", "IMPORTE", "ESTATUS", "FECHA"]
+        col_types = _classify_table_columns(header)
+        self.assertEqual(col_types[0], "account")
+        self.assertEqual(col_types[2], "amount")
+        self.assertEqual(col_types[3], "status")
+        self.assertEqual(col_types[4], "date")
+
+    def test_compound_header_tokens(self):
+        from app.pipelines.extract import _classify_table_columns
+        header = ["CUENTA RETIRO", "IMPORTE DETECTADO", "FECHA PAGO"]
+        col_types = _classify_table_columns(header)
+        self.assertEqual(col_types[0], "account")
+        self.assertEqual(col_types[1], "amount")
+        self.assertEqual(col_types[2], "date")
+
+    def test_empty_header(self):
+        from app.pipelines.extract import _classify_table_columns
+        self.assertEqual(_classify_table_columns([]), {})
+
+    def test_summary_count_columns(self):
+        from app.pipelines.extract import _classify_table_columns
+        header = [
+            "CANTIDAD DE MOVIMIENTOS ALTAS",
+            "IMPORTE DE MOVIMIENTO ALTAS",
+        ]
+        col_types = _classify_table_columns(header)
+        self.assertEqual(col_types[0], "count")
+        self.assertEqual(col_types[1], "amount")
+
+
 if __name__ == "__main__":
     unittest.main()
