@@ -1042,6 +1042,14 @@ def _generic_row_with_cells_by_anchors(
 
 
 def _extract_generic_tables_from_boxes(ocr_boxes) -> list[dict]:
+    try:
+        return _extract_generic_tables_from_boxes_impl(ocr_boxes)
+    except Exception:
+        logger.debug("_extract_generic_tables_from_boxes: error", exc_info=True)
+        return []
+
+
+def _extract_generic_tables_from_boxes_impl(ocr_boxes) -> list[dict]:
     lines = _lines_text_from_boxes(ocr_boxes)
     if not lines:
         return []
@@ -1181,6 +1189,14 @@ def _extract_generic_tables_from_boxes(ocr_boxes) -> list[dict]:
 
 
 def _extract_generic_tables_from_text(raw_text: str) -> list[dict]:
+    try:
+        return _extract_generic_tables_from_text_impl(raw_text)
+    except Exception:
+        logger.debug("_extract_generic_tables_from_text: error", exc_info=True)
+        return []
+
+
+def _extract_generic_tables_from_text_impl(raw_text: str) -> list[dict]:
     text = str(raw_text or "")
     if not text.strip():
         return []
@@ -1507,6 +1523,14 @@ def _fix_payment_ocr_column_errors(structured_rows: list[list[str]]) -> list[lis
 
 
 def _extract_payment_table_rows_from_boxes(ocr_boxes) -> list[list[str]]:
+    try:
+        return _extract_payment_table_rows_from_boxes_impl(ocr_boxes)
+    except Exception:
+        logger.debug("_extract_payment_table_rows_from_boxes: error", exc_info=True)
+        return []
+
+
+def _extract_payment_table_rows_from_boxes_impl(ocr_boxes) -> list[list[str]]:
     lines = _lines_text_from_boxes(ocr_boxes)
     rows = _payment_rows_plain_from_lines(lines)
 
@@ -2383,6 +2407,14 @@ def _extract_banorte_bbva_detail_rows_impl(lines: list[str], raw_text: str) -> l
 
 
 def _extract_bbva_transfer_receipt_rows(lines: list[str], raw_text: str) -> list[list[str]]:
+    try:
+        return _extract_bbva_transfer_receipt_rows_impl(lines, raw_text)
+    except Exception:
+        logger.debug("_extract_bbva_transfer_receipt_rows: error", exc_info=True)
+        return []
+
+
+def _extract_bbva_transfer_receipt_rows_impl(lines: list[str], raw_text: str) -> list[list[str]]:
     """Extract BBVA vertical key-value transfer receipts.
 
     Handles two document types:
@@ -2956,6 +2988,14 @@ def _normalize_payment_table_rows_impl(rows: list[list[str]]) -> list[list[str]]
 
 
 def _extract_payment_table_rows_from_pdf_tables(pdf_tables: list[list[list[str]]] | None) -> tuple[list[list[str]], list[list[list[str]]]]:
+    try:
+        return _extract_payment_table_rows_from_pdf_tables_impl(pdf_tables)
+    except Exception:
+        logger.debug("_extract_payment_table_rows_from_pdf_tables: error", exc_info=True)
+        return [], []
+
+
+def _extract_payment_table_rows_from_pdf_tables_impl(pdf_tables: list[list[list[str]]] | None) -> tuple[list[list[str]], list[list[list[str]]]]:
     """Convert PyMuPDF find_tables() output into payment table rows.
 
     Tables from multiple pages with matching headers are merged into a single
