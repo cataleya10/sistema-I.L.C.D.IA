@@ -335,5 +335,316 @@ class TestMultiSourceMerge(unittest.TestCase):
         self.assertEqual(len(result), 1)
 
 
+# ---------------------------------------------------------------------------
+# _image_to_pdf_bytes (image → PDF conversion)
+# ---------------------------------------------------------------------------
+class TestImageToPdfBytes(unittest.TestCase):
+    """Tests for the image-to-PDF conversion utility."""
+
+    def test_produces_valid_pdf_bytes(self):
+        """Converted bytes should be a valid PDF openable by PyMuPDF."""
+        from PIL import Image
+        import fitz
+        from app.pipelines.preprocess import _image_to_pdf_bytes
+
+        img = Image.new("RGB", (200, 100), color=(255, 0, 0))
+        pdf_bytes = _image_to_pdf_bytes(img)
+
+        self.assertTrue(len(pdf_bytes) > 0)
+        # Should start with PDF magic bytes
+        self.assertTrue(pdf_bytes[:5] == b"%PDF-")
+
+        # Should be openable as a single-page PDF
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        self.assertEqual(len(doc), 1)
+        page = doc.load_page(0)
+        self.assertAlmostEqual(page.rect.width, 200, delta=1)
+        self.assertAlmostEqual(page.rect.height, 100, delta=1)
+        doc.close()
+
+    def test_preserves_image_dimensions(self):
+        """PDF page dimensions should match the source image."""
+        from PIL import Image
+        import fitz
+        from app.pipelines.preprocess import _image_to_pdf_bytes
+
+        img = Image.new("RGB", (800, 600))
+        pdf_bytes = _image_to_pdf_bytes(img)
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        page = doc.load_page(0)
+        self.assertAlmostEqual(page.rect.width, 800, delta=1)
+        self.assertAlmostEqual(page.rect.height, 600, delta=1)
+        doc.close()
+
+
+# ---------------------------------------------------------------------------
+# _extract_tables_from_image_via_pdf (multi-source for images)
+# ---------------------------------------------------------------------------
+class TestExtractTablesFromImageViaPdf(unittest.TestCase):
+    """Tests for the image-via-PDF multi-source table extraction."""
+
+    def test_returns_empty_on_plain_image(self):
+        """A blank image should produce no tables."""
+        from PIL import Image
+        from app.pipelines.preprocess import _extract_tables_from_image_via_pdf
+
+        blank = Image.new("RGB", (200, 100), color=(255, 255, 255))
+        result = _extract_tables_from_image_via_pdf(blank)
+        # Blank image has no tables — should be empty list
+        self.assertIsInstance(result, list)
+
+    def test_gracefully_handles_conversion_failure(self):
+        """If image-to-PDF conversion fails, returns empty list."""
+        from PIL import Image
+        import app.pipelines.preprocess as mod
+
+        with patch.object(mod, "_image_to_pdf_bytes", side_effect=Exception("conversion failed")):
+            blank = Image.new("RGB", (100, 100))
+            result = mod._extract_tables_from_image_via_pdf(blank)
+        self.assertEqual(result, [])
+
+    def test_merges_results_from_multiple_extractors(self):
+        """When PyMuPDF and pdfplumber both return tables, all are included."""
+        from PIL import Image
+        import app.pipelines.preprocess as mod
+
+        fake_pdf_bytes = b"%PDF-fake"
+
+        plumber_table = [["NOMBRE", "RFC"], ["Ana", "ABC123"]]
+
+        with patch.object(mod, "_image_to_pdf_bytes", return_value=fake_pdf_bytes):
+            # Mock fitz.open for PyMuPDF find_tables — return empty
+            with patch("fitz.open") as mock_fitz_open:
+                mock_doc = MagicMock()
+                mock_page = MagicMock()
+                mock_page.find_tables.return_value = MagicMock(tables=[])
+                mock_doc.load_page.return_value = mock_page
+                mock_doc.__enter__ = MagicMock(return_value=mock_doc)
+                mock_doc.__exit__ = MagicMock(return_value=False)
+                mock_fitz_open.return_value = mock_doc
+
+                with patch.object(mod, "_extract_tables_pdfplumber", return_value=[plumber_table]):
+                    with patch.object(mod, "_extract_tables_img2table_pdf", return_value=[]):
+                        blank = Image.new("RGB", (100, 100))
+                        result = mod._extract_tables_from_image_via_pdf(blank)
+
+        self.assertGreaterEqual(len(result), 1)
+        self.assertEqual(result[0], plumber_table)
+
+    def test_pymupdf_tables_captured(self):
+        """PyMuPDF find_tables results should appear in the output."""
+        from PIL import Image
+        import app.pipelines.preprocess as mod
+
+        fake_pdf_bytes = b"%PDF-fake"
+        pymupdf_raw = [["CUENTA", "IMPORTE"], ["123", "$500"]]
+
+        mock_table = MagicMock()
+        mock_table.extract.return_value = pymupdf_raw
+
+        with patch.object(mod, "_image_to_pdf_bytes", return_value=fake_pdf_bytes):
+            with patch("fitz.open") as mock_fitz_open:
+                mock_doc = MagicMock()
+                mock_page = MagicMock()
+                mock_page.find_tables.return_value = MagicMock(tables=[mock_table])
+                mock_doc.load_page.return_value = mock_page
+                mock_doc.__enter__ = MagicMock(return_value=mock_doc)
+                mock_doc.__exit__ = MagicMock(return_value=False)
+                mock_fitz_open.return_value = mock_doc
+
+                with patch.object(mod, "_extract_tables_pdfplumber", return_value=[]):
+                    with patch.object(mod, "_extract_tables_img2table_pdf", return_value=[]):
+                        blank = Image.new("RGB", (100, 100))
+                        result = mod._extract_tables_from_image_via_pdf(blank)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0][0], ["CUENTA", "IMPORTE"])
+        self.assertEqual(result[0][1], ["123", "$500"])
+
+
+# ---------------------------------------------------------------------------
+# Integration: image multi-source table extraction in preprocess
+# ---------------------------------------------------------------------------
+class TestImageMultiSourceMerge(unittest.TestCase):
+    """Tests verifying that image path uses the same multi-source strategy as PDFs."""
+
+    def test_image_tables_from_all_sources_merged_and_deduped(self):
+        """Both img2table image and PDF-based extractors contribute tables."""
+        from app.pipelines.preprocess import _deduplicate_tables
+
+        # Simulate img2table image finding one table
+        img2t_table = [["CUENTA", "IMPORTE"], ["111", "$100.00"]]
+        # Simulate PDF-based extractor finding a different table
+        pdf_based_table = [["NOMBRE", "RFC"], ["Ana", "ABC123"]]
+        # And a duplicate of the img2table result
+        duplicate_table = [["CUENTA", "IMPORTE"], ["111", "$100.00"]]
+
+        all_tables = [img2t_table, pdf_based_table, duplicate_table]
+        result = _deduplicate_tables(all_tables)
+        # Should keep 2 unique tables (img2t + pdf_based), dedupe the duplicate
+        self.assertEqual(len(result), 2)
+
+    def test_empty_image_extractors_return_empty(self):
+        """When no extractors find tables, result is empty."""
+        from app.pipelines.preprocess import _deduplicate_tables
+
+        result = _deduplicate_tables([])
+        self.assertEqual(result, [])
+
+
+# ---------------------------------------------------------------------------
+# fill_grid_tables_from_ocr_boxes
+# ---------------------------------------------------------------------------
+class TestFillGridTablesFromOcrBoxes(unittest.TestCase):
+    """Tests for mapping OCR boxes to img2table cell grids."""
+
+    def _make_box(self, x1, y1, x2, y2, text, conf=0.9):
+        return {
+            "text": text,
+            "confidence": conf,
+            "bbox": [[x1, y1], [x2, y1], [x2, y2], [x1, y2]],
+        }
+
+    def test_basic_cell_filling(self):
+        from app.pipelines.preprocess import fill_grid_tables_from_ocr_boxes
+
+        # 2x2 grid
+        grids = [[
+            [{"bbox": (0, 0, 100, 50)}, {"bbox": (100, 0, 200, 50)}],
+            [{"bbox": (0, 50, 100, 100)}, {"bbox": (100, 50, 200, 100)}],
+        ]]
+        # OCR boxes centered in each cell
+        ocr_boxes = [
+            self._make_box(20, 10, 80, 40, "Header A"),  # cell (0,0)
+            self._make_box(120, 10, 180, 40, "Header B"),  # cell (0,1)
+            self._make_box(20, 60, 80, 90, "Value 1"),  # cell (1,0)
+            self._make_box(120, 60, 180, 90, "Value 2"),  # cell (1,1)
+        ]
+        result = fill_grid_tables_from_ocr_boxes(grids, ocr_boxes)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0][0], ["Header A", "Header B"])
+        self.assertEqual(result[0][1], ["Value 1", "Value 2"])
+
+    def test_empty_grids_return_empty(self):
+        from app.pipelines.preprocess import fill_grid_tables_from_ocr_boxes
+
+        result = fill_grid_tables_from_ocr_boxes([], [self._make_box(0, 0, 100, 50, "text")])
+        self.assertEqual(result, [])
+
+    def test_empty_ocr_boxes_return_empty(self):
+        from app.pipelines.preprocess import fill_grid_tables_from_ocr_boxes
+
+        grids = [[
+            [{"bbox": (0, 0, 100, 50)}, {"bbox": (100, 0, 200, 50)}],
+            [{"bbox": (0, 50, 100, 100)}, {"bbox": (100, 50, 200, 100)}],
+        ]]
+        result = fill_grid_tables_from_ocr_boxes(grids, [])
+        self.assertEqual(result, [])
+
+    def test_multiple_boxes_in_one_cell(self):
+        from app.pipelines.preprocess import fill_grid_tables_from_ocr_boxes
+
+        grids = [[
+            [{"bbox": (0, 0, 200, 50)}],
+            [{"bbox": (0, 50, 200, 100)}],
+        ]]
+        ocr_boxes = [
+            self._make_box(10, 10, 50, 40, "Hello"),
+            self._make_box(60, 10, 120, 40, "World"),
+            self._make_box(10, 60, 80, 90, "Test"),
+        ]
+        result = fill_grid_tables_from_ocr_boxes(grids, ocr_boxes)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0][0], ["Hello World"])
+        self.assertEqual(result[0][1], ["Test"])
+
+    def test_box_outside_grid_ignored(self):
+        from app.pipelines.preprocess import fill_grid_tables_from_ocr_boxes
+
+        grids = [[
+            [{"bbox": (0, 0, 100, 50)}, {"bbox": (100, 0, 200, 50)}],
+            [{"bbox": (0, 50, 100, 100)}, {"bbox": (100, 50, 200, 100)}],
+        ]]
+        ocr_boxes = [
+            self._make_box(50, 25, 80, 35, "Inside"),  # Inside cell (0,0)
+            self._make_box(300, 300, 400, 400, "Outside"),  # Outside any cell
+        ]
+        result = fill_grid_tables_from_ocr_boxes(grids, ocr_boxes)
+        self.assertEqual(len(result), 0)  # Only 1 non-empty row, need 2
+
+
+# ---------------------------------------------------------------------------
+# _extract_img2table_grid
+# ---------------------------------------------------------------------------
+class TestExtractImg2tableGrid(unittest.TestCase):
+    """Tests for img2table grid extraction."""
+
+    def test_returns_empty_when_img2table_missing(self):
+        from app.pipelines.preprocess import _extract_img2table_grid
+        from PIL import Image
+
+        img = Image.new("RGB", (100, 100), "white")
+        with patch("app.pipelines.preprocess._get_img2table_img", return_value=None):
+            result = _extract_img2table_grid(img)
+        self.assertEqual(result, [])
+
+    def test_extracts_grid_from_mock_table(self):
+        from app.pipelines.preprocess import _extract_img2table_grid
+        from PIL import Image
+
+        img = Image.new("RGB", (400, 200), "white")
+
+        # Mock img2table response with cell bounding boxes
+        mock_bbox = MagicMock()
+        mock_bbox.x1 = 10
+        mock_bbox.y1 = 10
+        mock_bbox.x2 = 100
+        mock_bbox.y2 = 50
+
+        mock_bbox2 = MagicMock()
+        mock_bbox2.x1 = 100
+        mock_bbox2.y1 = 10
+        mock_bbox2.x2 = 200
+        mock_bbox2.y2 = 50
+
+        mock_bbox3 = MagicMock()
+        mock_bbox3.x1 = 10
+        mock_bbox3.y1 = 50
+        mock_bbox3.x2 = 100
+        mock_bbox3.y2 = 90
+
+        mock_bbox4 = MagicMock()
+        mock_bbox4.x1 = 100
+        mock_bbox4.y1 = 50
+        mock_bbox4.x2 = 200
+        mock_bbox4.y2 = 90
+
+        mock_cell1 = MagicMock()
+        mock_cell1.bbox = mock_bbox
+        mock_cell2 = MagicMock()
+        mock_cell2.bbox = mock_bbox2
+        mock_cell3 = MagicMock()
+        mock_cell3.bbox = mock_bbox3
+        mock_cell4 = MagicMock()
+        mock_cell4.bbox = mock_bbox4
+
+        mock_table = MagicMock()
+        mock_table.content = {0: [mock_cell1, mock_cell2], 1: [mock_cell3, mock_cell4]}
+
+        mock_doc = MagicMock()
+        mock_doc.extract_tables.return_value = [mock_table]
+
+        mock_img2table_cls = MagicMock(return_value=mock_doc)
+
+        with patch("app.pipelines.preprocess._get_img2table_img", return_value=mock_img2table_cls):
+            result = _extract_img2table_grid(img)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(len(result[0]), 2)  # 2 rows
+        self.assertEqual(len(result[0][0]), 2)  # 2 cols per row
+        self.assertEqual(result[0][0][0]["bbox"], (10, 10, 100, 50))
+        self.assertEqual(result[0][1][1]["bbox"], (100, 50, 200, 90))
+
+
 if __name__ == "__main__":
     unittest.main()

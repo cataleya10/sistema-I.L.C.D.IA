@@ -3389,5 +3389,153 @@ class TestClassifyTableColumns(unittest.TestCase):
         self.assertEqual(col_types[1], "amount")
 
 
+# ---------------------------------------------------------------------------
+# _DATA_TOKEN_PAT  – regex for data-type tokens
+# ---------------------------------------------------------------------------
+class TestDataTokenPattern(unittest.TestCase):
+    """Validate the _DATA_TOKEN_PAT regex matches expected data tokens."""
+
+    def _findall(self, text: str) -> list[str]:
+        from app.pipelines.extract import _DATA_TOKEN_PAT
+        return [m.group(0).strip() for m in _DATA_TOKEN_PAT.finditer(text)]
+
+    def test_currency(self):
+        self.assertEqual(self._findall("$89"), ["$89"])
+        self.assertEqual(self._findall("$1,234.56"), ["$1,234.56"])
+
+    def test_percentage(self):
+        self.assertEqual(self._findall("123%"), ["123%"])
+        self.assertEqual(self._findall("12.5 %"), ["12.5 %"])
+
+    def test_boolean_tokens(self):
+        self.assertIn("YES", self._findall("YES"))
+        self.assertIn("NO", self._findall("NO"))
+        self.assertIn("N/A", self._findall("N/A"))
+        self.assertIn("SI", self._findall("SI"))
+
+    def test_comma_thousands(self):
+        results = self._findall("1,005")
+        self.assertIn("1,005", results)
+
+    def test_space_thousands(self):
+        # "8 288" should match as space-separated thousands
+        results = self._findall("word 8 288 end")
+        self.assertIn("8 288", results)
+
+    def test_space_thousands_not_before_percent(self):
+        # "8 288 %" — the space-thousands rule should NOT match; instead % wins
+        results = self._findall("value 12 345%")
+        # Should match "12 345%" as percentage (or individual numbers + %)
+        # but NOT "12 345" as space-thousands because of (?!\s*[%$])
+        space_thou = [r for r in results if r == "12 345"]
+        self.assertEqual(space_thou, [], "Should not match space-thousands before %")
+
+    def test_plain_number(self):
+        self.assertIn("42", self._findall("42"))
+        self.assertIn("56.78", self._findall("56.78"))
+
+
+# ---------------------------------------------------------------------------
+# _split_line_by_data_patterns
+# ---------------------------------------------------------------------------
+class TestSplitLineByDataPatterns(unittest.TestCase):
+
+    def _split(self, line: str):
+        from app.pipelines.extract import _split_line_by_data_patterns
+        return _split_line_by_data_patterns(line)
+
+    def test_basic_split(self):
+        result = self._split("Concepto A 8 288 123% YES $89")
+        self.assertIsNotNone(result)
+        self.assertGreaterEqual(len(result), 3)
+        self.assertEqual(result[0], "Concepto A")
+
+    def test_insufficient_data_tokens_returns_none(self):
+        result = self._split("Just a sentence with one number 42")
+        self.assertIsNone(result)
+
+    def test_no_data_returns_none(self):
+        result = self._split("This is a plain text line")
+        self.assertIsNone(result)
+
+    def test_label_plus_two_numbers(self):
+        result = self._split("Rent 500.00 600.00")
+        self.assertIsNotNone(result)
+        self.assertEqual(result[0], "Rent")
+        self.assertIn("500.00", result)
+        self.assertIn("600.00", result)
+
+
+# ---------------------------------------------------------------------------
+# _extract_generic_tables_from_text_pattern_split
+# ---------------------------------------------------------------------------
+class TestExtractGenericTablesPatternSplit(unittest.TestCase):
+
+    def _extract(self, text: str):
+        from app.pipelines.extract import _extract_generic_tables_from_text_pattern_split
+        return _extract_generic_tables_from_text_pattern_split(text)
+
+    def test_multi_row_table(self):
+        text = (
+            "Concepto A 8 288 123% YES $89\n"
+            "Concepto B 1 200 45% NO $50\n"
+            "Concepto C 300 99% YES $120\n"
+        )
+        tables = self._extract(text)
+        self.assertGreaterEqual(len(tables), 1)
+        t = tables[0]
+        self.assertEqual(t["source"], "text_pattern_split")
+        self.assertGreaterEqual(t["row_count"], 2)
+
+    def test_empty_text_returns_empty(self):
+        self.assertEqual(self._extract(""), [])
+        self.assertEqual(self._extract("   "), [])
+
+    def test_single_line_returns_empty(self):
+        self.assertEqual(self._extract("Concepto A 8 288 123% YES $89"), [])
+
+    def test_non_table_text_returns_empty(self):
+        text = (
+            "This document has no tables.\n"
+            "It only contains text.\n"
+            "There are no numbers arranged.\n"
+        )
+        self.assertEqual(self._extract(text), [])
+
+    def test_two_column_table(self):
+        text = (
+            "Product Alpha 500.00 600.00\n"
+            "Product Beta 350.25 420.10\n"
+            "Product Gamma 900.00 720.50\n"
+        )
+        tables = self._extract(text)
+        self.assertGreaterEqual(len(tables), 1)
+        # Each row should have label + 2 numbers
+        for row in tables[0]["rows"]:
+            self.assertGreaterEqual(len(row), 3)
+
+
+# ---------------------------------------------------------------------------
+# _extract_generic_tables_from_text (double-space preservation fix)
+# ---------------------------------------------------------------------------
+class TestExtractGenericTablesTextDoubleSpace(unittest.TestCase):
+    """Verifies the fix for double-space preservation in the text splitter."""
+
+    def _extract(self, text: str):
+        from app.pipelines.extract import _extract_generic_tables_from_text
+        return _extract_generic_tables_from_text(text)
+
+    def test_double_space_columns_detected(self):
+        text = (
+            "Header A  Header B  Header C\n"
+            "Value 1   Value 2   Value 3\n"
+            "Value 4   Value 5   Value 6\n"
+            "Value 7   Value 8   Value 9\n"
+        )
+        tables = self._extract(text)
+        self.assertGreaterEqual(len(tables), 1)
+        self.assertGreaterEqual(tables[0]["row_count"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1235,8 +1235,10 @@ def _extract_generic_tables_from_text_impl(raw_text: str) -> list[dict]:
         current_rows = []
 
     for raw_line in text.splitlines():
-        line = _normalize_text(raw_line)
-        if not line:
+        # Use light normalization (preserve multi-space gaps for column detection)
+        line = re.sub(r"[ \t][ \t]+", lambda m: " " * len(m.group()), raw_line.strip())
+        line_norm = _normalize_text(raw_line)
+        if not line_norm:
             flush_current()
             if len(tables) >= _GENERIC_TABLE_MAX_TABLES:
                 break
@@ -1261,7 +1263,163 @@ def _extract_generic_tables_from_text_impl(raw_text: str) -> list[dict]:
                 break
 
     flush_current()
+
+    # ── Fallback: pattern-based column detection for single-space text ──
+    # OCR output (PaddleOCR, Tesseract) often uses single spaces between
+    # columns.  The above logic requires \t or \s{2,}.  This fallback
+    # detects columns by recognising data-type transitions within each line:
+    # text → number, number → percentage, etc.
+    if not tables:
+        pattern_tables = _extract_generic_tables_from_text_pattern_split(text)
+        if pattern_tables:
+            for pt in pattern_tables:
+                sig = _table_rows_signature(pt.get("rows", []))
+                if sig and sig not in seen_signatures:
+                    seen_signatures.add(sig)
+                    tables.append(pt)
+
     return tables[:_GENERIC_TABLE_MAX_TABLES]
+
+
+# Pattern tokens that likely represent "data columns" in table text.
+# Order matters: more specific patterns first to prevent greedy matching.
+_DATA_TOKEN_PAT = re.compile(
+    r"""
+    \$[\d,.]+              # currency  ($89, $1,234.56)
+    | [\d,.]+\s*%          # percentage (123%, 12.5 %)
+    | \bYES\b              # boolean-like
+    | \bNO\b
+    | \bN/A\b
+    | \bSI\b
+    | \bNA\b
+    | \b\d{1,3}(?:\s\d{3})+\b(?!\s*[%$])  # space-separated thousands (8 288) — not before %/$
+    | \b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b    # comma-separated thousands (1,005)
+    | \b\d+(?:\.\d+)?\b                    # plain numbers (123, 56.78)
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+
+def _extract_generic_tables_from_text_pattern_split(raw_text: str) -> list[dict]:
+    """Detect tables in OCR text using data-type pattern boundaries.
+
+    For lines like ``Lorem dolor siamet 8 288 123% YES $89``, finds
+    transitions from words → data tokens and splits accordingly.
+    """
+    try:
+        return _extract_generic_tables_from_text_pattern_split_impl(raw_text)
+    except Exception:
+        logger.debug("_extract_generic_tables_from_text_pattern_split: error", exc_info=True)
+        return []
+
+
+def _split_line_by_data_patterns(line: str) -> list[str] | None:
+    """Split a line into label + data columns using pattern matching.
+
+    Returns None if the line doesn't look like a table row.
+    """
+    matches = list(_DATA_TOKEN_PAT.finditer(line))
+    if len(matches) < 2:
+        return None
+
+    parts: list[str] = []
+    # Leading text before first data token = row label
+    label = line[:matches[0].start()].strip()
+    if label:
+        parts.append(label)
+
+    for m in matches:
+        parts.append(m.group(0).strip())
+
+    # Trailing text after last data token
+    tail = line[matches[-1].end():].strip()
+    if tail:
+        parts.append(tail)
+
+    if len(parts) < 3:
+        return None
+    return parts
+
+
+def _extract_generic_tables_from_text_pattern_split_impl(raw_text: str) -> list[dict]:
+    if not raw_text or not raw_text.strip():
+        return []
+
+    lines = [_normalize_text(line) for line in raw_text.splitlines() if _normalize_text(line)]
+    if len(lines) < 3:
+        return []
+
+    # Detect header-like lines: lines with multiple words (potential column headers)
+    # then consecutive lines with data patterns
+    tables: list[dict] = []
+    seen_signatures: set[str] = set()
+    current_rows: list[list[str]] = []
+    header_cols = 0
+
+    def flush():
+        nonlocal current_rows, header_cols
+        if len(current_rows) < 2:
+            current_rows = []
+            header_cols = 0
+            return
+        # Normalize column count: pad or trim to max column count
+        max_cols = max(len(r) for r in current_rows)
+        norm_rows = []
+        for r in current_rows[:_GENERIC_TABLE_MAX_ROWS]:
+            while len(r) < max_cols:
+                r.append("")
+            norm_rows.append([_normalize_table_cell_exact(c) for c in r[:_GENERIC_TABLE_MAX_COLS]])
+        sig = _table_rows_signature(norm_rows)
+        if sig and sig not in seen_signatures:
+            seen_signatures.add(sig)
+            cells = [
+                [{"text": _normalize_table_cell_exact(c), "bbox": None} for c in row]
+                for row in norm_rows
+            ]
+            tables.append({
+                "table_index": len(tables) + 1,
+                "source": "text_pattern_split",
+                "row_count": len(norm_rows),
+                "column_count": max((len(r) for r in norm_rows), default=0),
+                "bbox": None,
+                "rows": norm_rows,
+                "cells": cells,
+            })
+        current_rows = []
+        header_cols = 0
+
+    for line in lines:
+        parts = _split_line_by_data_patterns(line)
+        if parts and len(parts) >= 3:
+            if not current_rows:
+                # Check if the previous line could be a header
+                # (handled below after loop)
+                pass
+            current_rows.append(parts)
+            if len(current_rows) >= _GENERIC_TABLE_MAX_ROWS:
+                flush()
+        else:
+            # Check if this could be a header for upcoming data rows
+            if current_rows:
+                flush()
+            # Try to use this line as a header
+            header_parts = [p.strip() for p in re.split(r"\s{2,}", line) if p.strip()]
+            if len(header_parts) < 2:
+                # Try single-space split for short-word headers
+                words = line.split()
+                if len(words) >= 3:
+                    header_parts = words
+            if len(header_parts) >= 2:
+                # Tentatively store as potential header
+                current_rows = [header_parts]
+                header_cols = len(header_parts)
+            else:
+                flush()
+
+    flush()
+
+    return tables[:_GENERIC_TABLE_MAX_TABLES]
+
 
 
 def _extract_all_table_payloads(base_text_raw: str, ocr_boxes) -> list[dict]:

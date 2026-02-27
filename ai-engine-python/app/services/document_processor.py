@@ -412,7 +412,10 @@ async def process_document(file, document_id: str, source: str, options: str | N
     preprocess_result = await preprocess(file)
     text_layer_boxes: list[dict] = []
     pdf_tables: list[list[list[str]]] = []
-    if isinstance(preprocess_result, tuple) and len(preprocess_result) >= 4:
+    table_cell_grids: list = []
+    if isinstance(preprocess_result, tuple) and len(preprocess_result) >= 5:
+        images, extracted_text, text_layer_boxes, pdf_tables, table_cell_grids = preprocess_result
+    elif isinstance(preprocess_result, tuple) and len(preprocess_result) >= 4:
         images, extracted_text, text_layer_boxes, pdf_tables = preprocess_result
     elif isinstance(preprocess_result, tuple) and len(preprocess_result) >= 3:
         images, extracted_text, text_layer_boxes = preprocess_result
@@ -473,6 +476,20 @@ async def process_document(file, document_id: str, source: str, options: str | N
 
         if ocr_text:
             ocr_text = ocr_text.replace("\u00a0", " ").replace("\t", " ")
+
+        # ── Fill img2table grids with OCR box text ──────────────────
+        # When preprocess detected table grid structure (cell bounding
+        # boxes via img2table) but couldn't read cell contents (no OCR
+        # engine configured in img2table), map the OCR boxes from
+        # PaddleOCR to grid cells to produce filled tables.
+        if table_cell_grids and ocr_boxes:
+            from app.pipelines.preprocess import fill_grid_tables_from_ocr_boxes
+            grid_tables = fill_grid_tables_from_ocr_boxes(table_cell_grids, ocr_boxes)
+            if grid_tables:
+                logger.info("Filled %d grid table(s) from OCR boxes", len(grid_tables))
+                pdf_tables = pdf_tables + grid_tables
+        # ────────────────────────────────────────────────────────────
+
         first_image = images[0] if images else None
         doc_type, doc_confidence = await classify_document(first_image, ocr_text, file.filename)
         doc_type, doc_type_warning = _maybe_override_doc_type(doc_type, ocr_text, file.filename)
