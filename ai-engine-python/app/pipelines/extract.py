@@ -1086,7 +1086,9 @@ def _extract_generic_tables_from_boxes_impl(ocr_boxes) -> list[dict]:
     else:
         _adaptive_gap = float(_GENERIC_TABLE_LARGE_GAP_X)
 
+    logger.info("[DIAG-BOX] boxes=%d y_tol=%d adaptive_gap=%.1f", len(_all_boxes_pre), _y_tol, _adaptive_gap)
     lines = _lines_text_from_boxes(ocr_boxes, y_tol=_y_tol)
+    logger.info("[DIAG-BOX] lines_grouped=%d", len(lines))
     if not lines:
         return []
 
@@ -1107,6 +1109,7 @@ def _extract_generic_tables_from_boxes_impl(ocr_boxes) -> list[dict]:
         if line_entry["is_table_like"]:
             table_lines.append(line_entry)
 
+    logger.info("[DIAG-BOX] table_lines=%d", len(table_lines))
     if len(table_lines) < 2:
         return []
 
@@ -10350,17 +10353,21 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                 )
 
     # ── Universal tabla_celdas fallback ────────────────────────────────────────
-    # Regardless of document type: if img2table / OCR-box extraction detected a
-    # grid and no type-specific path already produced a tabla_celdas field, add
-    # one here so that ANY image or PDF containing a table is surfaced properly.
     if not any(str(f.get("key", "")) == "tabla_celdas" for f in fields):
         _uni_tables: list[dict] = []
+        logger.info("[DIAG-UNI] pdf_tables=%d ocr_boxes=%d base_text_len=%d",
+                    len(pdf_tables or []), len(ocr_boxes or []), len(base_text_raw or ""))
         if pdf_tables:
             _uni_tables = _pdf_tables_to_generic_payloads(pdf_tables)
+            logger.info("[DIAG-UNI] pdf_generic_tables=%d", len(_uni_tables))
         if not _uni_tables:
             _uni_tables = _extract_all_table_payloads(base_text_raw, ocr_boxes)
+            logger.info("[DIAG-UNI] all_table_payloads=%d", len(_uni_tables))
         if _uni_tables:
             _best_uni = max(_uni_tables, key=lambda t: t.get("row_count", 0))
+            logger.info("[DIAG-UNI] best_table rows=%d cols=%d source=%s",
+                        _best_uni.get("row_count", 0), _best_uni.get("column_count", 0),
+                        _best_uni.get("source", "?"))
             if _best_uni.get("row_count", 0) >= 2:
                 fields.append(
                     _make_field(

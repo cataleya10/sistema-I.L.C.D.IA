@@ -1,7 +1,25 @@
-from fastapi import APIRouter, UploadFile, File, Form, Header, HTTPException, Depends, Query
+from fastapi import APIRouter, UploadFile, File, Form, Header, HTTPException, Depends, Query, Response
 from app.schemas.process import ProcessResponse
 from app.schemas.online_learning import OnlineLearningFeedbackRequest, OnlineLearningRetrainRequest
-from app.services.document_processor import process_document
+from app.services.document_processor import process_document, export_table_to_csv_excel
+@router.post("/export-table")
+async def export_table_endpoint(
+    columns: list[str] = Form(...),
+    rows: str = Form(...),  # JSON stringified list of dicts
+    format: str = Form("csv"),
+):
+    import json
+    try:
+        rows_data = json.loads(rows)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid rows format")
+    csv_str, excel_bytes = export_table_to_csv_excel(columns, rows_data)
+    if format == "csv":
+        return Response(content=csv_str, media_type="text/csv")
+    elif format == "excel":
+        return Response(content=excel_bytes, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    else:
+        raise HTTPException(status_code=400, detail="Invalid format")
 from app.services.online_learning import (
     get_online_learning_stats,
     get_precision_metrics,

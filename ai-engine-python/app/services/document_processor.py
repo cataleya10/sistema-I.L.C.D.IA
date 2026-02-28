@@ -1,4 +1,30 @@
 import json
+import pandas as pd
+def export_table_to_csv_excel(columns, rows, csv_path=None, excel_path=None):
+    """
+    Exporta una tabla (columnas, filas) a CSV y/o Excel usando pandas.
+    columns: lista de nombres de columna
+    rows: lista de dicts (clave: columna)
+    csv_path: ruta para guardar CSV (opcional)
+    excel_path: ruta para guardar Excel (opcional)
+    Devuelve: (csv_str, excel_bytes)
+    """
+    df = pd.DataFrame(rows, columns=columns)
+    csv_str = df.to_csv(index=False, encoding="utf-8-sig")
+    excel_bytes = None
+    if excel_path or not csv_path:
+        import io
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            df.to_excel(writer, index=False)
+        excel_bytes = output.getvalue()
+        if excel_path:
+            with open(excel_path, "wb") as f:
+                f.write(excel_bytes)
+    if csv_path:
+        with open(csv_path, "w", encoding="utf-8-sig") as f:
+            f.write(csv_str)
+    return csv_str, excel_bytes
 import re
 from pathlib import Path
 import time
