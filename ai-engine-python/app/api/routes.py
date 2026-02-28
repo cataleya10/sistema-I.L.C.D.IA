@@ -2,6 +2,9 @@ from fastapi import APIRouter, UploadFile, File, Form, Header, HTTPException, De
 from app.schemas.process import ProcessResponse
 from app.schemas.online_learning import OnlineLearningFeedbackRequest, OnlineLearningRetrainRequest
 from app.services.document_processor import process_document, export_table_to_csv_excel
+
+# Fix: define router before usage
+router = APIRouter()
 @router.post("/export-table")
 async def export_table_endpoint(
     columns: list[str] = Form(...),
