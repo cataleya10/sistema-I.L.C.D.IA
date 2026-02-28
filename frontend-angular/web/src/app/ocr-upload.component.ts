@@ -113,7 +113,6 @@ export class OcrUploadComponent {
   }
   downloadTable(format: 'csv' | 'excel') {
     if (!this.ocrResult || !this.ocrResult.tablas || !this.ocrResult.tablas.length) return;
-    // Asume que la tabla está en ocrResult.tablas[0] y tiene 'columns' y 'rows'
     const tabla = this.ocrResult.tablas[0];
     const columns = tabla.columns || tabla.canonical_columns || [];
     const rows = tabla.rows || tabla.canonical_rows || [];
@@ -122,20 +121,28 @@ export class OcrUploadComponent {
     formData.append('columns', JSON.stringify(columns));
     formData.append('rows', JSON.stringify(rows));
     formData.append('format', format);
-    this.http.post(`/api/ocr/export-table`, formData, { responseType: format === 'csv' ? 'text' : 'blob' }).subscribe({
-      next: (data: any) => {
-        const filename = `tabla.${format === 'csv' ? 'csv' : 'xlsx'}`;
-        if (format === 'csv') {
+    if (format === 'csv') {
+      this.http.post(`/api/ocr/export-table`, formData, { responseType: 'text' as 'text' }).subscribe({
+        next: (data: string) => {
+          const filename = 'tabla.csv';
           const blob = new Blob([data], { type: 'text/csv;charset=utf-8;' });
           this.saveFile(blob, filename);
-        } else {
-          this.saveFile(data, filename);
+        },
+        error: err => {
+          this.errorMsg = err.error || 'Error al exportar la tabla.';
         }
-      },
-      error: err => {
-        this.errorMsg = err.error || 'Error al exportar la tabla.';
-      }
-    });
+      });
+    } else {
+      this.http.post(`/api/ocr/export-table`, formData, { responseType: 'blob' as 'blob' }).subscribe({
+        next: (data: Blob) => {
+          const filename = 'tabla.xlsx';
+          this.saveFile(data, filename);
+        },
+        error: err => {
+          this.errorMsg = err.error || 'Error al exportar la tabla.';
+        }
+      });
+    }
   }
 
   saveFile(blob: Blob, filename: string) {
