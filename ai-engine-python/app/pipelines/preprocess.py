@@ -175,7 +175,7 @@ def _extract_tables_img2table_image(pil_image: Image.Image) -> list[list[list[st
             pil_image.save(tmp, format="PNG")
             tmp_path = tmp.name
         doc = Img2TableImage(src=tmp_path)
-        extracted = doc.extract_tables()
+        extracted = doc.extract_tables(borderless_tables=True, implicit_rows=True)
         for table in extracted:
             try:
                 df = table.df
@@ -223,7 +223,7 @@ def _extract_img2table_grid(pil_image: Image.Image) -> list[_TableCellGrid]:
             pil_image.save(tmp, format="PNG")
             tmp_path = tmp.name
         doc = Img2TableImage(src=tmp_path)
-        extracted = doc.extract_tables()
+        extracted = doc.extract_tables(borderless_tables=True, implicit_rows=True)
         for table in extracted:
             try:
                 content = table.content
@@ -533,9 +533,12 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
         return images, extracted_text, text_layer_boxes, pdf_tables, []
 
     image = Image.open(io.BytesIO(content)).convert("RGB")
-    if image.width < 1200:
+    # Upscale small images so img2table and the OCR-box table reconstructor
+    # see pixel gaps large enough to distinguish table columns reliably.
+    # 2000 px minimum gives enough resolution for compact (Word-doc) tables.
+    if image.width < 2000:
         width = max(image.width, 1)
-        scale = 1200 / width
+        scale = 2000 / width
         image = image.resize((int(image.width * scale), int(image.height * scale)), _LANCZOS)
     image = ImageOps.autocontrast(image)
     image = ImageEnhance.Contrast(image.convert("L")).enhance(1.8)

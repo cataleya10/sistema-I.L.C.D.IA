@@ -836,9 +836,9 @@ def _line_groups(boxes, y_tol=12):
     return lines
 
 
-def _lines_text_from_boxes(ocr_boxes):
+def _lines_text_from_boxes(ocr_boxes, y_tol: int = 12):
     boxes = _boxes_with_rect(ocr_boxes)
-    lines = _line_groups(boxes)
+    lines = _line_groups(boxes, y_tol=y_tol)
     return lines
 
 
@@ -934,14 +934,16 @@ def _table_line_gap_stats(line: dict) -> dict[str, float]:
     }
 
 
-def _looks_like_generic_table_line(line: dict) -> bool:
+def _looks_like_generic_table_line(line: dict, min_large_gap: float = _GENERIC_TABLE_LARGE_GAP_X) -> bool:
     stats = _table_line_gap_stats(line)
     box_count = int(stats.get("box_count", 0))
     max_gap = float(stats.get("max_gap", 0.0))
     large_gap_count = int(stats.get("large_gap_count", 0))
     return (
-        (box_count >= 2 and large_gap_count >= 1)
-        or (box_count >= 4 and max_gap >= 20.0)
+        (box_count >= 2 and large_gap_count >= 1)          # standard: 2+ boxes, gap >= min_large_gap
+        or (box_count >= 4 and max_gap >= 20.0)             # standard: 4+ boxes, gap >= 20px
+        or (box_count >= 3 and max_gap >= 10.0)             # compact tables: 3+ boxes, any gap >= 10px
+        or (box_count >= 2 and max_gap >= min_large_gap * 0.4)  # small images: 2+ boxes, 40% of threshold
     )
 
 
@@ -1051,7 +1053,40 @@ def _extract_generic_tables_from_boxes(ocr_boxes) -> list[dict]:
 
 
 def _extract_generic_tables_from_boxes_impl(ocr_boxes) -> list[dict]:
-    lines = _lines_text_from_boxes(ocr_boxes)
+    # ── Adaptive y_tol: scale with median OCR box height ──────────────────
+    # Fixed 20px works for bank-statement images but is too coarse for
+    # small/compact tables (e.g. screenshots of Word docs).  Use 60% of the
+    # median box height, clamped to [6, 50].
+    _all_boxes_pre = _boxes_with_rect(ocr_boxes) or []
+    _heights = [
+        abs(b["rect"][3] - b["rect"][1])
+        for b in _all_boxes_pre
+        if isinstance(b.get("rect"), (list, tuple)) and len(b["rect"]) >= 4
+        and abs(b["rect"][3] - b["rect"][1]) > 0
+    ]
+    if _heights:
+        _median_h = sorted(_heights)[len(_heights) // 2]
+        _y_tol = max(6, min(int(_median_h * 0.6), 50))
+    else:
+        _y_tol = 20
+
+    # ── Adaptive large-gap threshold: 30% of median inter-word gap ─────────
+    # _GENERIC_TABLE_LARGE_GAP_X=34 is calibrated for A4 bank docs (~300 DPI).
+    # For compact / screenshot images use a smaller threshold so column gaps
+    # inside small tables are still recognised.
+    _all_widths = [
+        abs(b["rect"][2] - b["rect"][0])
+        for b in _all_boxes_pre
+        if isinstance(b.get("rect"), (list, tuple)) and len(b["rect"]) >= 4
+        and abs(b["rect"][2] - b["rect"][0]) > 0
+    ]
+    if _all_widths:
+        _median_w = sorted(_all_widths)[len(_all_widths) // 2]
+        _adaptive_gap = max(8.0, min(_median_w * 0.5, float(_GENERIC_TABLE_LARGE_GAP_X)))
+    else:
+        _adaptive_gap = float(_GENERIC_TABLE_LARGE_GAP_X)
+
+    lines = _lines_text_from_boxes(ocr_boxes, y_tol=_y_tol)
     if not lines:
         return []
 
@@ -1068,7 +1103,7 @@ def _extract_generic_tables_from_boxes_impl(ocr_boxes) -> list[dict]:
             "y": float(line.get("y", 0.0) or 0.0),
             "boxes": boxes,
         }
-        line_entry["is_table_like"] = _looks_like_generic_table_line({"boxes": boxes})
+        line_entry["is_table_like"] = _looks_like_generic_table_line({"boxes": boxes}, min_large_gap=_adaptive_gap)
         if line_entry["is_table_like"]:
             table_lines.append(line_entry)
 
@@ -9216,6 +9251,22 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                     confidence=0.9,
                 )
             )
+        elif pdf_tables:
+            # Direct fallback: use structurally-detected tables (img2table/PDF) when
+            # payment-specific extraction found nothing. Picks the largest table.
+            _generic = _pdf_tables_to_generic_payloads(pdf_tables)
+            if _generic:
+                _best = max(_generic, key=lambda t: t.get("row_count", 0))
+                if _best.get("row_count", 0) >= 2:
+                    fields.append(
+                        _make_field(
+                            "tabla_celdas",
+                            "Tabla detectada",
+                            json.dumps(_best, ensure_ascii=False),
+                            ocr_boxes,
+                            confidence=0.8,
+                        )
+                    )
         if payment_detail:
             fields.append(
                 _make_field(
@@ -10298,8 +10349,36 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                     )
                 )
 
-    if base_text:
-        snippet = base_text.strip()
+    # ── Universal tabla_celdas fallback ────────────────────────────────────────
+    # Regardless of document type: if img2table / OCR-box extraction detected a
+    # grid and no type-specific path already produced a tabla_celdas field, add
+    # one here so that ANY image or PDF containing a table is surfaced properly.
+    if not any(str(f.get("key", "")) == "tabla_celdas" for f in fields):
+        _uni_tables: list[dict] = []
+        if pdf_tables:
+            _uni_tables = _pdf_tables_to_generic_payloads(pdf_tables)
+        if not _uni_tables:
+            _uni_tables = _extract_all_table_payloads(base_text_raw, ocr_boxes)
+        if _uni_tables:
+            _best_uni = max(_uni_tables, key=lambda t: t.get("row_count", 0))
+            if _best_uni.get("row_count", 0) >= 2:
+                fields.append(
+                    _make_field(
+                        "tabla_celdas",
+                        "Tabla detectada",
+                        json.dumps(_best_uni, ensure_ascii=False),
+                        ocr_boxes,
+                        confidence=0.8,
+                    )
+                )
+
+    if base_text_raw:
+        # Preserve line breaks for readable display; only collapse intra-line spaces
+        _disp = unicodedata.normalize("NFC", base_text_raw).replace("\u00a0", " ")
+        _disp = "\n".join(
+            re.sub(r" {2,}", " ", ln).strip() for ln in _disp.splitlines() if ln.strip()
+        )
+        snippet = _disp
         if len(snippet) > 1200:
             snippet = snippet[:1200].rstrip() + "..."
         fields.insert(0, _make_field("texto_detectado", "Texto detectado", snippet, ocr_boxes, confidence=1.0))

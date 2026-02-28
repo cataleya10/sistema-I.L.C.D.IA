@@ -271,7 +271,21 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
                 </ng-template>
                 </ng-template>
                 <ng-template #plainValue>
-                  {{ field.corrected_value ?? field.value ?? '-' }}
+                  <ng-container *ngIf="field.key === 'texto_detectado'; else inlineText">
+                    <ng-container *ngIf="textoDetectadoTable(field.corrected_value ?? field.value ?? '') as tdt">
+                      <p class="detected-text-title" *ngIf="tdt.title">{{ tdt.title }}</p>
+                      <div class="cells-table-wrap">
+                        <table class="cells-table">
+                          <tbody>
+                            <tr *ngFor="let row of tdt.rows; let i = index" [class.alt]="i % 2 === 1">
+                              <td *ngFor="let cell of row">{{ cell }}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </ng-container>
+                  </ng-container>
+                  <ng-template #inlineText>{{ field.corrected_value ?? field.value ?? '-' }}</ng-template>
                 </ng-template>
               </td>
               <td>{{ field.confidence | percent: '1.0-0' }}</td>
@@ -311,6 +325,28 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
           </table>
         </div>
       </section>
+
+      <ng-container *ngIf="textoDetectadoField as tdField">
+        <ng-container *ngIf="textoDetectadoTable(tdField.corrected_value ?? tdField.value ?? '') as tdt">
+          <section class="panel table-panel" *ngIf="tdt.rows.length">
+            <div class="panel__header">
+              <div class="table-panel__title">
+                <h3>Texto detectado</h3>
+                <span class="table-mode" *ngIf="tdt.title">{{ tdt.title }}</span>
+              </div>
+            </div>
+            <div class="cells-table-wrap">
+              <table class="cells-table">
+                <tbody>
+                  <tr *ngFor="let row of tdt.rows; let i = index" [class.alt]="i % 2 === 1">
+                    <td *ngFor="let cell of row">{{ cell }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </ng-container>
+      </ng-container>
     </section>
 
     <ng-template #loading>
@@ -560,6 +596,32 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
         background: #fef3c7;
         color: #b45309;
       }
+      .detected-text-title {
+        margin: 0 0 4px;
+        font-size: 0.78em;
+        font-weight: 600;
+        color: #374151;
+      }
+      .detected-text-wrap {
+        max-height: 320px;
+        overflow: auto;
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+      }
+      .detected-text-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.82em;
+      }
+      .detected-text-table td {
+        padding: 3px 10px;
+        border-bottom: 1px solid #f3f4f6;
+        border-right: 1px solid #f3f4f6;
+        white-space: nowrap;
+      }
+      .detected-text-table tr.alt td {
+        background: #f9fafb;
+      }
       .pdf-replica {
         margin: 0;
         white-space: pre-wrap;
@@ -658,7 +720,7 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
 })
 export class DocumentsResultsPage implements OnInit {
   private static readonly REPLICA_TUNING_STORAGE_KEY = 'documents.replicaPresetTuning.v1';
-  private static readonly HIDDEN_FIELD_KEYS = new Set(['pago_detalle']);
+  private static readonly HIDDEN_FIELD_KEYS = new Set(['pago_detalle', 'texto_detectado']);
   document: DocumentDetail | null = null;
   displayFields: DocumentField[] = [];
   search = '';
@@ -817,6 +879,10 @@ export class DocumentsResultsPage implements OnInit {
     return DocumentsResultsPage.HIDDEN_FIELD_KEYS.has(String(key ?? '').toLowerCase());
   }
 
+  get textoDetectadoField(): DocumentField | undefined {
+    return this.document?.fields.find(f => String(f.key ?? '').toLowerCase() === 'texto_detectado');
+  }
+
   typeLabel(type: DocumentDetail['document_type']): string {
     return getDocumentTypeLabel(type);
   }
@@ -835,6 +901,51 @@ export class DocumentsResultsPage implements OnInit {
 
   isPaymentDetailField(field: DocumentField): boolean {
     return String(field.key ?? '').toLowerCase() === 'pago_detalle';
+  }
+
+  textoDetectadoTable(value: string): { title: string; rows: string[][] } {
+    const rawLines = (value ?? '').split('\n');
+    if (!rawLines.length) return { title: '', rows: [] };
+
+    // Split a line into columns using 2+ spaces as separator (mirrors backend logic)
+    const splitCols = (line: string): string[] =>
+      line.split(/\s{2,}/).map(p => p.trim()).filter(p => p.length > 0);
+
+    // Collect consecutive multi-column lines into groups
+    const groups: string[][][] = [];
+    let cur: string[][] = [];
+    for (const raw of rawLines) {
+      const line = raw.trim();
+      if (!line) {
+        if (cur.length >= 2) { groups.push(cur); }
+        cur = [];
+        continue;
+      }
+      const cols = splitCols(line);
+      if (cols.length >= 2) {
+        cur.push(cols);
+      } else {
+        if (cur.length >= 2) { groups.push(cur); }
+        cur = [];
+      }
+    }
+    if (cur.length >= 2) { groups.push(cur); }
+
+    if (groups.length) {
+      // Pick the largest group by row count
+      const best = groups.reduce((a, b) => (b.length > a.length ? b : a), groups[0]);
+      const maxCols = Math.max(...best.map(r => r.length));
+      return {
+        title: '',
+        rows: best.map(r => [...r, ...Array(maxCols - r.length).fill('')]),
+      };
+    }
+
+    // Fallback: one cell per line (no column structure detected)
+    return {
+      title: '',
+      rows: rawLines.map(l => l.trim()).filter(l => l.length > 0 && l.length < 150).map(l => [l]),
+    };
   }
 
   detectedBankLabel(): string {
