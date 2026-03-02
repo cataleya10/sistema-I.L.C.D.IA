@@ -1,0 +1,40 @@
+services:
+  ai-engine:
+    build: ./ai-engine-python
+    ports:
+      - "8000:8000"
+    environment:
+      - LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  backend:
+    build: ./backend-dotnet
+    ports:
+      - "5000:5000"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:5000
+      - Cors__AllowedOrigins=http://localhost:4200,http://localhost
+      - PythonAi__BaseUrl=http://ai-engine:8000
+    depends_on:
+      ai-engine:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend-angular/web
+    ports:
+      - "4200:80"
+    depends_on:
+      - backend
+    restart: unless-stopped

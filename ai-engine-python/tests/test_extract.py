@@ -1800,7 +1800,7 @@ class TestExtractFieldsErrorRecovery(unittest.TestCase):
     """extract_fields must return [] on unhandled exceptions."""
 
     def test_returns_empty_on_impl_exception(self):
-        with patch("app.pipelines.extract._extract_fields_impl", side_effect=RuntimeError("boom")):
+        with patch("app.pipelines.extract.orchestrator._extract_fields_impl", side_effect=RuntimeError("boom")):
             result = _run_sync(extract_fields("INE", "some text"))
         self.assertEqual(result, [])
 
@@ -1839,7 +1839,7 @@ class TestHeaderCellDedup(unittest.TestCase):
         from app.pipelines.extract import _header_cell_has_repeated_tokens, _dedup_header_cell
         self.assertFalse(_header_cell_has_repeated_tokens(""))
         self.assertEqual(_dedup_header_cell(""), "")
-        self.assertEqual(_dedup_header_cell(None), "")
+        self.assertEqual(_dedup_header_cell(None), "")  # type: ignore[arg-type]
 
     def test_three_same_tokens(self):
         from app.pipelines.extract import _header_cell_has_repeated_tokens, _dedup_header_cell
@@ -1961,6 +1961,7 @@ class TestPdfTableExtraction(unittest.TestCase):
         # Use minimal text/boxes that wouldn't produce good results
         result = _extract_payment_table_payload("Some random text", [], pdf_tables)
         self.assertIsNotNone(result)
+        assert result is not None
         self.assertEqual(result["source"], "pdf_structure")
         self.assertGreaterEqual(len(result["rows"]), 3)
 
@@ -1975,6 +1976,7 @@ class TestPdfTableExtraction(unittest.TestCase):
         pdf_tables = [[header] + data_rows]
         result = _extract_payment_table_payload("REPORTE DE TRANSMISION", [], pdf_tables)
         self.assertIsNotNone(result)
+        assert result is not None
         # Should extract all 23 data rows + header
         self.assertGreaterEqual(len(result["rows"]), 24)
 
@@ -2649,24 +2651,28 @@ class TestUnifiedStatusVocabulary(unittest.TestCase):
         from app.pipelines.extract import _STATUS_PREFIX_PAT
         m = _STATUS_PREFIX_PAT.match("DEVUELTO PAGO DE NOMINA")
         self.assertIsNotNone(m)
+        assert m is not None
         self.assertEqual(m.group(1), "DEVUELTO")
 
     def test_status_prefix_pat_matches_cancelado(self):
         from app.pipelines.extract import _STATUS_PREFIX_PAT
         m = _STATUS_PREFIX_PAT.match("CANCELADO PAGO DE NOMINA")
         self.assertIsNotNone(m)
+        assert m is not None
         self.assertEqual(m.group(1), "CANCELADO")
 
     def test_status_prefix_pat_matches_liquidado(self):
         from app.pipelines.extract import _STATUS_PREFIX_PAT
         m = _STATUS_PREFIX_PAT.match("LIQUIDADO")
         self.assertIsNotNone(m)
+        assert m is not None
         self.assertEqual(m.group(1), "LIQUIDADO")
 
     def test_status_search_pat_finds_in_text(self):
         from app.pipelines.extract import _STATUS_SEARCH_PAT
         m = _STATUS_SEARCH_PAT.search("RESULTADO: DEVUELTO POR BANCO")
         self.assertIsNotNone(m)
+        assert m is not None
         self.assertEqual(m.group(1), "DEVUELTO")
 
     def test_all_statuses_tuple_complete(self):
@@ -3447,6 +3453,7 @@ class TestSplitLineByDataPatterns(unittest.TestCase):
     def test_basic_split(self):
         result = self._split("Concepto A 8 288 123% YES $89")
         self.assertIsNotNone(result)
+        assert result is not None
         self.assertGreaterEqual(len(result), 3)
         self.assertEqual(result[0], "Concepto A")
 
@@ -3461,6 +3468,7 @@ class TestSplitLineByDataPatterns(unittest.TestCase):
     def test_label_plus_two_numbers(self):
         result = self._split("Rent 500.00 600.00")
         self.assertIsNotNone(result)
+        assert result is not None
         self.assertEqual(result[0], "Rent")
         self.assertIn("500.00", result)
         self.assertIn("600.00", result)

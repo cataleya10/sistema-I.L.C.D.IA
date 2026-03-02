@@ -13,7 +13,7 @@ import { FormsModule } from '@angular/forms';
       <div class="meta">
         <span [class.invalid]="!valid">{{ valid ? 'Válido' : 'Inválido' }}</span>
         <ng-container *ngIf="errors?.length">
-          <span *ngFor="let err of errors">{{ err }}</span>
+          <span *ngFor="let err of errors; trackBy: trackByIndex">{{ err }}</span>
         </ng-container>
       </div>
     </div>
@@ -62,4 +62,6 @@ export class FieldEditorComponent implements OnChanges {
   emitChange(value: string): void {
     this.valueChange.emit(value);
   }
+
+  trackByIndex(index: number): number { return index; }
 }

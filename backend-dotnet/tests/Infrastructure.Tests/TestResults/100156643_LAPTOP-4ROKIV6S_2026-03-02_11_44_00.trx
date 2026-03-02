@@ -1,0 +1,281 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="78a84189-b368-407a-874a-7486612c85d3" name="100156643@LAPTOP-4ROKIV6S 2026-03-02 11:44:00" runUser="LAPTOP-4ROKIV6S\100156643" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-03-02T11:44:00.4128109-06:00" queuing="2026-03-02T11:44:00.4128115-06:00" start="2026-03-02T11:43:59.6931862-06:00" finish="2026-03-02T11:44:01.2642962-06:00" />
+  <TestSettings name="default" id="533497a0-836b-4eed-af27-a5ccaf7485ab">
+    <Deployment runDeploymentRoot="100156643_LAPTOP-4ROKIV6S_2026-03-02_11_44_00" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="a71a77ad-4479-4efd-9035-de7042b8099d" testId="2ff66587-91a9-cc5c-1742-bd7ebcdd4b5e" testName="Infrastructure.Tests.CSharpAiClientTests.GetOnlineLearningStatsAsync_ReturnsDisabledPayload" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.0036449" startTime="2026-03-02T11:44:00.3841164-06:00" endTime="2026-03-02T11:44:00.3841166-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="a71a77ad-4479-4efd-9035-de7042b8099d" />
+    <UnitTestResult executionId="24825f68-7e69-4c51-a594-6194eab9eafc" testId="18c38499-6742-da07-3971-c1145096f51f" testName="Infrastructure.Tests.DocumentsControllerExportTests.BuildRtf_RemovesNoiseRowsFromStructuredTables" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.0002366" startTime="2026-03-02T11:44:00.3255195-06:00" endTime="2026-03-02T11:44:00.3255197-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="24825f68-7e69-4c51-a594-6194eab9eafc">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.NotNull() Failure: Value is null</Message>
+          <StackTrace>   at Infrastructure.Tests.DocumentsControllerExportTests.InvokeBuildRtf(DocumentDetailDto detail) in C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\DocumentsControllerExportTests.cs:line 186&#xD;
+   at Infrastructure.Tests.DocumentsControllerExportTests.BuildRtf_RemovesNoiseRowsFromStructuredTables() in C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\DocumentsControllerExportTests.cs:line 94&#xD;
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)&#xD;
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="cad96525-1583-4e40-90fd-4e7f188190da" testId="d6d2afe3-df4e-fe29-5397-e9cfe2f9b069" testName="Infrastructure.Tests.DocumentsControllerEndpointExportTests.ExportWord_ReturnsRtfWithDerivedValuesFromTablaCeldas" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.0012286" startTime="2026-03-02T11:44:00.5297637-06:00" endTime="2026-03-02T11:44:00.5297638-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="cad96525-1583-4e40-90fd-4e7f188190da" />
+    <UnitTestResult executionId="50f63170-23d9-4d98-a275-da29582081f1" testId="438209dc-855a-6f86-2ace-4ec334838e66" testName="Infrastructure.Tests.CSharpAiClientTests.ProcessTextAsync_Acta_DoesNotCaptureLabelNoiseInCriticalFields" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.0636311" startTime="2026-03-02T11:44:00.3482767-06:00" endTime="2026-03-02T11:44:00.3482769-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="50f63170-23d9-4d98-a275-da29582081f1" />
+    <UnitTestResult executionId="269791e2-f474-458f-9535-c28b2514b2d4" testId="18467b25-d780-ea0a-c0b4-7ba7e17d78c8" testName="Infrastructure.Tests.DocumentsControllerExportTests.BuildRtf_UsesMappedFieldsFromTablaCeldas" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.0008044" startTime="2026-03-02T11:44:00.3246380-06:00" endTime="2026-03-02T11:44:00.3246382-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="269791e2-f474-458f-9535-c28b2514b2d4">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.NotNull() Failure: Value is null</Message>
+          <StackTrace>   at Infrastructure.Tests.DocumentsControllerExportTests.InvokeBuildRtf(DocumentDetailDto detail) in C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\DocumentsControllerExportTests.cs:line 186&#xD;
+   at Infrastructure.Tests.DocumentsControllerExportTests.BuildRtf_UsesMappedFieldsFromTablaCeldas() in C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\DocumentsControllerExportTests.cs:line 18&#xD;
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)&#xD;
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="b95aa273-e0d6-4b86-b837-9bd3b4a338a7" testId="30c13fd5-aaa6-37c7-7d81-e24f0e04eeca" testName="Infrastructure.Tests.CSharpAiClientTests.ProcessTextAsync_UsesCanonicalFieldKeys_ForDomicilioAndBank" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.0089724" startTime="2026-03-02T11:44:00.4081628-06:00" endTime="2026-03-02T11:44:00.4081630-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="b95aa273-e0d6-4b86-b837-9bd3b4a338a7" />
+    <UnitTestResult executionId="33c41d19-4ce1-4498-acb9-c65f41649dbd" testId="1249b473-e869-5273-efc0-403c756f3a73" testName="Infrastructure.Tests.CSharpAiClientTests.ProcessTextAsync_UsesProvidedOcrText_ForTelmexDueDate" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.0114762" startTime="2026-03-02T11:44:00.3839002-06:00" endTime="2026-03-02T11:44:00.3839005-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="33c41d19-4ce1-4498-acb9-c65f41649dbd" />
+    <UnitTestResult executionId="d3b160f9-61d5-4724-a090-df02e534c2f2" testId="6ab1e23b-97c5-91db-d60d-0bb3400eaf3b" testName="Infrastructure.Tests.DocumentsControllerEndpointExportTests.ExportEndpoints_ReturnNotFound_WhenDocumentDoesNotExist" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.0032630" startTime="2026-03-02T11:44:00.5131963-06:00" endTime="2026-03-02T11:44:00.5131967-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d3b160f9-61d5-4724-a090-df02e534c2f2" />
+    <UnitTestResult executionId="3e774d89-3193-49ba-8841-02534681ebc5" testId="0be3e974-e368-1933-d870-ca9fd8237e2d" testName="Infrastructure.Tests.HybridAiClientTests.ProcessDocumentAsync_FacturaPolicy_OnlyKeepsTablaCeldas" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.0126503" startTime="2026-03-02T11:44:00.4218664-06:00" endTime="2026-03-02T11:44:00.4218668-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3e774d89-3193-49ba-8841-02534681ebc5" />
+    <UnitTestResult executionId="4216939f-5bdf-47a2-9f66-2a2f3ccb31d0" testId="818ed259-9614-9e38-67dd-48549eb35b7d" testName="Infrastructure.Tests.DocumentServiceTests.UpdateFieldsAsync_MarksFieldAsCorrectedAndReady" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.1214320" startTime="2026-03-02T11:44:01.1407022-06:00" endTime="2026-03-02T11:44:01.1407027-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="4216939f-5bdf-47a2-9f66-2a2f3ccb31d0" />
+    <UnitTestResult executionId="29e244be-3d7f-4199-9897-6434f14aee2c" testId="2a4156d9-b07a-1e18-689a-59808a8888e0" testName="Infrastructure.Tests.DocumentServiceTests.UploadAsync_PersistsDocument" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.0271645" startTime="2026-03-02T11:44:01.1679430-06:00" endTime="2026-03-02T11:44:01.1679438-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="29e244be-3d7f-4199-9897-6434f14aee2c" />
+    <UnitTestResult executionId="872f64d0-9434-4109-a7f0-beee6f6e1747" testId="9f7feba4-6051-2a61-d1b1-7744b2fb1028" testName="Infrastructure.Tests.DocumentsControllerEndpointExportTests.ExportExcel_PrefersCanonicalRowsWhenAvailable" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.2255721" startTime="2026-03-02T11:44:00.5098297-06:00" endTime="2026-03-02T11:44:00.5098302-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="872f64d0-9434-4109-a7f0-beee6f6e1747" />
+    <UnitTestResult executionId="0dd943f0-30b5-4d00-8aae-54c886ed4f5f" testId="c70bfa45-4d2b-7694-7213-71e45d0a5308" testName="Infrastructure.Tests.HybridAiClientTests.GetOnlineLearningStatsAsync_ForwardsPythonStats" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.0133903" startTime="2026-03-02T11:44:00.4511054-06:00" endTime="2026-03-02T11:44:00.4511057-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="0dd943f0-30b5-4d00-8aae-54c886ed4f5f" />
+    <UnitTestResult executionId="609520d7-bfe3-4cc6-9614-f6768c9dafa9" testId="8792ff7f-7ef4-c8e7-3b7e-28842c39dc07" testName="Infrastructure.Tests.DocumentsControllerEndpointExportTests.ExportExcel_RemovesNoiseRowsFromStructuredTables" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.0066145" startTime="2026-03-02T11:44:00.5199137-06:00" endTime="2026-03-02T11:44:00.5199139-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="609520d7-bfe3-4cc6-9614-f6768c9dafa9" />
+    <UnitTestResult executionId="e2c70d97-dd08-4533-821f-7e4c9979dc50" testId="2d9b8ddc-8998-677b-6e0a-5874c0ed6da8" testName="Infrastructure.Tests.HybridAiClientTests.ProcessDocumentAsync_Acta_PrefersPythonWhenReady" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.1240781" startTime="2026-03-02T11:44:00.4086686-06:00" endTime="2026-03-02T11:44:00.4086688-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="e2c70d97-dd08-4533-821f-7e4c9979dc50" />
+    <UnitTestResult executionId="4ba2e403-9615-4ea2-b2f7-f6a4558dc6d6" testId="bac45528-0e5e-0233-a8fb-45e02529ada5" testName="Infrastructure.Tests.CSharpAiClientTests.ProcessDocumentAsync_ComprobanteTelmex_ExtractsDueDateAndTotal" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.0137774" startTime="2026-03-02T11:44:00.3975249-06:00" endTime="2026-03-02T11:44:00.3975252-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="4ba2e403-9615-4ea2-b2f7-f6a4558dc6d6" />
+    <UnitTestResult executionId="2d1e9a79-1351-4c4c-a1b6-7d5052519c1e" testId="728de658-c8f8-c0db-41b2-fefa44730605" testName="Infrastructure.Tests.DocumentsControllerExportTests.BuildXlsx_PrefersCanonicalRowsWhenAvailable" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.0011439" startTime="2026-03-02T11:44:00.3264458-06:00" endTime="2026-03-02T11:44:00.3264459-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="2d1e9a79-1351-4c4c-a1b6-7d5052519c1e">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.NotNull() Failure: Value is null</Message>
+          <StackTrace>   at Infrastructure.Tests.DocumentsControllerExportTests.InvokeBuildXlsx(DocumentDetailDto detail) in C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\DocumentsControllerExportTests.cs:line 194&#xD;
+   at Infrastructure.Tests.DocumentsControllerExportTests.BuildXlsx_PrefersCanonicalRowsWhenAvailable() in C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\DocumentsControllerExportTests.cs:line 147&#xD;
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)&#xD;
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="7b704c81-28ba-4e51-9b6f-66e40825c7c8" testId="b6c89681-daf9-697b-df37-690b7987c973" testName="Infrastructure.Tests.HybridAiClientTests.ProcessDocumentAsync_FacturaMerge_PrefersStructuredPythonTableWhenCSharpTableIsNoisy" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.0079921" startTime="2026-03-02T11:44:00.4595211-06:00" endTime="2026-03-02T11:44:00.4595219-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="7b704c81-28ba-4e51-9b6f-66e40825c7c8" />
+    <UnitTestResult executionId="ac1036db-7a26-41eb-b59a-395fc1d03674" testId="e7a05bf4-1ec1-7f29-cb51-ea4c67902896" testName="Infrastructure.Tests.DocumentServiceTests.ProcessAsync_QueuesJobAndSetsProcessingStatus" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.7346395" startTime="2026-03-02T11:44:01.0189097-06:00" endTime="2026-03-02T11:44:01.0189100-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ac1036db-7a26-41eb-b59a-395fc1d03674" />
+    <UnitTestResult executionId="09146b92-2165-4ae9-999a-c7d971f1d76f" testId="8c491a2d-4a46-274b-c29e-a6693b70c3b9" testName="Infrastructure.Tests.DocumentServiceTests.ProcessNowAsync_WhenReadyResponse_PersistsFieldsAndMarksReady" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.0355986" startTime="2026-03-02T11:44:01.2036935-06:00" endTime="2026-03-02T11:44:01.2036940-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="09146b92-2165-4ae9-999a-c7d971f1d76f" />
+    <UnitTestResult executionId="ac885c2d-a5cf-4631-b19d-c76211f61871" testId="e630ba66-ae09-b784-3c8f-d1f2f2eddc00" testName="Infrastructure.Tests.DocumentsControllerEndpointExportTests.ExportWord_RemovesNoiseRowsFromStructuredTables" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.0084304" startTime="2026-03-02T11:44:00.5284753-06:00" endTime="2026-03-02T11:44:00.5284757-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ac885c2d-a5cf-4631-b19d-c76211f61871" />
+    <UnitTestResult executionId="d8bdf39e-a6f1-413f-845f-26210e59cb6a" testId="8f7fbb89-5958-55ef-53d2-a0a36e50429e" testName="Infrastructure.Tests.CSharpAiClientTests.ProcessTextAsync_Factura_ReturnsOnlyTablaCeldasField" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.0173587" startTime="2026-03-02T11:44:00.3841776-06:00" endTime="2026-03-02T11:44:00.3841776-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d8bdf39e-a6f1-413f-845f-26210e59cb6a" />
+    <UnitTestResult executionId="03aa9e4d-f11f-4ef0-bb2d-4c9f175f796d" testId="8485dda9-5517-3fed-b02d-fe5de83839d1" testName="Infrastructure.Tests.DocumentsControllerExportTests.BuildXlsx_UsesMappedFieldsFromTablaCeldas" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.0011744" startTime="2026-03-02T11:44:00.3259578-06:00" endTime="2026-03-02T11:44:00.3259579-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="03aa9e4d-f11f-4ef0-bb2d-4c9f175f796d">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.NotNull() Failure: Value is null</Message>
+          <StackTrace>   at Infrastructure.Tests.DocumentsControllerExportTests.InvokeBuildXlsx(DocumentDetailDto detail) in C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\DocumentsControllerExportTests.cs:line 194&#xD;
+   at Infrastructure.Tests.DocumentsControllerExportTests.BuildXlsx_UsesMappedFieldsFromTablaCeldas() in C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\DocumentsControllerExportTests.cs:line 46&#xD;
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)&#xD;
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="f43622bb-b859-4116-a2e7-7e1d18e37793" testId="2b4c136c-19a3-4200-bc06-f6238edcc0d7" testName="Infrastructure.Tests.HybridAiClientTests.ProcessDocumentAsync_MergesPythonFieldsIntoPreferredResponse" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.0152078" startTime="2026-03-02T11:44:00.4375746-06:00" endTime="2026-03-02T11:44:00.4375750-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="f43622bb-b859-4116-a2e7-7e1d18e37793" />
+    <UnitTestResult executionId="1540c2c8-20de-4103-b32b-70cf90f3e68e" testId="0b5355d2-2242-4e74-135e-7ac643ffabf6" testName="Infrastructure.Tests.DocumentsControllerEndpointExportTests.ExportExcel_ReturnsXlsxWithDerivedValuesFromTablaCeldas" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.0152223" startTime="2026-03-02T11:44:00.5451470-06:00" endTime="2026-03-02T11:44:00.5451473-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="1540c2c8-20de-4103-b32b-70cf90f3e68e" />
+    <UnitTestResult executionId="ffb0d883-d84e-48c2-b27a-e9391e9f385b" testId="07bc7b5c-8de4-f19e-abcf-4702e43e7f0e" testName="Infrastructure.Tests.DocumentsControllerExportTests.BuildXlsx_RemovesNoiseRowsFromStructuredTables" computerName="LAPTOP-4ROKIV6S" duration="00:00:00.0119055" startTime="2026-03-02T11:44:00.3198646-06:00" endTime="2026-03-02T11:44:00.3198885-06:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ffb0d883-d84e-48c2-b27a-e9391e9f385b">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.NotNull() Failure: Value is null</Message>
+          <StackTrace>   at Infrastructure.Tests.DocumentsControllerExportTests.InvokeBuildXlsx(DocumentDetailDto detail) in C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\DocumentsControllerExportTests.cs:line 194&#xD;
+   at Infrastructure.Tests.DocumentsControllerExportTests.BuildXlsx_RemovesNoiseRowsFromStructuredTables() in C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\DocumentsControllerExportTests.cs:line 108&#xD;
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)&#xD;
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="Infrastructure.Tests.HybridAiClientTests.ProcessDocumentAsync_MergesPythonFieldsIntoPreferredResponse" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="2b4c136c-19a3-4200-bc06-f6238edcc0d7">
+      <Execution id="f43622bb-b859-4116-a2e7-7e1d18e37793" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.HybridAiClientTests" name="ProcessDocumentAsync_MergesPythonFieldsIntoPreferredResponse" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.DocumentsControllerEndpointExportTests.ExportWord_RemovesNoiseRowsFromStructuredTables" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="e630ba66-ae09-b784-3c8f-d1f2f2eddc00">
+      <Execution id="ac885c2d-a5cf-4631-b19d-c76211f61871" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.DocumentsControllerEndpointExportTests" name="ExportWord_RemovesNoiseRowsFromStructuredTables" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.DocumentsControllerEndpointExportTests.ExportExcel_PrefersCanonicalRowsWhenAvailable" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="9f7feba4-6051-2a61-d1b1-7744b2fb1028">
+      <Execution id="872f64d0-9434-4109-a7f0-beee6f6e1747" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.DocumentsControllerEndpointExportTests" name="ExportExcel_PrefersCanonicalRowsWhenAvailable" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.CSharpAiClientTests.ProcessTextAsync_UsesProvidedOcrText_ForTelmexDueDate" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="1249b473-e869-5273-efc0-403c756f3a73">
+      <Execution id="33c41d19-4ce1-4498-acb9-c65f41649dbd" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.CSharpAiClientTests" name="ProcessTextAsync_UsesProvidedOcrText_ForTelmexDueDate" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.CSharpAiClientTests.GetOnlineLearningStatsAsync_ReturnsDisabledPayload" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="2ff66587-91a9-cc5c-1742-bd7ebcdd4b5e">
+      <Execution id="a71a77ad-4479-4efd-9035-de7042b8099d" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.CSharpAiClientTests" name="GetOnlineLearningStatsAsync_ReturnsDisabledPayload" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.CSharpAiClientTests.ProcessTextAsync_Factura_ReturnsOnlyTablaCeldasField" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="8f7fbb89-5958-55ef-53d2-a0a36e50429e">
+      <Execution id="d8bdf39e-a6f1-413f-845f-26210e59cb6a" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.CSharpAiClientTests" name="ProcessTextAsync_Factura_ReturnsOnlyTablaCeldasField" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.DocumentsControllerEndpointExportTests.ExportWord_ReturnsRtfWithDerivedValuesFromTablaCeldas" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="d6d2afe3-df4e-fe29-5397-e9cfe2f9b069">
+      <Execution id="cad96525-1583-4e40-90fd-4e7f188190da" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.DocumentsControllerEndpointExportTests" name="ExportWord_ReturnsRtfWithDerivedValuesFromTablaCeldas" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.DocumentServiceTests.UploadAsync_PersistsDocument" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="2a4156d9-b07a-1e18-689a-59808a8888e0">
+      <Execution id="29e244be-3d7f-4199-9897-6434f14aee2c" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.DocumentServiceTests" name="UploadAsync_PersistsDocument" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.DocumentServiceTests.ProcessAsync_QueuesJobAndSetsProcessingStatus" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="e7a05bf4-1ec1-7f29-cb51-ea4c67902896">
+      <Execution id="ac1036db-7a26-41eb-b59a-395fc1d03674" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.DocumentServiceTests" name="ProcessAsync_QueuesJobAndSetsProcessingStatus" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.DocumentsControllerExportTests.BuildXlsx_PrefersCanonicalRowsWhenAvailable" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="728de658-c8f8-c0db-41b2-fefa44730605">
+      <Execution id="2d1e9a79-1351-4c4c-a1b6-7d5052519c1e" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.DocumentsControllerExportTests" name="BuildXlsx_PrefersCanonicalRowsWhenAvailable" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.HybridAiClientTests.GetOnlineLearningStatsAsync_ForwardsPythonStats" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="c70bfa45-4d2b-7694-7213-71e45d0a5308">
+      <Execution id="0dd943f0-30b5-4d00-8aae-54c886ed4f5f" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.HybridAiClientTests" name="GetOnlineLearningStatsAsync_ForwardsPythonStats" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.CSharpAiClientTests.ProcessDocumentAsync_ComprobanteTelmex_ExtractsDueDateAndTotal" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="bac45528-0e5e-0233-a8fb-45e02529ada5">
+      <Execution id="4ba2e403-9615-4ea2-b2f7-f6a4558dc6d6" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.CSharpAiClientTests" name="ProcessDocumentAsync_ComprobanteTelmex_ExtractsDueDateAndTotal" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.DocumentsControllerEndpointExportTests.ExportExcel_ReturnsXlsxWithDerivedValuesFromTablaCeldas" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="0b5355d2-2242-4e74-135e-7ac643ffabf6">
+      <Execution id="1540c2c8-20de-4103-b32b-70cf90f3e68e" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.DocumentsControllerEndpointExportTests" name="ExportExcel_ReturnsXlsxWithDerivedValuesFromTablaCeldas" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.HybridAiClientTests.ProcessDocumentAsync_FacturaPolicy_OnlyKeepsTablaCeldas" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="0be3e974-e368-1933-d870-ca9fd8237e2d">
+      <Execution id="3e774d89-3193-49ba-8841-02534681ebc5" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.HybridAiClientTests" name="ProcessDocumentAsync_FacturaPolicy_OnlyKeepsTablaCeldas" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.CSharpAiClientTests.ProcessTextAsync_UsesCanonicalFieldKeys_ForDomicilioAndBank" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="30c13fd5-aaa6-37c7-7d81-e24f0e04eeca">
+      <Execution id="b95aa273-e0d6-4b86-b837-9bd3b4a338a7" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.CSharpAiClientTests" name="ProcessTextAsync_UsesCanonicalFieldKeys_ForDomicilioAndBank" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.DocumentsControllerExportTests.BuildRtf_UsesMappedFieldsFromTablaCeldas" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="18467b25-d780-ea0a-c0b4-7ba7e17d78c8">
+      <Execution id="269791e2-f474-458f-9535-c28b2514b2d4" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.DocumentsControllerExportTests" name="BuildRtf_UsesMappedFieldsFromTablaCeldas" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.CSharpAiClientTests.ProcessTextAsync_Acta_DoesNotCaptureLabelNoiseInCriticalFields" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="438209dc-855a-6f86-2ace-4ec334838e66">
+      <Execution id="50f63170-23d9-4d98-a275-da29582081f1" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.CSharpAiClientTests" name="ProcessTextAsync_Acta_DoesNotCaptureLabelNoiseInCriticalFields" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.DocumentsControllerExportTests.BuildXlsx_RemovesNoiseRowsFromStructuredTables" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="07bc7b5c-8de4-f19e-abcf-4702e43e7f0e">
+      <Execution id="ffb0d883-d84e-48c2-b27a-e9391e9f385b" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.DocumentsControllerExportTests" name="BuildXlsx_RemovesNoiseRowsFromStructuredTables" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.DocumentsControllerExportTests.BuildXlsx_UsesMappedFieldsFromTablaCeldas" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="8485dda9-5517-3fed-b02d-fe5de83839d1">
+      <Execution id="03aa9e4d-f11f-4ef0-bb2d-4c9f175f796d" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.DocumentsControllerExportTests" name="BuildXlsx_UsesMappedFieldsFromTablaCeldas" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.DocumentServiceTests.UpdateFieldsAsync_MarksFieldAsCorrectedAndReady" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="818ed259-9614-9e38-67dd-48549eb35b7d">
+      <Execution id="4216939f-5bdf-47a2-9f66-2a2f3ccb31d0" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.DocumentServiceTests" name="UpdateFieldsAsync_MarksFieldAsCorrectedAndReady" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.HybridAiClientTests.ProcessDocumentAsync_FacturaMerge_PrefersStructuredPythonTableWhenCSharpTableIsNoisy" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="b6c89681-daf9-697b-df37-690b7987c973">
+      <Execution id="7b704c81-28ba-4e51-9b6f-66e40825c7c8" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.HybridAiClientTests" name="ProcessDocumentAsync_FacturaMerge_PrefersStructuredPythonTableWhenCSharpTableIsNoisy" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.DocumentServiceTests.ProcessNowAsync_WhenReadyResponse_PersistsFieldsAndMarksReady" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="8c491a2d-4a46-274b-c29e-a6693b70c3b9">
+      <Execution id="09146b92-2165-4ae9-999a-c7d971f1d76f" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.DocumentServiceTests" name="ProcessNowAsync_WhenReadyResponse_PersistsFieldsAndMarksReady" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.DocumentsControllerEndpointExportTests.ExportEndpoints_ReturnNotFound_WhenDocumentDoesNotExist" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="6ab1e23b-97c5-91db-d60d-0bb3400eaf3b">
+      <Execution id="d3b160f9-61d5-4724-a090-df02e534c2f2" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.DocumentsControllerEndpointExportTests" name="ExportEndpoints_ReturnNotFound_WhenDocumentDoesNotExist" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.DocumentsControllerEndpointExportTests.ExportExcel_RemovesNoiseRowsFromStructuredTables" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="8792ff7f-7ef4-c8e7-3b7e-28842c39dc07">
+      <Execution id="609520d7-bfe3-4cc6-9614-f6768c9dafa9" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.DocumentsControllerEndpointExportTests" name="ExportExcel_RemovesNoiseRowsFromStructuredTables" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.DocumentsControllerExportTests.BuildRtf_RemovesNoiseRowsFromStructuredTables" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="18c38499-6742-da07-3971-c1145096f51f">
+      <Execution id="24825f68-7e69-4c51-a594-6194eab9eafc" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.DocumentsControllerExportTests" name="BuildRtf_RemovesNoiseRowsFromStructuredTables" />
+    </UnitTest>
+    <UnitTest name="Infrastructure.Tests.HybridAiClientTests.ProcessDocumentAsync_Acta_PrefersPythonWhenReady" storage="c:\xampp\htdocs\sistema i.l.c.d.ia\backend-dotnet\tests\infrastructure.tests\bin\debug\net8.0\infrastructure.tests.dll" id="2d9b8ddc-8998-677b-6e0a-5874c0ed6da8">
+      <Execution id="e2c70d97-dd08-4533-821f-7e4c9979dc50" />
+      <TestMethod codeBase="C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\bin\Debug\net8.0\Infrastructure.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="Infrastructure.Tests.HybridAiClientTests" name="ProcessDocumentAsync_Acta_PrefersPythonWhenReady" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="2ff66587-91a9-cc5c-1742-bd7ebcdd4b5e" executionId="a71a77ad-4479-4efd-9035-de7042b8099d" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="18c38499-6742-da07-3971-c1145096f51f" executionId="24825f68-7e69-4c51-a594-6194eab9eafc" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="d6d2afe3-df4e-fe29-5397-e9cfe2f9b069" executionId="cad96525-1583-4e40-90fd-4e7f188190da" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="438209dc-855a-6f86-2ace-4ec334838e66" executionId="50f63170-23d9-4d98-a275-da29582081f1" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="18467b25-d780-ea0a-c0b4-7ba7e17d78c8" executionId="269791e2-f474-458f-9535-c28b2514b2d4" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="30c13fd5-aaa6-37c7-7d81-e24f0e04eeca" executionId="b95aa273-e0d6-4b86-b837-9bd3b4a338a7" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1249b473-e869-5273-efc0-403c756f3a73" executionId="33c41d19-4ce1-4498-acb9-c65f41649dbd" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="6ab1e23b-97c5-91db-d60d-0bb3400eaf3b" executionId="d3b160f9-61d5-4724-a090-df02e534c2f2" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="0be3e974-e368-1933-d870-ca9fd8237e2d" executionId="3e774d89-3193-49ba-8841-02534681ebc5" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="818ed259-9614-9e38-67dd-48549eb35b7d" executionId="4216939f-5bdf-47a2-9f66-2a2f3ccb31d0" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="2a4156d9-b07a-1e18-689a-59808a8888e0" executionId="29e244be-3d7f-4199-9897-6434f14aee2c" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="9f7feba4-6051-2a61-d1b1-7744b2fb1028" executionId="872f64d0-9434-4109-a7f0-beee6f6e1747" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="c70bfa45-4d2b-7694-7213-71e45d0a5308" executionId="0dd943f0-30b5-4d00-8aae-54c886ed4f5f" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="8792ff7f-7ef4-c8e7-3b7e-28842c39dc07" executionId="609520d7-bfe3-4cc6-9614-f6768c9dafa9" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="2d9b8ddc-8998-677b-6e0a-5874c0ed6da8" executionId="e2c70d97-dd08-4533-821f-7e4c9979dc50" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="bac45528-0e5e-0233-a8fb-45e02529ada5" executionId="4ba2e403-9615-4ea2-b2f7-f6a4558dc6d6" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="728de658-c8f8-c0db-41b2-fefa44730605" executionId="2d1e9a79-1351-4c4c-a1b6-7d5052519c1e" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="b6c89681-daf9-697b-df37-690b7987c973" executionId="7b704c81-28ba-4e51-9b6f-66e40825c7c8" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="e7a05bf4-1ec1-7f29-cb51-ea4c67902896" executionId="ac1036db-7a26-41eb-b59a-395fc1d03674" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="8c491a2d-4a46-274b-c29e-a6693b70c3b9" executionId="09146b92-2165-4ae9-999a-c7d971f1d76f" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="e630ba66-ae09-b784-3c8f-d1f2f2eddc00" executionId="ac885c2d-a5cf-4631-b19d-c76211f61871" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="8f7fbb89-5958-55ef-53d2-a0a36e50429e" executionId="d8bdf39e-a6f1-413f-845f-26210e59cb6a" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="8485dda9-5517-3fed-b02d-fe5de83839d1" executionId="03aa9e4d-f11f-4ef0-bb2d-4c9f175f796d" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="2b4c136c-19a3-4200-bc06-f6238edcc0d7" executionId="f43622bb-b859-4116-a2e7-7e1d18e37793" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="0b5355d2-2242-4e74-135e-7ac643ffabf6" executionId="1540c2c8-20de-4103-b32b-70cf90f3e68e" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="07bc7b5c-8de4-f19e-abcf-4702e43e7f0e" executionId="ffb0d883-d84e-48c2-b27a-e9391e9f385b" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Resultados sin formato de lista" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="Todos los resultados cargados" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="26" executed="26" passed="21" failed="5" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.24)&#xD;
+[xUnit.net 00:00:00.08]   Discovering: Infrastructure.Tests&#xD;
+[xUnit.net 00:00:00.11]   Discovered:  Infrastructure.Tests&#xD;
+[xUnit.net 00:00:00.12]   Starting:    Infrastructure.Tests&#xD;
+[xUnit.net 00:00:00.19]       Assert.NotNull() Failure: Value is null&#xD;
+[xUnit.net 00:00:00.19]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.19]         C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\DocumentsControllerExportTests.cs(194,0): at Infrastructure.Tests.DocumentsControllerExportTests.InvokeBuildXlsx(DocumentDetailDto detail)&#xD;
+[xUnit.net 00:00:00.19]         C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\DocumentsControllerExportTests.cs(108,0): at Infrastructure.Tests.DocumentsControllerExportTests.BuildXlsx_RemovesNoiseRowsFromStructuredTables()&#xD;
+[xUnit.net 00:00:00.19]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)&#xD;
+[xUnit.net 00:00:00.19]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)&#xD;
+[xUnit.net 00:00:00.20]       Assert.NotNull() Failure: Value is null&#xD;
+[xUnit.net 00:00:00.20]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.20]         C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\DocumentsControllerExportTests.cs(186,0): at Infrastructure.Tests.DocumentsControllerExportTests.InvokeBuildRtf(DocumentDetailDto detail)&#xD;
+[xUnit.net 00:00:00.20]         C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\DocumentsControllerExportTests.cs(18,0): at Infrastructure.Tests.DocumentsControllerExportTests.BuildRtf_UsesMappedFieldsFromTablaCeldas()&#xD;
+[xUnit.net 00:00:00.20]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)&#xD;
+[xUnit.net 00:00:00.20]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)&#xD;
+[xUnit.net 00:00:00.20]       Assert.NotNull() Failure: Value is null&#xD;
+[xUnit.net 00:00:00.20]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.20]         C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\DocumentsControllerExportTests.cs(186,0): at Infrastructure.Tests.DocumentsControllerExportTests.InvokeBuildRtf(DocumentDetailDto detail)&#xD;
+[xUnit.net 00:00:00.20]         C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\DocumentsControllerExportTests.cs(94,0): at Infrastructure.Tests.DocumentsControllerExportTests.BuildRtf_RemovesNoiseRowsFromStructuredTables()&#xD;
+[xUnit.net 00:00:00.20]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)&#xD;
+[xUnit.net 00:00:00.20]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)&#xD;
+[xUnit.net 00:00:00.20]       Assert.NotNull() Failure: Value is null&#xD;
+[xUnit.net 00:00:00.20]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.20]         C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\DocumentsControllerExportTests.cs(194,0): at Infrastructure.Tests.DocumentsControllerExportTests.InvokeBuildXlsx(DocumentDetailDto detail)&#xD;
+[xUnit.net 00:00:00.20]         C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\DocumentsControllerExportTests.cs(46,0): at Infrastructure.Tests.DocumentsControllerExportTests.BuildXlsx_UsesMappedFieldsFromTablaCeldas()&#xD;
+[xUnit.net 00:00:00.20]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)&#xD;
+[xUnit.net 00:00:00.20]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)&#xD;
+[xUnit.net 00:00:00.20]       Assert.NotNull() Failure: Value is null&#xD;
+[xUnit.net 00:00:00.20]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.20]         C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\DocumentsControllerExportTests.cs(194,0): at Infrastructure.Tests.DocumentsControllerExportTests.InvokeBuildXlsx(DocumentDetailDto detail)&#xD;
+[xUnit.net 00:00:00.20]         C:\xampp\htdocs\Sistema I.L.C.D.IA\backend-dotnet\tests\Infrastructure.Tests\DocumentsControllerExportTests.cs(147,0): at Infrastructure.Tests.DocumentsControllerExportTests.BuildXlsx_PrefersCanonicalRowsWhenAvailable()&#xD;
+[xUnit.net 00:00:00.20]            at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)&#xD;
+[xUnit.net 00:00:00.20]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)&#xD;
+[xUnit.net 00:00:01.08]   Finished:    Infrastructure.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="LAPTOP-4ROKIV6S" outcome="Error" timestamp="2026-03-02T11:44:00.3167855-06:00">
+        <Text>[xUnit.net 00:00:00.19]     Infrastructure.Tests.DocumentsControllerExportTests.BuildXlsx_RemovesNoiseRowsFromStructuredTables [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="LAPTOP-4ROKIV6S" outcome="Error" timestamp="2026-03-02T11:44:00.3245766-06:00">
+        <Text>[xUnit.net 00:00:00.20]     Infrastructure.Tests.DocumentsControllerExportTests.BuildRtf_UsesMappedFieldsFromTablaCeldas [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="LAPTOP-4ROKIV6S" outcome="Error" timestamp="2026-03-02T11:44:00.3253784-06:00">
+        <Text>[xUnit.net 00:00:00.20]     Infrastructure.Tests.DocumentsControllerExportTests.BuildRtf_RemovesNoiseRowsFromStructuredTables [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="LAPTOP-4ROKIV6S" outcome="Error" timestamp="2026-03-02T11:44:00.3257726-06:00">
+        <Text>[xUnit.net 00:00:00.20]     Infrastructure.Tests.DocumentsControllerExportTests.BuildXlsx_UsesMappedFieldsFromTablaCeldas [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="LAPTOP-4ROKIV6S" outcome="Error" timestamp="2026-03-02T11:44:00.3261966-06:00">
+        <Text>[xUnit.net 00:00:00.20]     Infrastructure.Tests.DocumentsControllerExportTests.BuildXlsx_PrefersCanonicalRowsWhenAvailable [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

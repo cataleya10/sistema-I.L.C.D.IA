@@ -1,9 +1,8 @@
-using Api.Controllers;
 using Application.DTOs;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using Domain.Enums;
-using System.Reflection;
+using Infrastructure.Services;
 using Xunit;
 
 namespace Infrastructure.Tests;
@@ -182,18 +181,14 @@ public class DocumentsControllerExportTests
 
     private static string InvokeBuildRtf(DocumentDetailDto detail)
     {
-        var method = typeof(DocumentsController).GetMethod("BuildRtf", BindingFlags.NonPublic | BindingFlags.Static);
-        Assert.NotNull(method);
-        var result = method!.Invoke(null, new object[] { detail });
-        return Assert.IsType<string>(result);
+        var service = new DocumentExportService();
+        return service.BuildRtf(detail);
     }
 
     private static byte[] InvokeBuildXlsx(DocumentDetailDto detail)
     {
-        var method = typeof(DocumentsController).GetMethod("BuildXlsx", BindingFlags.NonPublic | BindingFlags.Static);
-        Assert.NotNull(method);
-        var result = method!.Invoke(null, new object[] { detail });
-        return Assert.IsType<byte[]>(result);
+        var service = new DocumentExportService();
+        return service.BuildXlsx(detail);
     }
 
     private static string ReadCellText(Cell cell)

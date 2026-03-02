@@ -4,6 +4,7 @@ using Application.Interfaces;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using Domain.Enums;
+using Infrastructure.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Shared.Options;
@@ -221,6 +222,7 @@ public class DocumentsControllerEndpointExportTests
         return new DocumentsController(
             new FakeDocumentService(detail),
             new FakePythonAiClient(),
+            new DocumentExportService(),
             Options.Create(new UploadOptions()));
     }
 

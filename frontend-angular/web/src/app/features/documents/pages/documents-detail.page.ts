@@ -7,6 +7,9 @@ import { StatusBadgeComponent } from '../../../shared/components/status-badge.co
 import { DocumentsService } from '../services/documents.service';
 import { DocumentDetail, getDocumentTypeLabel, ProcessingLog } from '../../../shared/models/document.models';
 import { ToastNotificationComponent } from '../../../shared/components/toast-notification.component';
+import { ReplicaCalibrationPanelComponent } from '../../../shared/components/replica-calibration-panel.component';
+import { CellsTableComponent } from '../../../shared/components/cells-table.component';
+import { PaymentDetailComponent } from '../../../shared/components/payment-detail.component';
 import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
 import {
   TableLayoutMode,
@@ -40,7 +43,10 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
     DocumentViewerComponent,
     StatusBadgeComponent,
     RouterLink,
-    ToastNotificationComponent
+    ToastNotificationComponent,
+    ReplicaCalibrationPanelComponent,
+    CellsTableComponent,
+    PaymentDetailComponent
   ],
   template: `
     <section class="page" *ngIf="document; else loading">
@@ -103,7 +109,7 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
               </tr>
             </thead>
             <tbody>
-              <tr *ngFor="let field of displayFields">
+              <tr *ngFor="let field of displayFields; trackBy: trackByFieldKey">
                 <td>{{ field.label }}</td>
                 <td>
                   <ng-container *ngIf="!editMode; else editField">
@@ -111,11 +117,11 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
                       <ng-container *ngIf="replicaLayoutForField(field) as layout">
                         <div class="pdf-layout-wrap" [ngClass]="'preset-' + layout.preset" *ngIf="layout.pages.length; else plainValue">
                           <p class="bank-chip">Banco detectado: {{ layout.detectedBankLabel }}</p>
-                          <article class="pdf-layout-page" *ngFor="let page of layout.pages">
+                          <article class="pdf-layout-page" *ngFor="let page of layout.pages; trackBy: trackByIndex">
                             <div class="pdf-layout-canvas" [style.paddingBottom.%]="page.aspectRatio">
                               <span
                                 class="pdf-layout-line"
-                                *ngFor="let line of page.lines"
+                                *ngFor="let line of page.lines; trackBy: trackByIndex"
                                 [style.left.%]="line.leftPct"
                                 [style.top.%]="line.topPct"
                                 [style.width.%]="line.widthPct"
@@ -140,7 +146,7 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
                         <div class="payment-detail">
                           <p class="payment-detail__bank">Banco: {{ paymentDetail.bank }}</p>
                           <div class="payment-detail__meta" *ngIf="paymentDetail.metadataEntries.length">
-                            <p class="payment-detail__meta-item" *ngFor="let meta of paymentDetail.metadataEntries">
+                            <p class="payment-detail__meta-item" *ngFor="let meta of paymentDetail.metadataEntries; trackBy: trackByMetaKey">
                               <strong>{{ meta.key }}:</strong> {{ meta.value }}
                             </p>
                           </div>
@@ -148,28 +154,28 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
                             <table class="cells-table">
                               <thead *ngIf="paymentDetail.canonicalColumns.length">
                                 <tr>
-                                  <th *ngFor="let col of paymentDetail.canonicalColumns">{{ col }}</th>
+                                  <th *ngFor="let col of paymentDetail.canonicalColumns; trackBy: trackByIndex">{{ col }}</th>
                                 </tr>
                               </thead>
                               <tbody>
-                                <tr *ngFor="let row of paymentDetail.canonicalRows; let rowIndex = index" [class.alt]="rowIndex % 2 === 1">
-                                  <td *ngFor="let cell of row">{{ cell }}</td>
+                                <tr *ngFor="let row of paymentDetail.canonicalRows; let rowIndex = index; trackBy: trackByIndex" [class.alt]="rowIndex % 2 === 1">
+                                  <td *ngFor="let cell of row; trackBy: trackByIndex">{{ cell }}</td>
                                 </tr>
                               </tbody>
                             </table>
                           </div>
-                          <div class="payment-detail__summary" *ngFor="let summary of paymentDetail.summaryTables">
+                          <div class="payment-detail__summary" *ngFor="let summary of paymentDetail.summaryTables; trackBy: trackBySummaryTitle">
                             <p class="payment-detail__summary-title">{{ summary.title }}</p>
                             <div class="cells-table-wrap">
                               <table class="cells-table">
                                 <thead *ngIf="summary.columns.length">
                                   <tr>
-                                    <th *ngFor="let col of summary.columns">{{ col }}</th>
+                                    <th *ngFor="let col of summary.columns; trackBy: trackByIndex">{{ col }}</th>
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  <tr *ngFor="let row of summary.rows; let rowIndex = index" [class.alt]="rowIndex % 2 === 1">
-                                    <td *ngFor="let cell of row">{{ cell }}</td>
+                                  <tr *ngFor="let row of summary.rows; let rowIndex = index; trackBy: trackByIndex" [class.alt]="rowIndex % 2 === 1">
+                                    <td *ngFor="let cell of row; trackBy: trackByIndex">{{ cell }}</td>
                                   </tr>
                                 </tbody>
                               </table>
@@ -184,13 +190,13 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
                         <div class="cells-table-wrap" *ngIf="tableView.bodyRows.length; else plainValue">
                           <table class="cells-table">
                             <thead *ngIf="tableView.headerRows.length">
-                              <tr *ngFor="let row of tableView.headerRows">
-                                <th *ngFor="let cell of row">{{ cell }}</th>
+                              <tr *ngFor="let row of tableView.headerRows; trackBy: trackByIndex">
+                                <th *ngFor="let cell of row; trackBy: trackByIndex">{{ cell }}</th>
                               </tr>
                             </thead>
                             <tbody>
-                              <tr *ngFor="let row of tableView.bodyRows; let rowIndex = index" [class.alt]="rowIndex % 2 === 1">
-                                <td *ngFor="let cell of row">{{ cell }}</td>
+                              <tr *ngFor="let row of tableView.bodyRows; let rowIndex = index; trackBy: trackByIndex" [class.alt]="rowIndex % 2 === 1">
+                                <td *ngFor="let cell of row; trackBy: trackByIndex">{{ cell }}</td>
                               </tr>
                             </tbody>
                           </table>
@@ -207,8 +213,8 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
                           <div class="cells-table-wrap">
                             <table class="cells-table">
                               <tbody>
-                                <tr *ngFor="let row of tdt.rows; let i = index" [class.alt]="i % 2 === 1">
-                                  <td *ngFor="let cell of row">{{ cell }}</td>
+                                <tr *ngFor="let row of tdt.rows; let i = index; trackBy: trackByIndex" [class.alt]="i % 2 === 1">
+                                  <td *ngFor="let cell of row; trackBy: trackByIndex">{{ cell }}</td>
                                 </tr>
                               </tbody>
                             </table>
@@ -260,13 +266,13 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
         <div class="cells-table-wrap">
           <table class="cells-table" [ngClass]="{ 'report-mode': tableRenderMode === 'report' }">
             <thead *ngIf="tableView.headerRows.length">
-              <tr *ngFor="let row of tableView.headerRows">
-                <th *ngFor="let cell of row">{{ cell }}</th>
+              <tr *ngFor="let row of tableView.headerRows; trackBy: trackByIndex">
+                <th *ngFor="let cell of row; trackBy: trackByIndex">{{ cell }}</th>
               </tr>
             </thead>
             <tbody>
-              <tr *ngFor="let row of tableView.bodyRows; let rowIndex = index" [class.alt]="rowIndex % 2 === 1">
-                <td *ngFor="let cell of row">{{ cell }}</td>
+              <tr *ngFor="let row of tableView.bodyRows; let rowIndex = index; trackBy: trackByIndex" [class.alt]="rowIndex % 2 === 1">
+                <td *ngFor="let cell of row; trackBy: trackByIndex">{{ cell }}</td>
               </tr>
             </tbody>
           </table>
@@ -285,8 +291,8 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
             <div class="cells-table-wrap">
               <table class="cells-table">
                 <tbody>
-                  <tr *ngFor="let row of tdt.rows; let i = index" [class.alt]="i % 2 === 1">
-                    <td *ngFor="let cell of row">{{ cell }}</td>
+                  <tr *ngFor="let row of tdt.rows; let i = index; trackBy: trackByIndex" [class.alt]="i % 2 === 1">
+                    <td *ngFor="let cell of row; trackBy: trackByIndex">{{ cell }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -295,70 +301,25 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
         </ng-container>
       </ng-container>
 
-      <section class="calibration-panel">
-        <div class="calibration-panel__header">
-          <h3>Calibracion replica PDF</h3>
-          <p>Ajusta escala/margenes por banco y guarda localmente.</p>
-          <p class="calibration-status">Banco detectado: {{ detectedBankLabel() }}</p>
-        </div>
-        <div class="calibration-panel__controls">
-          <label>
-            Preset
-            <select [(ngModel)]="selectedReplicaPreset" (ngModelChange)="onReplicaPresetChange()">
-              <option *ngFor="let preset of replicaPresetOptions" [ngValue]="preset">{{ preset }}</option>
-            </select>
-          </label>
-          <label>
-            Scale X
-            <input type="number" step="0.005" [(ngModel)]="calibrationForm.scaleX" />
-          </label>
-          <label>
-            Scale Y
-            <input type="number" step="0.005" [(ngModel)]="calibrationForm.scaleY" />
-          </label>
-          <label>
-            Offset X
-            <input type="number" step="0.1" [(ngModel)]="calibrationForm.offsetX" />
-          </label>
-          <label>
-            Offset Y
-            <input type="number" step="0.1" [(ngModel)]="calibrationForm.offsetY" />
-          </label>
-          <label>
-            Aspect Shift
-            <input type="number" step="0.1" [(ngModel)]="calibrationForm.aspectShift" />
-          </label>
-          <label>
-            Font Scale
-            <input type="number" step="0.01" [(ngModel)]="calibrationForm.fontScale" />
-          </label>
-          <label>
-            Line Height
-            <input type="text" [(ngModel)]="calibrationForm.lineHeight" />
-          </label>
-        </div>
-        <div class="calibration-panel__actions">
-          <button type="button" class="ghost" (click)="applyReplicaCalibration()">Aplicar calibracion</button>
-          <button type="button" class="ghost" (click)="resetReplicaCalibrationPreset()">Reset preset</button>
-          <button type="button" class="ghost" (click)="resetReplicaCalibrationAll()">Reset total</button>
-          <button type="button" class="ghost" (click)="exportReplicaCalibration()">Exportar JSON</button>
-          <button type="button" class="ghost" (click)="replicaImportInput.click()">Importar JSON</button>
-          <input
-            #replicaImportInput
-            class="calibration-file"
-            type="file"
-            accept="application/json,.json"
-            (change)="importReplicaCalibration($event)"
-          />
-        </div>
-        <p class="calibration-status" *ngIf="calibrationStatus">{{ calibrationStatus }}</p>
-      </section>
+      <app-replica-calibration-panel
+        [presetOptions]="replicaPresetOptions"
+        [selectedPreset]="selectedReplicaPreset"
+        [form]="calibrationForm"
+        [status]="calibrationStatus"
+        [detectedBankLabel]="detectedBankLabel()"
+        (presetChange)="selectedReplicaPreset = $event; onReplicaPresetChange()"
+        (apply)="applyReplicaCalibration()"
+        (resetPreset)="resetReplicaCalibrationPreset()"
+        (resetAll)="resetReplicaCalibrationAll()"
+        (exportJson)="exportReplicaCalibration()"
+        (importJson)="importReplicaCalibration($event)"
+      ></app-replica-calibration-panel>
 
       <details class="logs">
         <summary>Ver logs</summary>
         <p class="warning" *ngIf="hasWarnings">Se detectaron advertencias en el procesamiento.</p>
         <p class="warning" *ngIf="missingCritical.length">Campos criticos faltantes: {{ missingCritical.join(', ') }}</p>
-        <div class="log" *ngFor="let log of logs">
+        <div class="log" *ngFor="let log of logs; trackBy: trackByIndex">
           <span class="tag">{{ log.stage }}</span>
           <span class="level" [ngClass]="levelClass(log.level)">{{ log.level }}</span>
           <span class="message">{{ log.message }}</span>
@@ -1850,5 +1811,10 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
     }
     return '';
   }
+
+  trackByIndex(index: number): number { return index; }
+  trackByFieldKey(_: number, f: { key: string }): string { return f.key; }
+  trackByMetaKey(_: number, m: { key: string }): string { return m.key; }
+  trackBySummaryTitle(_: number, s: { title: string }): string { return s.title; }
 }
 

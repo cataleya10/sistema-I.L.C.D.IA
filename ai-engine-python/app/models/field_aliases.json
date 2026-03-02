@@ -57,7 +57,9 @@
   "total": [
     "TOTAL",
     "TOTAL A PAGAR",
-    "IMPORTE TOTAL"
+    "IMPORTE TOTAL",
+    "PAGAR",
+    "TOTALA PAGAR"
   ],
   "cp": [
     "CODIGO POSTAL",

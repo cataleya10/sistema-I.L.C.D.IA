@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.env
+logs/
+reports/
+tests/
+tools/
+pytest-cache-files-*/
+svc_out.txt
+svc_err.txt
+*.egg-info/
+.mypy_cache/
+.pytest_cache/

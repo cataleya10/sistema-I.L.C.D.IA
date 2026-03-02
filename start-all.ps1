@@ -71,7 +71,7 @@ function Invoke-AiPreflight {
         if (-not (Test-Path $venvPython)) {
             $venvPython = "py -3"
         }
-        & $venvPython -c "import ast, pathlib; ast.parse(pathlib.Path('app/pipelines/extract.py').read_text(encoding='utf-8-sig')); print('extract.py syntax ok')"
+        & $venvPython -c "import ast, pathlib; [ast.parse(p.read_text(encoding='utf-8-sig')) for p in pathlib.Path('app/pipelines/extract').glob('*.py')]; print('extract package syntax ok')"
         if ($LASTEXITCODE -ne 0) {
             throw "Python compile check failed."
         }

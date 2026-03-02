@@ -37,6 +37,7 @@ public static class DependencyInjection
         services.AddSingleton<IProcessingQueue, DocumentProcessingQueue>();
         services.AddSingleton<IProcessingTracker, ProcessingTracker>();
         services.AddScoped<IDocumentService, DocumentService>();
+        services.AddSingleton<IDocumentExportService, DocumentExportService>();
         services.AddScoped<CSharpAiClient>();
         services.AddHttpClient<PythonAiClient>();
 

@@ -25,11 +25,11 @@ import {
         <input type="text" [(ngModel)]="query.q" placeholder="Buscar por nombre" aria-label="Buscar por nombre" />
         <select [(ngModel)]="query.status" aria-label="Filtrar por estado">
           <option value="">Estado</option>
-          <option *ngFor="let status of statusOptions" [value]="status">{{ status }}</option>
+          <option *ngFor="let status of statusOptions; trackBy: trackByIndex" [value]="status">{{ status }}</option>
         </select>
         <select [(ngModel)]="query.type" aria-label="Filtrar por tipo">
           <option value="">Tipo</option>
-          <option *ngFor="let type of typeOptions" [value]="type">{{ typeLabel(type) }}</option>
+          <option *ngFor="let type of typeOptions; trackBy: trackByIndex" [value]="type">{{ typeLabel(type) }}</option>
         </select>
         <button type="button" (click)="applyFilters()" [disabled]="isLoading">Filtrar</button>
       </div>
@@ -45,7 +45,7 @@ import {
         <button type="button" class="ghost" (click)="load()">Reintentar</button>
       </div>
       <div class="list" *ngIf="documents.length && !isLoading; else empty">
-        <div class="card" *ngFor="let doc of documents">
+        <div class="card" *ngFor="let doc of documents; trackBy: trackByDocId">
           <a class="card-link" [routerLink]="['/documents', doc.id]">
             <div>
               <h3>{{ doc.original_filename }}</h3>
@@ -338,6 +338,9 @@ export class DocumentsListPage implements OnInit {
     }
     return fallback;
   }
+
+  trackByIndex(index: number): number { return index; }
+  trackByDocId(_: number, doc: DocumentSummary): string { return doc.id; }
 }
 
 

@@ -1,11 +1,5 @@
 import { Routes } from '@angular/router';
-import { DocumentsListPage } from './features/documents/pages/documents-list.page';
-import { DocumentsUploadPage } from './features/documents/pages/documents-upload.page';
-import { DocumentsDetailPage } from './features/documents/pages/documents-detail.page';
-import { DocumentsResultsPage } from './features/documents/pages/documents-results.page';
-import { LoginPage } from './features/documents/pages/login.page';
 import { authGuard } from './core/guards/auth.guard';
-import { SystemMetricsPage } from './features/system/pages/system-metrics.page';
 
 export const routes: Routes = [
 	{
@@ -15,32 +9,32 @@ export const routes: Routes = [
 	},
 	{
 		path: 'documents',
-		component: DocumentsListPage,
+		loadComponent: () => import('./features/documents/pages/documents-list.page').then(m => m.DocumentsListPage),
 		canActivate: [authGuard],
 		pathMatch: 'full'
 	},
 	{
 		path: 'login',
-		component: LoginPage
+		loadComponent: () => import('./features/documents/pages/login.page').then(m => m.LoginPage)
 	},
 	{
 		path: 'documents/upload',
-		component: DocumentsUploadPage,
+		loadComponent: () => import('./features/documents/pages/documents-upload.page').then(m => m.DocumentsUploadPage),
 		canActivate: [authGuard]
 	},
 	{
 		path: 'documents/:id',
-		component: DocumentsDetailPage,
+		loadComponent: () => import('./features/documents/pages/documents-detail.page').then(m => m.DocumentsDetailPage),
 		canActivate: [authGuard]
 	},
 	{
 		path: 'documents/:id/results',
-		component: DocumentsResultsPage,
+		loadComponent: () => import('./features/documents/pages/documents-results.page').then(m => m.DocumentsResultsPage),
 		canActivate: [authGuard]
 	},
 	{
 		path: 'system',
-		component: SystemMetricsPage,
+		loadComponent: () => import('./features/system/pages/system-metrics.page').then(m => m.SystemMetricsPage),
 		canActivate: [authGuard]
 	},
 	{

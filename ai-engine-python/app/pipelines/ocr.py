@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 try:
@@ -65,7 +66,7 @@ async def run_ocr(images: Any) -> tuple[str, list[dict[str, Any]]]:
         result: list[Any] = []
         if ocr is not None:
             try:
-                result = ocr.ocr(image_array, cls=True)
+                result = await asyncio.to_thread(ocr.ocr, image_array, cls=True)
             except Exception:  # pragma: no cover
                 logger.warning("PaddleOCR failed on page %d", page_index, exc_info=True)
                 result = []
@@ -74,7 +75,7 @@ async def run_ocr(images: Any) -> tuple[str, list[dict[str, Any]]]:
             if rapid is None:
                 continue
             try:
-                rapid_result, _ = rapid(image_array)
+                rapid_result, _ = await asyncio.to_thread(rapid, image_array)
             except Exception:  # pragma: no cover
                 logger.warning("RapidOCR failed on page %d", page_index, exc_info=True)
                 continue
