@@ -1796,20 +1796,48 @@ def _extract_generic_all_tables(
     ocr_tables = _extract_all_table_payloads(base_text_raw, ocr_boxes)
     all_tables.extend(ocr_tables)
 
-    # Deduplicate by row_count + column_count + first row content
-    seen: set[str] = set()
-    unique_tables: list[dict] = []
+    # ── Deduplicate tables ──────────────────────────────────────────────
+    # Phase 1: exact signature match (first 6 rows normalised content)
+    seen_sigs: set[str] = set()
+    phase1: list[dict] = []
     for table in all_tables:
         rows = table.get("rows", [])
         if not rows:
             continue
-        fingerprint = f"{len(rows)}x{len(rows[0]) if rows else 0}:{str(rows[0][:3]) if rows else ''}"
-        if fingerprint in seen:
+        sig = _table_rows_signature(rows)
+        if sig and sig in seen_sigs:
             continue
-        seen.add(fingerprint)
-        unique_tables.append(table)
+        if sig:
+            seen_sigs.add(sig)
+        phase1.append(table)
 
-    return unique_tables
+    # Phase 2: fuzzy overlap – if ≥50% of a table's normalised rows already
+    # appear in a previously-accepted table, treat it as a duplicate.
+    def _row_set(tbl: dict) -> set[str]:
+        return {
+            "|".join(_normalize_keyword(str(c or "")) for c in row)
+            for row in tbl.get("rows", [])
+            if isinstance(row, list)
+        }
+
+    accepted: list[dict] = []
+    accepted_rows: list[set[str]] = []
+    for table in phase1:
+        rs = _row_set(table)
+        if not rs:
+            continue
+        is_dup = False
+        for prev_rs in accepted_rows:
+            overlap = len(rs & prev_rs)
+            if overlap >= max(2, len(rs) * 0.5):
+                is_dup = True
+                break
+        if is_dup:
+            continue
+        accepted.append(table)
+        accepted_rows.append(rs)
+
+    return accepted
 
 
 __all__ = _export_all()
