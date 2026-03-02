@@ -1852,33 +1852,6 @@ def _extract_generic_all_tables(
 
     logger.info("[DEDUP] Phase2: %d → %d tables (final)", len(phase1), len(accepted))
 
-    # ── Phase 3: drop insignificant tables ────────────────────────────
-    # When there are 3+ tables, small tables with very few cells relative
-    # to the largest are often spurious header/title regions mis-detected
-    # as tables.  Keep only tables whose cell count ≥ 25% of the largest.
-    if len(accepted) >= 3:
-        def _cell_count(tbl: dict) -> int:
-            rows = tbl.get("rows", [])
-            return sum(
-                sum(1 for c in row if str(c or "").strip())
-                for row in rows
-                if isinstance(row, list)
-            )
-
-        max_cells = max(_cell_count(t) for t in accepted) if accepted else 0
-        threshold = max(4, int(max_cells * 0.25))
-        filtered = []
-        for t in accepted:
-            cc = _cell_count(t)
-            if cc >= threshold:
-                filtered.append(t)
-            else:
-                logger.info("[DEDUP] Phase3 dropped small table: cells=%d threshold=%d", cc, threshold)
-        if filtered:
-            accepted = filtered
-        logger.info("[DEDUP] Phase3: kept %d of %d tables (max_cells=%d threshold=%d)",
-                    len(accepted), len(phase1), max_cells, threshold)
-
     return accepted
 
 
