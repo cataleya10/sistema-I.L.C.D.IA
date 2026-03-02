@@ -336,6 +336,10 @@ def _extract_generic_tables_from_boxes_impl(ocr_boxes) -> list[dict]:
                 rows = [r[:trim_to] for r in rows]
                 row_cells = [c[:trim_to] for c in row_cells]
 
+        # Column-level Roman numeral correction: fix OCR misreads like
+        # 111→III, 11→II, 1→I, I1→II in columns that contain Roman numerals.
+        rows = _apply_roman_numeral_correction(rows)  # noqa: F405
+
         signature = _table_rows_signature(rows)
         if not signature or signature in seen_signatures:
             continue
@@ -395,6 +399,8 @@ def _extract_generic_tables_from_text_impl(raw_text: str) -> list[dict]:
         if len(current_rows) < 2:
             current_rows = []
             return
+        # Roman numeral correction before signature
+        current_rows = _apply_roman_numeral_correction(current_rows)  # noqa: F405
         signature = _table_rows_signature(current_rows)
         if not signature or signature in seen_signatures:
             current_rows = []

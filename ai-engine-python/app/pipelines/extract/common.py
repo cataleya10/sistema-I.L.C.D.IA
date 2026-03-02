@@ -870,6 +870,114 @@ def _normalize_table_cell_exact(text: str) -> str:
     return cell
 
 
+# ── Roman-numeral OCR correction ──────────────────────────────────────────────
+# PaddleOCR frequently misreads the letter "I" as the digit "1", "l", or "|".
+# This causes Roman numerals like III to appear as 111, I1, 1I, etc.
+# These helpers detect and correct columns that contain Roman numerals.
+
+_ROMAN_I_LIKE = frozenset("1IilL|")
+_VALID_ROMAN_NUMERALS = {
+    "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X",
+    "XI", "XII", "XIII", "XIV", "XV", "XVI", "XVII", "XVIII", "XIX", "XX",
+}
+
+# Column headers that strongly suggest Roman numeral content
+_ROMAN_CONTEXT_KEYWORDS = {
+    "semestre", "nivel", "grado", "periodo", "trimestre", "capitulo",
+    "fase", "etapa", "ciclo", "modulo", "bloque", "unidad", "seccion",
+    "volumen", "tomo", "parte",
+}
+
+
+def _fix_roman_numeral_cell(text: str) -> str:
+    """Convert an OCR-misread Roman numeral back to proper form.
+
+    Examples:
+        "111" → "III", "11" → "II", "1" → "I", "I1" → "II", "1I" → "II"
+        "1V" → "IV", "V1" → "VI", "V111" → "VIII"
+    """
+    s = text.strip()
+    if not s:
+        return text
+
+    # Normalise each character: I-like → I, keep V/X as-is
+    normalised = []
+    for c in s:
+        if c in _ROMAN_I_LIKE:
+            normalised.append("I")
+        elif c.upper() in ("V", "X"):
+            normalised.append(c.upper())
+        else:
+            return text  # Contains non-Roman character → leave untouched
+    roman = "".join(normalised)
+
+    if roman in _VALID_ROMAN_NUMERALS:
+        return roman
+    return text
+
+
+def _is_roman_numeral_column(values: list[str], header: str = "") -> bool:
+    """Check if a column predominantly contains Roman numeral-like values.
+
+    A column is considered Roman if:
+    - The header matches a known context keyword (semestre, nivel, etc.), OR
+    - At least 60% of non-empty data values look like misread Roman numerals
+      (composed only of 1, I, l, |, V, X characters) and are 1-5 chars long.
+    """
+    header_lower = header.strip().lower()
+    header_match = any(kw in header_lower for kw in _ROMAN_CONTEXT_KEYWORDS)
+
+    non_empty = [v.strip() for v in values if v.strip()]
+    if not non_empty:
+        return header_match  # If header matches but no data, still apply
+
+    roman_like = 0
+    for v in non_empty:
+        if len(v) > 5:
+            continue  # Roman numerals up to XX are at most 5 chars
+        if all(c in _ROMAN_I_LIKE or c.upper() in ("V", "X") for c in v):
+            roman_like += 1
+
+    # Require majority of values to look Roman, or header context match
+    ratio = roman_like / len(non_empty) if non_empty else 0
+    if header_match and roman_like >= 1:
+        return True
+    return ratio >= 0.6 and roman_like >= 2
+
+
+def _apply_roman_numeral_correction(rows: list[list[str]]) -> list[list[str]]:
+    """Apply column-level Roman numeral correction to table rows.
+
+    For each column, if the data values look like misread Roman numerals,
+    convert all matching cells to proper Roman form.
+    """
+    if len(rows) < 2:
+        return rows
+
+    num_cols = max((len(r) for r in rows), default=0)
+    if num_cols == 0:
+        return rows
+
+    # Check each column independently
+    for col_idx in range(num_cols):
+        # Gather header and data values
+        header = rows[0][col_idx] if col_idx < len(rows[0]) else ""
+        data_values = [
+            r[col_idx] if col_idx < len(r) else ""
+            for r in rows[1:]
+        ]
+
+        if _is_roman_numeral_column(data_values, header):
+            # Apply correction to data rows (skip header row)
+            for row_idx in range(1, len(rows)):
+                if col_idx < len(rows[row_idx]):
+                    rows[row_idx][col_idx] = _fix_roman_numeral_cell(
+                        rows[row_idx][col_idx]
+                    )
+
+    return rows
+
+
 def _table_rows_signature(rows: list[list[str]]) -> str:
     parts: list[str] = []
     for row in rows[:6]:
