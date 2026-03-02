@@ -388,7 +388,9 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                     )
                 )
 
-    if not any(str(field.get("key", "") or "") == "tabla_celdas" for field in fields):
+    # Skip payment-table fallback for GENERICO — the dedicated GENERICO
+    # block below handles comprehensive table extraction and would duplicate.
+    if not any(str(field.get("key", "") or "") == "tabla_celdas" for field in fields) and document_type != "GENERICO":
         payment_table = _extract_payment_table_payload(base_text_raw, ocr_boxes, pdf_tables)
         payment_detail = _extract_payment_detail_payload(base_text_raw, payment_table)
         payment_table = _enrich_payment_table_payload(payment_table, payment_detail)
