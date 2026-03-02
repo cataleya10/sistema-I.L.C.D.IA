@@ -232,10 +232,10 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
         </div>
       </div>
 
-      <section class="table-panel" [ngClass]="tableLayoutMode" *ngIf="tableView.bodyRows.length">
+      <section class="table-panel" [ngClass]="tableLayoutMode" *ngIf="allTableViews.length">
         <div class="table-panel__header">
           <div class="table-panel__title">
-            <h3>Tabla detectada</h3>
+            <h3>Tablas detectadas</h3>
             <span class="table-mode">{{ tableLayoutLabel() }}</span>
           </div>
           <div class="table-panel__actions">
@@ -245,19 +245,22 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
             <button type="button" class="ghost" (click)="downloadTablePdfReport()">Descargar PDF reporte</button>
           </div>
         </div>
-        <div class="cells-table-wrap">
-          <table class="cells-table" [ngClass]="{ 'report-mode': tableRenderMode === 'report' }">
-            <thead *ngIf="tableView.headerRows.length">
-              <tr *ngFor="let row of tableView.headerRows; trackBy: trackByIndex">
-                <th *ngFor="let cell of row; trackBy: trackByIndex">{{ cell }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr *ngFor="let row of tableView.bodyRows; let rowIndex = index; trackBy: trackByIndex" [class.alt]="rowIndex % 2 === 1">
-                <td *ngFor="let cell of row; trackBy: trackByIndex">{{ cell }}</td>
-              </tr>
-            </tbody>
-          </table>
+        <div *ngFor="let entry of allTableViews; let i = index" class="table-panel__table-block">
+          <h4 class="table-panel__table-label">{{ entry.label }}</h4>
+          <div class="cells-table-wrap">
+            <table class="cells-table" [ngClass]="{ 'report-mode': tableRenderMode === 'report' }">
+              <thead *ngIf="entry.tableView.headerRows.length">
+                <tr *ngFor="let row of entry.tableView.headerRows; trackBy: trackByIndex">
+                  <th *ngFor="let cell of row; trackBy: trackByIndex">{{ cell }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let row of entry.tableView.bodyRows; let rowIndex = index; trackBy: trackByIndex" [class.alt]="rowIndex % 2 === 1">
+                  <td *ngFor="let cell of row; trackBy: trackByIndex">{{ cell }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
 
@@ -437,6 +440,21 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
       }
       .table-panel__header h3 {
         margin: 0;
+      }
+      .table-panel__table-block {
+        display: grid;
+        gap: 8px;
+      }
+      .table-panel__table-block + .table-panel__table-block {
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid #e5e7eb;
+      }
+      .table-panel__table-label {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 600;
+        color: #374151;
       }
       .calibration-panel {
         background: #fff;
@@ -795,6 +813,7 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
     return this.document?.document_type === 'FACTURA';
   }
   tableView: TableViewModel = { headerRows: [], bodyRows: [] };
+  allTableViews: { label: string; tableView: TableViewModel }[] = [];
   tableLayoutMode: TableLayoutMode = 'standard';
   tableRenderMode: 'standard' | 'report' = 'standard';
   replicaPresetOptions: ReplicaPreset[] = ['default', 'scotia', 'bbva'];
@@ -1103,7 +1122,7 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
   }
 
   downloadTableCsv(): void {
-    if (!this.document || this.tableView.bodyRows.length === 0 || this.isDownloading) {
+    if (!this.document || !this.allTableViews.length || this.isDownloading) {
       return;
     }
     this.isDownloading = true;
@@ -1111,7 +1130,7 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
       .replace(/\.[^/.]+$/, '')
       .trim();
     const filename = baseName ? `${baseName}-tabla.csv` : 'documento-tabla.csv';
-    const csvRows = flattenTableView(this.tableView);
+    const csvRows = flattenTableView(this.getMergedTableView());
     const csvContent = buildCsv(csvRows);
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = window.URL.createObjectURL(blob);
@@ -1124,7 +1143,7 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
   }
 
   downloadTableExcel(): void {
-    if (!this.document || this.tableView.bodyRows.length === 0 || this.isDownloading) {
+    if (!this.document || !this.allTableViews.length || this.isDownloading) {
       return;
     }
     this.isDownloading = true;
@@ -1132,7 +1151,7 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
       .replace(/\.[^/.]+$/, '')
       .trim();
     const filename = baseName ? `${baseName}-tabla.xls` : 'documento-tabla.xls';
-    const rows = flattenTableView(this.tableView);
+    const rows = flattenTableView(this.getMergedTableView());
     const xml = buildExcelXml(rows, { reportMode: this.tableRenderMode === 'report' });
     const blob = new Blob([xml], { type: 'application/vnd.ms-excel;charset=utf-8;' });
     const url = window.URL.createObjectURL(blob);
@@ -1145,7 +1164,7 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
   }
 
   downloadTablePdfReport(): void {
-    if (!this.document || this.tableView.bodyRows.length === 0 || this.isDownloading) {
+    if (!this.document || !this.allTableViews.length || this.isDownloading) {
       return;
     }
     this.isDownloading = true;
@@ -1154,7 +1173,7 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
       .trim();
     const filename = baseName ? `${baseName}-tabla.pdf` : 'documento-tabla.pdf';
     const title = `Reporte de tabla - ${this.document.original_filename || 'documento'}`;
-    const bytes = buildTablePdfBytes(title, this.tableView);
+    const bytes = buildTablePdfBytes(title, this.getMergedTableView());
     const buffer = new ArrayBuffer(bytes.byteLength);
     new Uint8Array(buffer).set(bytes);
     const blob = new Blob([buffer], { type: 'application/pdf' });
@@ -1749,10 +1768,33 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
   }
 
   private syncTableRows(): void {
-    const tableField = this.displayFields.find((field) => this.isTableField(field));
-    this.tableView = tableField ? this.tableViewForField(tableField) : { headerRows: [], bodyRows: [] };
+    const tableFields = this.displayFields.filter((field) => this.isTableField(field));
+    this.allTableViews = tableFields
+      .map((field, index) => ({
+        label: field.label || `Tabla detectada #${index + 1}`,
+        tableView: this.tableViewForField(field),
+      }))
+      .filter((entry) => entry.tableView.bodyRows.length > 0);
+    this.tableView = this.allTableViews.length
+      ? this.allTableViews[0].tableView
+      : { headerRows: [], bodyRows: [] };
     this.tableLayoutMode = detectTableLayoutMode(this.tableView);
     this.tableRenderMode = this.tableLayoutMode === 'advanced_nomina' ? 'report' : 'standard';
+  }
+
+  private getMergedTableView(): TableViewModel {
+    if (this.allTableViews.length <= 1) {
+      return this.tableView;
+    }
+    const bodyRows: string[][] = [];
+    for (const entry of this.allTableViews) {
+      if (bodyRows.length > 0) {
+        bodyRows.push([]);
+      }
+      bodyRows.push(...entry.tableView.headerRows);
+      bodyRows.push(...entry.tableView.bodyRows);
+    }
+    return { headerRows: [], bodyRows };
   }
 
   tableLayoutLabel(): string {
