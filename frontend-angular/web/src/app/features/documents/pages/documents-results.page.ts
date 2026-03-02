@@ -28,13 +28,11 @@ import {
 import { parsePaymentDetail, PaymentDetailViewModel } from '../utils/payment-detail';
 import { buildExtractionHtmlDocument } from '../utils/extraction-export';
 import { ReplicaCalibrationPanelComponent } from '../../../shared/components/replica-calibration-panel.component';
-import { CellsTableComponent } from '../../../shared/components/cells-table.component';
-import { PaymentDetailComponent } from '../../../shared/components/payment-detail.component';
 
 @Component({
   selector: 'app-documents-results-page',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, ReplicaCalibrationPanelComponent, CellsTableComponent, PaymentDetailComponent],
+  imports: [CommonModule, FormsModule, RouterLink, ReplicaCalibrationPanelComponent],
   template: `
     <section class="page" *ngIf="document; else loading">
       <header class="page__header">
@@ -227,21 +225,7 @@ import { PaymentDetailComponent } from '../../../shared/components/payment-detai
                 </ng-template>
                 </ng-template>
                 <ng-template #plainValue>
-                  <ng-container *ngIf="field.key === 'texto_detectado'; else inlineText">
-                    <ng-container *ngIf="textoDetectadoTable(field.corrected_value ?? field.value ?? '') as tdt">
-                      <p class="detected-text-title" *ngIf="tdt.title">{{ tdt.title }}</p>
-                      <div class="cells-table-wrap">
-                        <table class="cells-table">
-                          <tbody>
-                            <tr *ngFor="let row of tdt.rows; let i = index; trackBy: trackByIndex" [class.alt]="i % 2 === 1">
-                              <td *ngFor="let cell of row; trackBy: trackByIndex">{{ cell }}</td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    </ng-container>
-                  </ng-container>
-                  <ng-template #inlineText>{{ field.corrected_value ?? field.value ?? '-' }}</ng-template>
+                  {{ field.corrected_value ?? field.value ?? '-' }}
                 </ng-template>
               </td>
               <td>{{ field.confidence | percent: '1.0-0' }}</td>
@@ -282,27 +266,7 @@ import { PaymentDetailComponent } from '../../../shared/components/payment-detai
         </div>
       </section>
 
-      <ng-container *ngIf="textoDetectadoField as tdField">
-        <ng-container *ngIf="textoDetectadoTable(tdField.corrected_value ?? tdField.value ?? '') as tdt">
-          <section class="panel table-panel" *ngIf="tdt.rows.length">
-            <div class="panel__header">
-              <div class="table-panel__title">
-                <h3>Texto detectado</h3>
-                <span class="table-mode" *ngIf="tdt.title">{{ tdt.title }}</span>
-              </div>
-            </div>
-            <div class="cells-table-wrap">
-              <table class="cells-table">
-                <tbody>
-                  <tr *ngFor="let row of tdt.rows; let i = index; trackBy: trackByIndex" [class.alt]="i % 2 === 1">
-                    <td *ngFor="let cell of row; trackBy: trackByIndex">{{ cell }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </ng-container>
-      </ng-container>
+
     </section>
 
     <ng-template #loading>

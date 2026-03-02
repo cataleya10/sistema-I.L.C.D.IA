@@ -8,8 +8,6 @@ import { DocumentsService } from '../services/documents.service';
 import { DocumentDetail, getDocumentTypeLabel, ProcessingLog } from '../../../shared/models/document.models';
 import { ToastNotificationComponent } from '../../../shared/components/toast-notification.component';
 import { ReplicaCalibrationPanelComponent } from '../../../shared/components/replica-calibration-panel.component';
-import { CellsTableComponent } from '../../../shared/components/cells-table.component';
-import { PaymentDetailComponent } from '../../../shared/components/payment-detail.component';
 import { DOCUMENT_FIELD_TEMPLATES } from '../field-templates';
 import {
   TableLayoutMode,
@@ -44,9 +42,7 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
     StatusBadgeComponent,
     RouterLink,
     ToastNotificationComponent,
-    ReplicaCalibrationPanelComponent,
-    CellsTableComponent,
-    PaymentDetailComponent
+    ReplicaCalibrationPanelComponent
   ],
   template: `
     <section class="page" *ngIf="document; else loading">
@@ -207,21 +203,7 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
                     </ng-template>
                     </ng-template>
                     <ng-template #plainValue>
-                      <ng-container *ngIf="field.key === 'texto_detectado'; else inlineText">
-                        <ng-container *ngIf="textoDetectadoTable(field.corrected_value ?? field.value ?? '') as tdt">
-                          <p class="detected-text-title" *ngIf="tdt.title">{{ tdt.title }}</p>
-                          <div class="cells-table-wrap">
-                            <table class="cells-table">
-                              <tbody>
-                                <tr *ngFor="let row of tdt.rows; let i = index; trackBy: trackByIndex" [class.alt]="i % 2 === 1">
-                                  <td *ngFor="let cell of row; trackBy: trackByIndex">{{ cell }}</td>
-                                </tr>
-                              </tbody>
-                            </table>
-                          </div>
-                        </ng-container>
-                      </ng-container>
-                      <ng-template #inlineText>{{ field.corrected_value ?? field.value ?? '-' }}</ng-template>
+                      {{ field.corrected_value ?? field.value ?? '-' }}
                     </ng-template>
                   </ng-container>
                   <ng-template #editField>
@@ -279,27 +261,7 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
         </div>
       </section>
 
-      <ng-container *ngIf="textoDetectadoField as tdField">
-        <ng-container *ngIf="textoDetectadoTable(tdField.corrected_value ?? tdField.value ?? '') as tdt">
-          <section class="table-panel" *ngIf="tdt.rows.length">
-            <div class="table-panel__header">
-              <div class="table-panel__title">
-                <h3>Texto detectado</h3>
-                <span class="table-mode" *ngIf="tdt.title">{{ tdt.title }}</span>
-              </div>
-            </div>
-            <div class="cells-table-wrap">
-              <table class="cells-table">
-                <tbody>
-                  <tr *ngFor="let row of tdt.rows; let i = index; trackBy: trackByIndex" [class.alt]="i % 2 === 1">
-                    <td *ngFor="let cell of row; trackBy: trackByIndex">{{ cell }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </ng-container>
-      </ng-container>
+
 
       <app-replica-calibration-panel
         [presetOptions]="replicaPresetOptions"
