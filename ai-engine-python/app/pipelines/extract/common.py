@@ -950,6 +950,10 @@ def _apply_roman_numeral_correction(rows: list[list[str]]) -> list[list[str]]:
 
     For each column, if the data values look like misread Roman numerals,
     convert all matching cells to proper Roman form.
+
+    Smart header detection: row[0] is only treated as a true header (and
+    skipped) if it contains a recognised context keyword (SEMESTRE, NIVEL,
+    etc.).  Otherwise row[0] is treated as data and corrected too.
     """
     if len(rows) < 2:
         return rows
@@ -967,13 +971,20 @@ def _apply_roman_numeral_correction(rows: list[list[str]]) -> list[list[str]]:
             for r in rows[1:]
         ]
 
-        if _is_roman_numeral_column(data_values, header):
-            # Apply correction to data rows (skip header row)
-            for row_idx in range(1, len(rows)):
-                if col_idx < len(rows[row_idx]):
-                    rows[row_idx][col_idx] = _fix_roman_numeral_cell(
-                        rows[row_idx][col_idx]
-                    )
+        if not _is_roman_numeral_column(data_values, header):
+            continue
+
+        # Determine if row[0] is a real header or data.
+        # A real header has a context keyword; otherwise row[0] is data too.
+        header_lower = header.strip().lower()
+        row0_is_header = any(kw in header_lower for kw in _ROMAN_CONTEXT_KEYWORDS)
+
+        start_row = 1 if row0_is_header else 0
+        for row_idx in range(start_row, len(rows)):
+            if col_idx < len(rows[row_idx]):
+                rows[row_idx][col_idx] = _fix_roman_numeral_cell(
+                    rows[row_idx][col_idx]
+                )
 
     return rows
 

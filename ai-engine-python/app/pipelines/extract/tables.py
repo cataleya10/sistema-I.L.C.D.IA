@@ -204,6 +204,7 @@ def _extract_generic_tables_from_boxes_impl(ocr_boxes) -> list[dict]:
         return []
 
     table_lines: list[dict] = []
+    all_multi_box_lines: list[dict] = []  # ALL lines with ≥2 boxes (for header recovery)
     for idx, line in enumerate(lines):
         boxes = [
             box for box in line.get("boxes", [])
@@ -217,10 +218,16 @@ def _extract_generic_tables_from_boxes_impl(ocr_boxes) -> list[dict]:
             "boxes": boxes,
         }
         line_entry["is_table_like"] = _looks_like_generic_table_line({"boxes": boxes}, min_large_gap=_adaptive_gap)
+        all_multi_box_lines.append(line_entry)
         if line_entry["is_table_like"]:
             table_lines.append(line_entry)
+        else:
+            preview = " | ".join(b.get("text", "") for b in boxes)[:100]
+            stats = _table_line_gap_stats({"boxes": boxes})
+            logger.info("[DIAG-BOX] skipped line idx=%d y=%.0f boxes=%d max_gap=%.1f preview=%s",
+                        idx, line_entry["y"], len(boxes), stats.get("max_gap", 0), preview)
 
-    logger.info("[DIAG-BOX] table_lines=%d", len(table_lines))
+    logger.info("[DIAG-BOX] table_lines=%d all_multi_box=%d", len(table_lines), len(all_multi_box_lines))
     if len(table_lines) < 2:
         return []
 
@@ -264,6 +271,35 @@ def _extract_generic_tables_from_boxes_impl(ocr_boxes) -> list[dict]:
         current.append(line)
     if current:
         blocks.append(current)
+
+    # ── Header recovery: prepend nearby non-table-like lines as headers ─────
+    # Table header rows (e.g. "CÉDULA | NOMBRE | APELLIDOS | SEMESTRE | MATERIA")
+    # may not pass the table-like gap heuristic because OCR boxes in header
+    # rows are sometimes closer together.  For each block, look for multi-box
+    # lines just above the block start that could be column headers.
+    _block_set_indices = {l["index"] for blk in blocks for l in blk}
+    for blk in blocks:
+        first_y = blk[0]["y"]
+        # Find candidate header lines: not already in a block, with ≥ 3 boxes,
+        # just above the block start (within adaptive_block_gap).
+        best_header = None
+        for cand in all_multi_box_lines:
+            if cand["index"] in _block_set_indices:
+                continue
+            dist = first_y - cand["y"]
+            if dist < 0 or dist > _adaptive_block_gap:
+                continue
+            if len(cand["boxes"]) < 3:
+                continue
+            # Prefer the line closest to the block start
+            if best_header is None or dist < (first_y - best_header["y"]):
+                best_header = cand
+        if best_header is not None:
+            blk.insert(0, best_header)
+            _block_set_indices.add(best_header["index"])
+            preview = " | ".join(b.get("text", "") for b in best_header["boxes"])[:100]
+            logger.info("[DIAG-BOX] recovered header for block y=%.0f: idx=%d preview=%s",
+                        first_y, best_header["index"], preview)
 
     # Log block structure
     for bi, blk in enumerate(blocks):
