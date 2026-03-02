@@ -227,7 +227,7 @@ def _extract_generic_tables_from_boxes_impl(ocr_boxes) -> list[dict]:
     # ── Adaptive block-gap: compute from median spacing between table lines ──
     # The fixed _GENERIC_TABLE_BLOCK_GAP_Y (36px) works for high-DPI bank
     # statements but is too small for screenshots of Word docs / educational
-    # materials where row spacing can be 40-80px.  Use 2× median inter-line
+    # materials where row spacing can be 40-80px.  Use 2.5× median inter-line
     # gap (clamped) so rows within the same table stay grouped.
     _tl_gaps = [
         table_lines[i]["y"] - table_lines[i - 1]["y"]
@@ -246,6 +246,10 @@ def _extract_generic_tables_from_boxes_impl(ocr_boxes) -> list[dict]:
     logger.info("[DIAG-BOX] adaptive_block_gap=%.1f median_tl_gap=%.1f",
                 _adaptive_block_gap, sorted(_tl_gaps)[len(_tl_gaps) // 2] if _tl_gaps else 0.0)
 
+    # Log all inter-line gaps for diagnostics
+    if _tl_gaps:
+        logger.info("[DIAG-BOX] all_tl_gaps=%s", [round(g, 1) for g in _tl_gaps])
+
     blocks: list[list[dict]] = []
     current: list[dict] = []
     for line in table_lines:
@@ -260,6 +264,15 @@ def _extract_generic_tables_from_boxes_impl(ocr_boxes) -> list[dict]:
         current.append(line)
     if current:
         blocks.append(current)
+
+    # Log block structure
+    for bi, blk in enumerate(blocks):
+        ys = [l["y"] for l in blk]
+        first_texts = [" | ".join(b.get("text", "") for b in blk[0]["boxes"])[:120]] if blk else []
+        logger.info("[DIAG-BOX] block[%d] lines=%d y_range=[%.0f..%.0f] first_row_preview=%s",
+                    bi, len(blk), min(ys), max(ys), first_texts[0] if first_texts else "?")
+
+    logger.info("[DIAG-BOX] blocks_count=%d", len(blocks))
 
     tables: list[dict] = []
     seen_signatures: set[str] = set()
