@@ -224,6 +224,28 @@ def _extract_generic_tables_from_boxes_impl(ocr_boxes) -> list[dict]:
     if len(table_lines) < 2:
         return []
 
+    # ── Adaptive block-gap: compute from median spacing between table lines ──
+    # The fixed _GENERIC_TABLE_BLOCK_GAP_Y (36px) works for high-DPI bank
+    # statements but is too small for screenshots of Word docs / educational
+    # materials where row spacing can be 40-80px.  Use 2× median inter-line
+    # gap (clamped) so rows within the same table stay grouped.
+    _tl_gaps = [
+        table_lines[i]["y"] - table_lines[i - 1]["y"]
+        for i in range(1, len(table_lines))
+        if table_lines[i]["y"] - table_lines[i - 1]["y"] > 0
+    ]
+    if _tl_gaps:
+        _median_tl_gap = sorted(_tl_gaps)[len(_tl_gaps) // 2]
+        _adaptive_block_gap = max(
+            float(_GENERIC_TABLE_BLOCK_GAP_Y),
+            min(_median_tl_gap * 2.5, 200.0),
+        )
+    else:
+        _adaptive_block_gap = float(_GENERIC_TABLE_BLOCK_GAP_Y)
+
+    logger.info("[DIAG-BOX] adaptive_block_gap=%.1f median_tl_gap=%.1f",
+                _adaptive_block_gap, sorted(_tl_gaps)[len(_tl_gaps) // 2] if _tl_gaps else 0.0)
+
     blocks: list[list[dict]] = []
     current: list[dict] = []
     for line in table_lines:
@@ -231,7 +253,7 @@ def _extract_generic_tables_from_boxes_impl(ocr_boxes) -> list[dict]:
             current = [line]
             continue
         gap = line["y"] - current[-1]["y"]
-        if gap > _GENERIC_TABLE_BLOCK_GAP_Y:
+        if gap > _adaptive_block_gap:
             blocks.append(current)
             current = [line]
             continue
