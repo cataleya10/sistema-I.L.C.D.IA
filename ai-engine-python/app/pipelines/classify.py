@@ -295,4 +295,5 @@ async def classify_document(image, ocr_text: str, filename: str | None = None):
     override, override_conf = _keyword_override(text, compact_text, name)
     if override:
         return override, override_conf
-    return "UNKNOWN", 0.5
+    # No specific document type recognized — use GENERICO for universal extraction
+    return "GENERICO", 0.5

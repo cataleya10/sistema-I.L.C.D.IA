@@ -1,4 +1,4 @@
-"""Document-type extractors (INE, CURP, Acta, NSS, Financial, Service)."""
+"""Document-type extractors (INE, CURP, Acta, NSS, Financial, Service, Generic)."""
 
 import re
 import json
@@ -1519,6 +1519,297 @@ def _enrich_telmex_domicilio(base_dom: str, full_text: str) -> str:
     if extras:
         dom = _clean_address_value(" ".join([dom, *extras]))
     return dom
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GENERICO (Generic) extractor — works on any image / document
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Labels to skip — these are noise, not useful key-value pairs
+_GENERIC_SKIP_LABELS = frozenset({
+    "HTTP", "HTTPS", "WWW", "COM", "MX", "GOB", "ORG", "PDF", "JPG", "PNG",
+    "PAGE", "PAG", "PAGINA", "DE", "LA", "EL", "EN", "POR", "CON", "PARA",
+    "QUE", "DEL", "LOS", "LAS", "UNA", "UNO", "AL", "SE", "ES", "NO", "SI",
+    "SU", "SUS", "MIS", "TUS", "NOS", "LES",
+})
+
+# Regex for "Label: Value" or "Label - Value" or "Label = Value" patterns
+_KV_SEPARATOR_RE = re.compile(
+    r"^([A-ZÁÉÍÓÚÑÜ][A-ZÁÉÍÓÚÑÜ0-9 ./#°]{2,50}?)"  # label
+    r"\s*[:=\-–—]\s*"                                   # separator
+    r"(.+)$",                                           # value
+    re.IGNORECASE,
+)
+
+# Pattern for lines that look like "LABEL  VALUE" with large whitespace gap
+_KV_SPACE_GAP_RE = re.compile(
+    r"^([A-ZÁÉÍÓÚÑÜ][A-ZÁÉÍÓÚÑÜ ./#°]{2,40}?)"  # label
+    r"\s{3,}"                                       # 3+ spaces (gap)
+    r"(\S.+)$",                                     # value
+)
+
+
+def _is_valid_generic_label(label: str) -> bool:
+    """Check if a label is meaningful (not just stopwords or noise)."""
+    clean = label.strip().upper()
+    if len(clean) < 2 or len(clean) > 60:
+        return False
+    tokens = clean.split()
+    # All tokens are stopwords → skip
+    if all(t in _GENERIC_SKIP_LABELS for t in tokens):
+        return False
+    # Pure numbers → not a label
+    if re.fullmatch(r"[\d\s.,$]+", clean):
+        return False
+    return True
+
+
+def _is_valid_generic_value(value: str) -> bool:
+    """Check if a value is meaningful."""
+    clean = value.strip()
+    if len(clean) < 1 or len(clean) > 500:
+        return False
+    return True
+
+
+def _slugify_label(label: str) -> str:
+    """Convert a label to a snake_case key."""
+    text = _normalize_text(label).upper().strip()
+    # Remove accents
+    text = unicodedata.normalize("NFD", text)
+    text = re.sub(r"[\u0300-\u036f]", "", text)
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9]+", "_", text)
+    text = text.strip("_")
+    return text[:50] or "campo"
+
+
+def _extract_generic_kv_from_text(text: str) -> list[dict]:
+    """
+    Extract key-value pairs from plain text using heuristic patterns.
+    Works with any document — no domain-specific logic.
+    """
+    fields: list[dict] = []
+    seen_keys: set[str] = set()
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+    for line in lines:
+        upper_line = line.upper()
+        # Skip very short or very long lines
+        if len(line) < 4 or len(line) > 300:
+            continue
+
+        # Try separator-based KV extraction
+        for pattern in (_KV_SEPARATOR_RE, _KV_SPACE_GAP_RE):
+            match = pattern.match(line)
+            if not match:
+                continue
+            label_raw = match.group(1).strip()
+            value_raw = match.group(2).strip()
+
+            if not _is_valid_generic_label(label_raw):
+                continue
+            if not _is_valid_generic_value(value_raw):
+                continue
+
+            key = _slugify_label(label_raw)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+
+            # Clean up label for display
+            display_label = _normalize_text(label_raw).strip()
+            display_label = re.sub(r"\s+", " ", display_label)
+            # Capitalize first letter of each word
+            display_label = display_label.title()
+
+            fields.append({
+                "key": key,
+                "label": display_label,
+                "value": value_raw.strip(),
+                "confidence": 0.6,
+                "valid": True,
+                "validation_errors": [],
+                "source": None,
+            })
+            break  # Don't try second pattern if first matched
+
+    return fields
+
+
+def _extract_generic_kv_from_boxes(ocr_boxes: list[dict] | None) -> list[dict]:
+    """
+    Extract key-value pairs using spatial OCR box analysis.
+    Detects label → value relationships based on position (right-of or below).
+    """
+    if not ocr_boxes:
+        return []
+
+    boxes = _boxes_with_rect(ocr_boxes)
+    if not boxes:
+        return []
+
+    lines = _line_groups(boxes)
+    fields: list[dict] = []
+    seen_keys: set[str] = set()
+
+    for line in lines:
+        line_boxes = line.get("boxes", [])
+        if not line_boxes:
+            continue
+
+        # Sort boxes left-to-right
+        sorted_boxes = sorted(line_boxes, key=lambda b: b["rect"][0] if isinstance(b.get("rect"), (list, tuple)) and len(b["rect"]) >= 1 else 0)
+
+        for i, box in enumerate(sorted_boxes):
+            text = (box.get("text", "") or "").strip()
+            if not text:
+                continue
+
+            # Check if this box looks like a label (ends with : or is all-caps keyword)
+            is_label = False
+            label_text = text
+
+            if text.endswith(":") or text.endswith("=") or text.endswith("-"):
+                label_text = text.rstrip(":=- ").strip()
+                is_label = True
+            elif (
+                text.upper() == text
+                and re.match(r"^[A-ZÁÉÍÓÚÑÜ][A-ZÁÉÍÓÚÑÜ ./#°]{1,40}$", text)
+                and not re.fullmatch(r"[\d\s.,$]+", text)
+            ):
+                is_label = True
+
+            if not is_label or not _is_valid_generic_label(label_text):
+                continue
+
+            # Look for value in the next box to the right
+            value_text = ""
+            if i + 1 < len(sorted_boxes):
+                next_box = sorted_boxes[i + 1]
+                next_text = (next_box.get("text", "") or "").strip()
+                # Ensure there's a meaningful gap (not just adjacent text)
+                if next_text:
+                    value_text = next_text
+
+            if not value_text or not _is_valid_generic_value(value_text):
+                continue
+
+            key = _slugify_label(label_text)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+
+            display_label = _normalize_text(label_text).strip()
+            display_label = re.sub(r"\s+", " ", display_label).title()
+
+            fields.append({
+                "key": key,
+                "label": display_label,
+                "value": value_text,
+                "confidence": 0.65,
+                "valid": True,
+                "validation_errors": [],
+                "source": _find_source(value_text, ocr_boxes) if ocr_boxes else None,
+            })
+
+    return fields
+
+
+def _extract_generic_identifiers(text: str, ocr_boxes: list[dict] | None = None) -> list[dict]:
+    """
+    Extract common identifiers (CURP, RFC, NSS, CLABE, emails, phones, amounts, dates)
+    from any document regardless of type.
+    """
+    fields: list[dict] = []
+    upper = text.upper()
+
+    # CURP
+    for match in CURP_PATTERN.finditer(upper):
+        fields.append(_make_field("curp", "CURP", _normalize_alnum(match.group(0)), ocr_boxes, confidence=0.85))
+
+    # RFC
+    for match in RFC_WITH_HOMOCLAVE.finditer(upper):
+        value = _normalize_alnum(match.group(0))
+        # Avoid duplicating if it's also a CURP prefix
+        if not any(f.get("key") == "curp" and value in f.get("value", "") for f in fields):
+            fields.append(_make_field("rfc", "RFC", value, ocr_boxes, confidence=0.8))
+
+    # NSS (11 digits)
+    for match in NSS_PATTERN.finditer(upper):
+        val = match.group(0)
+        # Avoid matching date-like or other numbers embedded in text
+        if re.search(r"(?:NSS|SEGURIDAD\s*SOCIAL|IMSS)", upper):
+            fields.append(_make_field("nss", "NSS", val, ocr_boxes, confidence=0.75))
+
+    # CLABE (18 digits)
+    for match in CLABE_PATTERN.finditer(upper):
+        val = match.group(0)
+        if re.search(r"(?:CLABE|INTERBANCARIA|CUENTA)", upper):
+            fields.append(_make_field("clabe", "CLABE", val, ocr_boxes, confidence=0.75))
+
+    # Email addresses
+    for match in re.finditer(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", text):
+        fields.append(_make_field("email", "Correo electrónico", match.group(0).lower(), ocr_boxes, confidence=0.9))
+
+    # Phone numbers (Mexican format)
+    for match in re.finditer(r"\b(?:\+?52\s*)?(?:\(?\d{2,3}\)?\s*)?[\d\s-]{7,10}\b", upper):
+        candidate = re.sub(r"[^\d]", "", match.group(0))
+        if 10 <= len(candidate) <= 13:
+            formatted = candidate
+            fields.append(_make_field("telefono", "Teléfono", formatted, ocr_boxes, confidence=0.6))
+
+    # Monetary amounts
+    for match in AMOUNT_PATTERN.finditer(text):
+        val = match.group(0)
+        # Only include if there's a currency context
+        context_start = max(0, match.start() - 20)
+        context = text[context_start:match.end() + 5].upper()
+        if re.search(r"[$MXNUSD]|\bTOTAL\b|\bMONTO\b|\bIMPORTE\b|\bPAGO\b|\bSALDO\b|\bSUBTOTAL\b|\bIVA\b", context):
+            fields.append(_make_field("monto", "Monto", f"${val}", ocr_boxes, confidence=0.65))
+
+    # Dates
+    for match in DATE_FLEX_PATTERN.finditer(upper):
+        val = match.group(0)
+        fields.append(_make_field("fecha", "Fecha", val, ocr_boxes, confidence=0.6))
+
+    return fields
+
+
+def _extract_generic_all_tables(
+    base_text_raw: str,
+    ocr_boxes: list[dict] | None,
+    pdf_tables: list[list[list[str]]] | None = None,
+) -> list[dict]:
+    """
+    Extract ALL tables from any document source (PDF structure, OCR boxes, text).
+    Returns a list of field dicts with key=tabla_celdas_N for each table found.
+    """
+    all_tables: list[dict] = []
+
+    # 1. PDF-extracted tables (highest quality)
+    if pdf_tables:
+        pdf_generic = _pdf_tables_to_generic_payloads(pdf_tables)
+        all_tables.extend(pdf_generic)
+
+    # 2. OCR box-based tables
+    ocr_tables = _extract_all_table_payloads(base_text_raw, ocr_boxes)
+    all_tables.extend(ocr_tables)
+
+    # Deduplicate by row_count + column_count + first row content
+    seen: set[str] = set()
+    unique_tables: list[dict] = []
+    for table in all_tables:
+        rows = table.get("rows", [])
+        if not rows:
+            continue
+        fingerprint = f"{len(rows)}x{len(rows[0]) if rows else 0}:{str(rows[0][:3]) if rows else ''}"
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        unique_tables.append(table)
+
+    return unique_tables
 
 
 __all__ = _export_all()

@@ -1500,6 +1500,63 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                     )
                 )
 
+    # ── GENERICO: extract data from any image / document ───────────────────────
+    if document_type in {"GENERICO", "UNKNOWN"}:
+        logger.info("[GENERICO] Extracting generic data from document (type=%s)", document_type)
+
+        # 1. Extract key-value pairs from text patterns
+        kv_text = _extract_generic_kv_from_text(base_text_raw)
+        for field in kv_text:
+            fields.append(field)
+        logger.info("[GENERICO] Text KV pairs: %d", len(kv_text))
+
+        # 2. Extract key-value pairs from OCR box spatial analysis
+        kv_boxes = _extract_generic_kv_from_boxes(ocr_boxes)
+        # Avoid duplicating keys already found from text
+        existing_keys = {f.get("key") for f in fields}
+        for field in kv_boxes:
+            if field.get("key") not in existing_keys:
+                fields.append(field)
+                existing_keys.add(field.get("key"))
+        logger.info("[GENERICO] Box KV pairs: %d (new)", len([f for f in kv_boxes if f.get("key") not in {fld.get("key") for fld in kv_text}]))
+
+        # 3. Extract common identifiers (CURP, RFC, NSS, CLABE, email, phone, etc.)
+        id_fields = _extract_generic_identifiers(base_text_raw, ocr_boxes)
+        for field in id_fields:
+            if field.get("key") not in existing_keys:
+                fields.append(field)
+                existing_keys.add(field.get("key"))
+        logger.info("[GENERICO] Identifiers: %d", len(id_fields))
+
+        # 4. Extract ALL tables (not just the best one)
+        all_tables = _extract_generic_all_tables(base_text_raw, ocr_boxes, pdf_tables)
+        if all_tables:
+            # Primary table → tabla_celdas
+            primary = all_tables[0]
+            if primary.get("row_count", 0) >= 2:
+                fields.append(
+                    _make_field(
+                        "tabla_celdas",
+                        "Tabla detectada",
+                        json.dumps(primary, ensure_ascii=False),
+                        ocr_boxes,
+                        confidence=0.8,
+                    )
+                )
+            # Additional tables → tabla_celdas_2, tabla_celdas_3, etc.
+            for idx, table in enumerate(all_tables[1:], start=2):
+                if table.get("row_count", 0) >= 2:
+                    fields.append(
+                        _make_field(
+                            f"tabla_celdas_{idx}",
+                            f"Tabla detectada #{idx}",
+                            json.dumps(table, ensure_ascii=False),
+                            ocr_boxes,
+                            confidence=0.75,
+                        )
+                    )
+            logger.info("[GENERICO] Tables: %d", len(all_tables))
+
     # ── Universal tabla_celdas fallback ────────────────────────────────────────
     if not any(str(f.get("key", "")) == "tabla_celdas" for f in fields):
         _uni_tables: list[dict] = []

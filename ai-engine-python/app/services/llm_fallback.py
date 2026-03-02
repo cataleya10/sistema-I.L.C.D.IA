@@ -56,6 +56,7 @@ _DOC_TYPE_LABELS: dict[str, str] = {
     "FACTURA": "Factura / Comprobante Fiscal (CFDI)",
     "CONSTANCIA_SITUACION_FISCAL": "Constancia de Situación Fiscal (SAT)",
     "PAYMENT": "Comprobante de Pago / Transferencia Bancaria",
+    "GENERICO": "Documento genérico / imagen",
 }
 
 _OCR_TEXT_MAX_CHARS = 4000
@@ -301,4 +302,167 @@ async def try_llm_fallback(
         "LLM fallback: doc_type=%s, buscados=%s, encontrados=%d",
         doc_type, missing_keys, len(fields),
     )
+    return fields
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Generic / open-ended LLM extraction for GENERICO documents
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _build_generic_prompt(ocr_text: str, existing_fields: list[dict]) -> str:
+    """Build a prompt for open-ended extraction from any document."""
+    found_summary_parts = []
+    for f in existing_fields:
+        key = f.get("key", "")
+        value = f.get("value") or f.get("corrected_value")
+        if key and value and key != "texto_detectado":
+            found_summary_parts.append(f"  - {key}: {value}")
+    found_summary = "\n".join(found_summary_parts) if found_summary_parts else "  (ninguno)"
+
+    ocr_snippet = ocr_text[:_OCR_TEXT_MAX_CHARS]
+    if len(ocr_text) > _OCR_TEXT_MAX_CHARS:
+        ocr_snippet += "\n[... texto truncado ...]"
+
+    return f"""Eres un extractor de datos inteligente. Se te proporciona texto extraído \
+por OCR de una imagen o documento. Tu tarea es identificar y extraer TODOS los datos \
+estructurados que encuentres.
+
+DATOS YA EXTRAÍDOS POR EL SISTEMA (NO repetir):
+{found_summary}
+
+TEXTO OCR DEL DOCUMENTO:
+---
+{ocr_snippet}
+---
+
+Instrucciones:
+1. Extrae TODOS los pares clave-valor que identifiques en el texto.
+2. Busca especialmente: nombres, fechas, números de referencia, montos, \
+direcciones, teléfonos, correos, identificadores, estados, conceptos.
+3. Usa claves en snake_case descriptivas (ej: "nombre_completo", "fecha_emision", \
+"numero_referencia", "monto_total").
+4. NO incluyas datos que ya fueron extraídos por el sistema.
+5. Para la confianza: 0.9 si explícito, 0.75 si inferido, 0.6 si incierto.
+6. Si hay tablas, describe brevemente su contenido.
+7. Responde SOLO con JSON válido.
+
+Formato de respuesta:
+{{"fields": [{{"key": "clave_descriptiva", "label": "Etiqueta legible", "value": "valor_extraido", "confidence": 0.85}}]}}
+
+Si no encuentras datos adicionales, responde: {{"fields": []}}"""
+
+
+def _parse_generic_llm_response(response_text: str) -> list[dict[str, Any]]:
+    """Parse LLM response for generic extraction (no key whitelist)."""
+    text = response_text.strip()
+    json_match = re.search(r'\{.*\}', text, re.DOTALL)
+    if not json_match:
+        logger.warning("LLM generic: respuesta no contiene JSON válido: %.200s", text)
+        return []
+
+    try:
+        data = json.loads(json_match.group())
+    except json.JSONDecodeError as exc:
+        logger.warning("LLM generic: JSON malformado — %s. Texto: %.200s", exc, text)
+        return []
+
+    raw_fields = data.get("fields")
+    if not isinstance(raw_fields, list):
+        logger.warning("LLM generic: 'fields' no es lista en respuesta JSON")
+        return []
+
+    result: list[dict[str, Any]] = []
+    for item in raw_fields:
+        if not isinstance(item, dict):
+            continue
+        key = item.get("key")
+        value = item.get("value")
+        label = item.get("label", "")
+        confidence = item.get("confidence", 0.75)
+
+        if not key or not isinstance(key, str):
+            continue
+        if value is None or str(value).strip() == "":
+            continue
+        if not isinstance(confidence, (int, float)):
+            confidence = 0.75
+        confidence = float(max(0.0, min(1.0, confidence)))
+
+        # Sanitize key to snake_case
+        clean_key = re.sub(r"[^a-z0-9_]", "_", key.lower().strip())
+        clean_key = re.sub(r"_+", "_", clean_key).strip("_")[:50]
+        if not clean_key:
+            continue
+
+        result.append({
+            "key": clean_key,
+            "label": str(label or key.replace("_", " ").title()).strip(),
+            "value": str(value).strip(),
+            "confidence": round(min(confidence, 0.85), 4),
+            "valid": True,
+            "validation_errors": [],
+            "source": None,
+        })
+
+    return result
+
+
+async def try_llm_generic_extraction(
+    ocr_text: str,
+    existing_fields: list[dict],
+    api_key: str | None = None,
+    model: str = "claude-haiku-4-5-20251001",
+) -> list[dict]:
+    """
+    Use LLM to extract ALL structured data from an arbitrary document.
+    Unlike try_llm_fallback, this doesn't need a list of expected fields.
+    """
+    if not api_key:
+        logger.warning("LLM generic: ANTHROPIC_API_KEY no configurada, omitiendo")
+        return []
+
+    if not ocr_text or len(ocr_text.strip()) < 20:
+        logger.debug("LLM generic: ocr_text muy corto, omitiendo")
+        return []
+
+    try:
+        import anthropic
+    except ImportError:
+        logger.error(
+            "LLM generic: paquete 'anthropic' no instalado. "
+            "Ejecuta: pip install 'anthropic>=0.40.0'"
+        )
+        return []
+
+    prompt = _build_generic_prompt(ocr_text, existing_fields)
+
+    try:
+        client = anthropic.AsyncAnthropic(api_key=api_key)
+        message = await client.messages.create(
+            model=model,
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except anthropic.AuthenticationError:
+        logger.error("LLM generic: ANTHROPIC_API_KEY inválida")
+        return []
+    except anthropic.RateLimitError:
+        logger.warning("LLM generic: rate limit alcanzado, omitiendo")
+        return []
+    except Exception as exc:
+        logger.warning("LLM generic: error de API — %s", exc)
+        return []
+
+    response_text = ""
+    if message.content and len(message.content) > 0:
+        block = message.content[0]
+        if hasattr(block, "text"):
+            response_text = block.text
+
+    if not response_text:
+        logger.debug("LLM generic: respuesta vacía del modelo")
+        return []
+
+    fields = _parse_generic_llm_response(response_text)
+    logger.info("LLM generic: encontrados=%d campos", len(fields))
     return fields

@@ -75,3 +75,14 @@ from .tables import (  # noqa: F811
 
 # orchestrator.py
 from .orchestrator import extract_fields  # noqa: F811
+
+# extractors.py — generic extraction
+from .extractors import (  # noqa: F811
+    _extract_generic_all_tables,
+    _extract_generic_identifiers,
+    _extract_generic_kv_from_boxes,
+    _extract_generic_kv_from_text,
+    _is_valid_generic_label,
+    _is_valid_generic_value,
+    _slugify_label,
+)

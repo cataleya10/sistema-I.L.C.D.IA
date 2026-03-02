@@ -312,6 +312,7 @@ public sealed class DocumentExportService : IDocumentExportService
                 ("regimen", accented ? "Régimen" : "Regimen"),
                 ("domicilio", "Domicilio"),
             },
+            DocumentType.Generico => new List<(string, string)>(),
             _ => new List<(string, string)>()
         };
     }

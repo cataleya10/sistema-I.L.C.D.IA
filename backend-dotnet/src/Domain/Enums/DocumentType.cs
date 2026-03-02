@@ -10,5 +10,6 @@ public enum DocumentType
     Nss = 5,
     DatosBancarios = 6,
     ConstanciaSituacionFiscal = 7,
-    Factura = 8
+    Factura = 8,
+    Generico = 9
 }

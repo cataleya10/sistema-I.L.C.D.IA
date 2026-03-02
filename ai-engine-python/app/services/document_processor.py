@@ -96,7 +96,7 @@ def _maybe_override_doc_type(doc_type: str, text: str, filename: str | None) -> 
     return doc_type, None
 
 
-ALLOWED_FORCED_DOC_TYPES = {"FACTURA"}
+ALLOWED_FORCED_DOC_TYPES = {"FACTURA", "GENERICO"}
 
 
 def _resolve_forced_document_type(options_data: dict) -> str | None:
@@ -228,6 +228,7 @@ FASTPATH_REQUIRED_FIELDS: dict[str, list[str]] = {
     "DATOS_BANCARIOS": ["clabe", "banco", "titular"],
     "FACTURA": ["tabla_celdas"],
     "CONSTANCIA_SITUACION_FISCAL": ["rfc", "nombre", "domicilio"],
+    "GENERICO": [],
     "UNKNOWN": [],
 }
 
@@ -247,7 +248,8 @@ DEFAULT_CRITICAL_FIELDS: dict[str, list[str]] = {
     "NSS": ["nss"],
     "DATOS_BANCARIOS": ["clabe", "banco"],
     "FACTURA": ["tabla_celdas"],
-    "CONSTANCIA_SITUACION_FISCAL": ["rfc"]
+    "CONSTANCIA_SITUACION_FISCAL": ["rfc"],
+    "GENERICO": [],
 }
 CRITICAL_FIELDS: dict[str, list[str]] = DEFAULT_CRITICAL_FIELDS.copy()
 _critical_path = Path(__file__).resolve().parent.parent / "models" / "critical_fields.json"
@@ -485,7 +487,7 @@ async def process_document(file, document_id: str, source: str, options: str | N
                 ocr_text = extracted_text
                 ocr_engine = "text-layer-fastpath"
                 doc_type = fast_type
-                doc_confidence = max(fast_confidence, 0.85) if fast_type != "UNKNOWN" else fast_confidence
+                doc_confidence = max(fast_confidence, 0.85) if fast_type not in {"UNKNOWN", "GENERICO"} else fast_confidence
                 doc_type_warning = fast_warning
                 fields = candidate_fields
 
@@ -523,7 +525,7 @@ async def process_document(file, document_id: str, source: str, options: str | N
             doc_type = forced_doc_type
             doc_confidence = max(doc_confidence, 0.9)
             doc_type_warning = None
-        if (ocr_text or extracted_text) and doc_type != "UNKNOWN":
+        if (ocr_text or extracted_text) and doc_type not in {"UNKNOWN", "GENERICO"}:
             doc_confidence = max(doc_confidence, 0.85)
         extraction_boxes = ocr_boxes if ocr_boxes else text_layer_boxes
         fields = await extract_fields(doc_type, ocr_text, extraction_boxes, extracted_text, file.filename, pdf_tables)
@@ -557,6 +559,27 @@ async def process_document(file, document_id: str, source: str, options: str | N
                     "LLM fallback falló, continuando sin él (doc_type=%s, document_id=%s)",
                     doc_type, document_id,
                 )
+
+    # === LLM GENERIC (extracción abierta para documentos genéricos) ===
+    if settings.llm_fallback_enabled and ocr_text and doc_type in {"GENERICO", "UNKNOWN"}:
+        try:
+            from app.services.llm_fallback import try_llm_generic_extraction, merge_llm_fields
+            _generic_llm_fields = await try_llm_generic_extraction(
+                ocr_text, fields,
+                api_key=settings.anthropic_api_key,
+                model=settings.llm_fallback_model,
+            )
+            if _generic_llm_fields:
+                fields = merge_llm_fields(fields, _generic_llm_fields)
+                logger.info(
+                    "LLM generic añadió %d campos para doc_type=%s document_id=%s",
+                    len(_generic_llm_fields), doc_type, document_id,
+                )
+        except Exception:
+            logger.exception(
+                "LLM generic falló, continuando sin él (doc_type=%s, document_id=%s)",
+                doc_type, document_id,
+            )
 
     critical_keys = set(CRITICAL_FIELDS.get(doc_type, []))
     for field in fields:

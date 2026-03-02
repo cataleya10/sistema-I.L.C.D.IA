@@ -9,6 +9,7 @@ export type DocumentType =
   | 'DATOS_BANCARIOS'
   | 'FACTURA'
   | 'CONSTANCIA_SITUACION_FISCAL'
+  | 'GENERICO'
   | 'UNKNOWN';
 
 export const DOCUMENT_TYPE_LABELS: Record<DocumentType, string> = {
@@ -20,6 +21,7 @@ export const DOCUMENT_TYPE_LABELS: Record<DocumentType, string> = {
   DATOS_BANCARIOS: 'DATOS_BANCARIOS',
   FACTURA: 'FACTURA / PAGO',
   CONSTANCIA_SITUACION_FISCAL: 'CONSTANCIA_SITUACION_FISCAL',
+  GENERICO: 'GENÉRICO',
   UNKNOWN: 'UNKNOWN'
 };
 

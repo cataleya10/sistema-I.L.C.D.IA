@@ -35,11 +35,11 @@ class ClassifyPipelineTests(unittest.TestCase):
         self.assertEqual(doc_type, "DATOS_BANCARIOS")
         self.assertGreaterEqual(confidence, 0.8)
 
-    def test_classify_unknown_when_no_markers(self):
+    def test_classify_generico_when_no_markers(self):
         doc_type, confidence = asyncio.run(
             classify.classify_document(None, "texto generico sin pistas", "archivo.pdf")
         )
-        self.assertEqual(doc_type, "UNKNOWN")
+        self.assertEqual(doc_type, "GENERICO")
         self.assertEqual(confidence, 0.5)
 
     def test_classify_constancia_with_accents(self):
