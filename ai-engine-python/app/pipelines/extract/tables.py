@@ -205,18 +205,26 @@ def _extract_generic_tables_from_boxes_impl(ocr_boxes) -> list[dict]:
 
     table_lines: list[dict] = []
     all_multi_box_lines: list[dict] = []  # ALL lines with ≥2 boxes (for header recovery)
+    all_any_box_lines: list[dict] = []    # ALL lines with ≥1 box (for header recovery from single-box lines)
     for idx, line in enumerate(lines):
         boxes = [
             box for box in line.get("boxes", [])
             if _normalize_table_cell_exact(box.get("text", ""))
         ]
-        if len(boxes) < 2:
+        if not boxes:
             continue
         line_entry = {
             "index": idx,
             "y": float(line.get("y", 0.0) or 0.0),
             "boxes": boxes,
         }
+        all_any_box_lines.append(line_entry)
+        if len(boxes) < 2:
+            # Single-box lines: log them for diagnostics, keep for header recovery
+            preview = boxes[0].get("text", "")[:100]
+            logger.info("[DIAG-BOX] single-box line idx=%d y=%.0f text=%s",
+                        idx, line_entry["y"], preview)
+            continue
         line_entry["is_table_like"] = _looks_like_generic_table_line({"boxes": boxes}, min_large_gap=_adaptive_gap)
         all_multi_box_lines.append(line_entry)
         if line_entry["is_table_like"]:
@@ -227,7 +235,7 @@ def _extract_generic_tables_from_boxes_impl(ocr_boxes) -> list[dict]:
             logger.info("[DIAG-BOX] skipped line idx=%d y=%.0f boxes=%d max_gap=%.1f preview=%s",
                         idx, line_entry["y"], len(boxes), stats.get("max_gap", 0), preview)
 
-    logger.info("[DIAG-BOX] table_lines=%d all_multi_box=%d", len(table_lines), len(all_multi_box_lines))
+    logger.info("[DIAG-BOX] table_lines=%d all_multi_box=%d all_any_box=%d", len(table_lines), len(all_multi_box_lines), len(all_any_box_lines))
     if len(table_lines) < 2:
         return []
 
@@ -275,31 +283,68 @@ def _extract_generic_tables_from_boxes_impl(ocr_boxes) -> list[dict]:
     # ── Header recovery: prepend nearby non-table-like lines as headers ─────
     # Table header rows (e.g. "CÉDULA | NOMBRE | APELLIDOS | SEMESTRE | MATERIA")
     # may not pass the table-like gap heuristic because OCR boxes in header
-    # rows are sometimes closer together.  For each block, look for multi-box
-    # lines just above the block start that could be column headers.
+    # rows are sometimes closer together, or all words may be merged into
+    # a single OCR box.  For each block, look for any line just above the
+    # block start that could be a column header row.
     _block_set_indices = {l["index"] for blk in blocks for l in blk}
     for blk in blocks:
         first_y = blk[0]["y"]
-        # Find candidate header lines: not already in a block, with ≥ 3 boxes,
+        block_col_count = max((len(l["boxes"]) for l in blk), default=0)
+        if block_col_count < 2:
+            continue
+        # Find candidate header lines: not already in a block,
         # just above the block start (within adaptive_block_gap).
+        # Check both multi-box AND single-box lines.
         best_header = None
-        for cand in all_multi_box_lines:
+        best_dist = float("inf")
+        for cand in all_any_box_lines:
             if cand["index"] in _block_set_indices:
                 continue
             dist = first_y - cand["y"]
             if dist < 0 or dist > _adaptive_block_gap:
                 continue
-            if len(cand["boxes"]) < 3:
+            if dist >= best_dist:
                 continue
-            # Prefer the line closest to the block start
-            if best_header is None or dist < (first_y - best_header["y"]):
+
+            cand_boxes = cand["boxes"]
+            if len(cand_boxes) >= 3:
+                # Multi-box header candidate (e.g. each column name is its own box)
                 best_header = cand
+                best_dist = dist
+            elif len(cand_boxes) >= 1:
+                # Single (or two) box line: check if the text contains multiple
+                # space-separated words that could be column headers.
+                # E.g. "CEDULA NOMBRE APELLIDOS SEMESTRE MATERIA" as one box.
+                all_text = " ".join(b.get("text", "") for b in cand_boxes).strip()
+                words = [w for w in all_text.split() if len(w) >= 2]
+                if len(words) >= block_col_count and len(words) >= 3:
+                    # Synthesise individual boxes from words, reusing the rect
+                    # from the original box for approximate positioning.
+                    orig_rect = cand_boxes[0].get("rect", [0, 0, 0, 0])
+                    x1 = orig_rect[0] if isinstance(orig_rect, (list, tuple)) and len(orig_rect) >= 4 else 0
+                    x2 = orig_rect[2] if isinstance(orig_rect, (list, tuple)) and len(orig_rect) >= 4 else 100
+                    total_w = x2 - x1 if x2 > x1 else 100
+                    col_w = total_w / len(words)
+                    synth_boxes = []
+                    for wi, word in enumerate(words[:_GENERIC_TABLE_MAX_COLS]):
+                        bx1 = x1 + wi * col_w
+                        bx2 = bx1 + col_w
+                        by1 = orig_rect[1] if isinstance(orig_rect, (list, tuple)) and len(orig_rect) >= 4 else 0
+                        by2 = orig_rect[3] if isinstance(orig_rect, (list, tuple)) and len(orig_rect) >= 4 else 20
+                        synth_boxes.append({
+                            "text": word,
+                            "rect": [bx1, by1, bx2, by2],
+                        })
+                    cand = {**cand, "boxes": synth_boxes}
+                    best_header = cand
+                    best_dist = dist
+
         if best_header is not None:
             blk.insert(0, best_header)
             _block_set_indices.add(best_header["index"])
             preview = " | ".join(b.get("text", "") for b in best_header["boxes"])[:100]
-            logger.info("[DIAG-BOX] recovered header for block y=%.0f: idx=%d preview=%s",
-                        first_y, best_header["index"], preview)
+            logger.info("[DIAG-BOX] recovered header for block y=%.0f: idx=%d boxes=%d preview=%s",
+                        first_y, best_header["index"], len(best_header["boxes"]), preview)
 
     # Log block structure
     for bi, blk in enumerate(blocks):
