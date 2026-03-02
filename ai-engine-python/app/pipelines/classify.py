@@ -291,9 +291,99 @@ async def classify_document(image, ocr_text: str, filename: str | None = None):
             override, override_conf = _keyword_override(text, compact_text, name)
             if override:
                 return override, max(confidence, override_conf)
-            return predicted, confidence
+            # Validate NB prediction — if the doc doesn't have hard markers
+            # for the predicted type, the NB is likely wrong (e.g. a generic
+            # document with "NOMBRE" being classified as INE).
+            if _has_hard_markers(predicted, text, compact_text):
+                return predicted, confidence
+            # NB prediction not confirmed by hard markers → GENERICO
+            logger.info(
+                "NB predicted %s (conf=%.2f) but no hard markers found, downgrading to GENERICO",
+                predicted, confidence,
+            )
+            return "GENERICO", 0.5
     override, override_conf = _keyword_override(text, compact_text, name)
     if override:
         return override, override_conf
     # No specific document type recognized — use GENERICO for universal extraction
     return "GENERICO", 0.5
+
+
+def _has_hard_markers(doc_type: str, text: str, compact_text: str) -> bool:
+    """Check if the text contains hard evidence for the predicted document type.
+
+    This prevents the NB classifier from misclassifying generic documents
+    that happen to contain words like 'NOMBRE', 'CEDULA', 'FECHA' etc.
+    """
+    checks: dict[str, list[str]] = {
+        "INE": [
+            "INSTITUTO NACIONAL ELECTORAL",
+            "CREDENCIAL PARA VOTAR",
+            "CLAVE DE ELECTOR",
+            "INSTITUTONACIONALELECTORAL",
+            "CREDENCIALPARAVOTAR",
+            "CLAVEDEELECTOR",
+        ],
+        "CURP": [
+            "CONSTANCIA DE LA CLAVE UNICA",
+            "CLAVE UNICA DE REGISTRO DE POBLACION",
+            "CURP CERTIFICADA",
+            "CONSTANCIADELACLAVEUNICA",
+            "CURPCERTIFICADA",
+        ],
+        "ACTA_NACIMIENTO": [
+            "ACTA DE NACIMIENTO",
+            "REGISTRO CIVIL",
+            "ACTADENACIMIENTO",
+            "REGISTROCIVIL",
+        ],
+        "NSS": [
+            "NUMERO DE SEGURIDAD SOCIAL",
+            "IMSS",
+            "SEGURIDADSOCIAL",
+        ],
+        "COMPROBANTE_DOMICILIO": [
+            "TELMEX",
+            "CFE",
+            "TOTALPLAY",
+            "IZZI",
+            "MEGACABLE",
+            "TELCEL",
+            "LINEA DE CAPTURA",
+            "TOTAL A PAGAR",
+            "NUMERO DE SERVICIO",
+        ],
+        "CONSTANCIA_SITUACION_FISCAL": [
+            "CONSTANCIA DE SITUACION FISCAL",
+            "CEDULA DE IDENTIFICACION FISCAL",
+            "CONSTANCIADESITUACIONFISCAL",
+            "CEDULADEIDENTIFICACIONFISCAL",
+            "SITUACION FISCAL",
+        ],
+        "DATOS_BANCARIOS": [
+            "ESTADO DE CUENTA",
+            "CLABE",
+            "ESTADODECUENTA",
+        ],
+        "FACTURA": [
+            # Payment / payroll / SPEI markers
+            "PAGO DE NOMINA",
+            "DISPERSION DE NOMINA",
+            "TRANSFERENCIA SPEI",
+            "SPEI",
+            "COMPROBANTE DE TRANSFERENCIA",
+            "ABONO NOMINA",
+            "PAGO MISMO BANCO",
+            "DISPERSIONNOMINA",
+            "PAGODENOMINA",
+            "TRANSFERENCIASPEI",
+        ],
+    }
+
+    markers = checks.get(doc_type)
+    if markers is None:
+        # No hard markers defined for this type → trust NB
+        return True
+
+    combined = text + " " + compact_text
+    return any(marker in combined for marker in markers)

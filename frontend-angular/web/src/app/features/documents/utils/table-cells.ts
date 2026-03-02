@@ -341,6 +341,11 @@ export function isTableCellsField(field: Pick<DocumentField, 'key' | 'label'>): 
     return true;
   }
 
+  // Match additional generic tables: tabla_celdas_2, tabla_celdas_3, etc.
+  if (key.startsWith('tabla_celdas')) {
+    return true;
+  }
+
   const label = normalizeToken(field.label);
   return label.includes('tabla') && label.includes('celdas');
 }
