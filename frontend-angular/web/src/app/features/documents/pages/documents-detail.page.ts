@@ -86,16 +86,17 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
         <a class="ghost" [routerLink]="['/documents', document.id, 'results']">Ver resultados</a>
       </div>
 
-      <div class="grid" [class.grid--full]="isFacturaType">
+      <div class="grid grid--full">
         <app-document-viewer
           [fileUrl]="previewFileUrl"
           [mimeType]="previewMimeType"
           [loading]="isPreviewLoading"
           [errorMessage]="previewError"
         ></app-document-viewer>
-        <div class="fields" *ngIf="!isFacturaType">
+        <!-- Resultados extraídos hidden: only table panel is shown -->
+        <div class="fields" *ngIf="false">
           <h3>Resultados extraidos</h3>
-          <p class="review" *ngIf="document.needs_review">Revision requerida por baja confianza o validacion.</p>
+          <p class="review" *ngIf="document?.needs_review">Revision requerida por baja confianza o validacion.</p>
           <table class="results" *ngIf="displayFields.length">
             <thead>
               <tr>
