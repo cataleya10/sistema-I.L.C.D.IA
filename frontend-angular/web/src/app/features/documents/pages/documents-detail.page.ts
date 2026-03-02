@@ -93,8 +93,8 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
           [loading]="isPreviewLoading"
           [errorMessage]="previewError"
         ></app-document-viewer>
-        <!-- Resultados extraídos hidden: only table panel is shown -->
-        <div class="fields" *ngIf="false">
+        <!-- Resultados extraídos: hidden for GENERICO / FACTURA / PAGO (table-only types) -->
+        <div class="fields" *ngIf="!hideExtractedResults">
           <h3>Resultados extraidos</h3>
           <p class="review" *ngIf="document?.needs_review">Revision requerida por baja confianza o validacion.</p>
           <table class="results" *ngIf="displayFields.length">
@@ -812,6 +812,13 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
   /** True when the current document is FACTURA — hides "Resultados extraídos" in favour of Tabla detectada. */
   get isFacturaType(): boolean {
     return this.document?.document_type === 'FACTURA';
+  }
+
+  /** Hide extracted-results panel for table-only document types. */
+  private static readonly TABLE_ONLY_TYPES = new Set(['GENERICO', 'FACTURA', 'PAGO']);
+  get hideExtractedResults(): boolean {
+    const dt = (this.document?.document_type ?? '').toUpperCase();
+    return DocumentsDetailPage.TABLE_ONLY_TYPES.has(dt);
   }
   tableView: TableViewModel = { headerRows: [], bodyRows: [] };
   allTableViews: { label: string; tableView: TableViewModel }[] = [];
