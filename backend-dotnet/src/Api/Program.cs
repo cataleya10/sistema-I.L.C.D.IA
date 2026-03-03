@@ -77,7 +77,9 @@ builder.Services.AddSwaggerGen(options =>
     });
     options.OperationFilter<Api.Swagger.FileUploadOperationFilter>();
 });
-builder.Services.AddHealthChecks();
+builder.Services.AddHealthChecks()
+    .AddCheck<Api.HealthChecks.AiEngineHealthCheck>("ai-engine", tags: new[] { "ready" })
+    .AddCheck<Api.HealthChecks.DatabaseHealthCheck>("database", tags: new[] { "ready" });
 
 builder.Services.Configure<UploadOptions>(
     builder.Configuration.GetSection(UploadOptions.SectionName));
@@ -268,6 +270,26 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers().RequireRateLimiting("user");
 app.MapHealthChecks("/health");
+app.MapHealthChecks("/ready", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready"),
+    ResponseWriter = async (context, report) =>
+    {
+        context.Response.ContentType = "application/json";
+        var result = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            status = report.Status.ToString(),
+            checks = report.Entries.Select(e => new
+            {
+                name = e.Key,
+                status = e.Value.Status.ToString(),
+                description = e.Value.Description,
+                duration = e.Value.Duration.TotalMilliseconds
+            })
+        });
+        await context.Response.WriteAsync(result);
+    }
+});
 
 using (var scope = app.Services.CreateScope())
 {

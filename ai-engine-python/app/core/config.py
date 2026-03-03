@@ -31,5 +31,8 @@ class Settings(BaseModel):
     llm_fallback_enabled: bool = _env_bool("LLM_FALLBACK_ENABLED", False)
     anthropic_api_key: str | None = os.getenv("ANTHROPIC_API_KEY")
     llm_fallback_model: str = os.getenv("LLM_FALLBACK_MODEL", "claude-haiku-4-5-20251001")
+    cors_origins: str = os.getenv("CORS_ORIGINS", "")
+    rate_limit_max: int = int(os.getenv("RATE_LIMIT_MAX", "120"))
+    rate_limit_window_seconds: int = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
 
 settings = Settings()

@@ -39,6 +39,15 @@ ai-engine-python/artifacts/
 .pytest_cache/
 pytest-cache-files-*/
 
+# TLS / private keys (never commit)
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+.env.production
+.env.backend
+
 # Claude Code temp artifacts
 **/tmpclaude-*-cwd/
 deleteme.tmp

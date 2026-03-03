@@ -1,34 +1,50 @@
 services:
   ai-engine:
     build: ./ai-engine-python
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     environment:
       - LOG_LEVEL=info
+      - API_KEY=${API_KEY}
+      - APP_ENV=development
+      - CORS_ORIGINS=http://localhost:5000,http://localhost:4200
+      - RATE_LIMIT_MAX=120
+      - RATE_LIMIT_WINDOW_SECONDS=60
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 15s
       timeout: 5s
       retries: 3
+    networks:
+      - internal
     restart: unless-stopped
 
   backend:
     build: ./backend-dotnet
     ports:
       - "5000:5000"
+    env_file:
+      - .env
+      - .env.backend
     environment:
-      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:5000
-      - Cors__AllowedOrigins=http://localhost:4200,http://localhost
+      - Database__Provider=InMemory
+      - Cors__AllowedOrigins__0=http://localhost:4200
+      - Cors__AllowedOrigins__1=http://localhost
       - PythonAi__BaseUrl=http://ai-engine:8000
+      - PythonAi__ApiKey=${PythonAi__ApiKey}
     depends_on:
       ai-engine:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:5000/ready"]
       interval: 15s
-      timeout: 5s
+      timeout: 10s
       retries: 3
+    networks:
+      - internal
+      - frontend
     restart: unless-stopped
 
   frontend:
@@ -37,4 +53,17 @@ services:
       - "4200:80"
     depends_on:
       - backend
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/nginx-health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - frontend
     restart: unless-stopped
+
+networks:
+  internal:
+    driver: bridge
+  frontend:
+    driver: bridge

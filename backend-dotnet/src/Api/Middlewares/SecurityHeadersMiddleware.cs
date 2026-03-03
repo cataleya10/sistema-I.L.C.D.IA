@@ -18,6 +18,8 @@ public class SecurityHeadersMiddleware
         context.Response.Headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()";
         context.Response.Headers["Cross-Origin-Resource-Policy"] = "same-site";
         context.Response.Headers["X-Permitted-Cross-Domain-Policies"] = "none";
+        context.Response.Headers["Content-Security-Policy"] = "default-src 'none'";
+        context.Response.Headers["Cache-Control"] = "no-store";
         await _next(context);
     }
 }

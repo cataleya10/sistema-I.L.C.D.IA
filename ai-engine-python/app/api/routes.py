@@ -68,7 +68,6 @@ async def health_endpoint():
     return {
         "status": "ok",
         "version": settings.pipeline_version,
-        "env": settings.app_env,
     }
 
 
@@ -77,7 +76,7 @@ async def metrics_endpoint():
     return get_precision_metrics()
 
 
-@router.post("/export-table")
+@router.post("/export-table", dependencies=[Depends(verify_api_key)])
 async def export_table_endpoint(
     columns: list[str] = Form(...),
     rows: str = Form(...),  # JSON stringified list of dicts
