@@ -35,6 +35,12 @@ export class AuthService {
       .pipe(map((response) => this.normalizeSession(response)));
   }
 
+  register(email: string, password: string) {
+    return this.http
+      .post<LoginResponse>(`${this.baseUrl}/register`, { email, password })
+      .pipe(map((response) => this.normalizeSession(response)));
+  }
+
   refreshToken(refreshToken: string) {
     return this.http
       .post<LoginResponse>(`${this.baseUrl}/refresh`, { refresh_token: refreshToken })

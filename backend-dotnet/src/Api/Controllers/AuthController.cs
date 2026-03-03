@@ -14,6 +14,7 @@ public class AuthController : ControllerBase
     private readonly GoogleOptions _googleOptions;
     private readonly JwtTokenService _tokenService;
     private readonly RefreshTokenStore _refreshTokens;
+    private readonly LocalUserStore _localUsers;
     private readonly ILogger<AuthController> _logger;
 
     public AuthController(
@@ -21,12 +22,14 @@ public class AuthController : ControllerBase
         IOptions<GoogleOptions> googleOptions,
         JwtTokenService tokenService,
         RefreshTokenStore refreshTokens,
+        LocalUserStore localUsers,
         ILogger<AuthController> logger)
     {
         _options = options.Value;
         _googleOptions = googleOptions.Value;
         _tokenService = tokenService;
         _refreshTokens = refreshTokens;
+        _localUsers = localUsers;
         _logger = logger;
     }
 
@@ -41,25 +44,58 @@ public class AuthController : ControllerBase
         }
 
         var normalizedUsername = request.Username.Trim();
+
+        // 1) Check hardcoded users first
         var user = _options.Users.FirstOrDefault(u =>
             string.Equals(u.Username, normalizedUsername, StringComparison.OrdinalIgnoreCase));
 
-        if (user is null || !VerifyPassword(user, request.Password))
+        if (user is not null && VerifyPassword(user, request.Password))
         {
-            return Unauthorized();
+            return IssueLoginResponse(user.Username, user.Role);
         }
 
-        var token = _tokenService.CreateToken(user.Username, user.Role);
+        // 2) Check local registered users (by email)
+        if (_localUsers.VerifyPassword(normalizedUsername, request.Password))
+        {
+            var localUser = _localUsers.FindByEmail(normalizedUsername)!;
+            return IssueLoginResponse(localUser.Email, localUser.Role);
+        }
+
+        return Unauthorized();
+    }
+
+    [HttpPost("register")]
+    public IActionResult Register([FromBody] RegisterRequest request)
+    {
+        if (request is null
+            || string.IsNullOrWhiteSpace(request.Email)
+            || string.IsNullOrWhiteSpace(request.Password))
+        {
+            return BadRequest(new { error = "Correo y contrasena son requeridos" });
+        }
+
+        if (!_localUsers.TryRegister(request.Email, request.Password, "User", out var error))
+        {
+            return BadRequest(new { error });
+        }
+
+        // Auto-login after registration
+        return IssueLoginResponse(request.Email.Trim().ToLowerInvariant(), "User");
+    }
+
+    private IActionResult IssueLoginResponse(string username, string role)
+    {
+        var token = _tokenService.CreateToken(username, role);
         var refresh = _refreshTokens.IssueToken(
-            user.Username,
-            user.Role,
+            username,
+            role,
             TimeSpan.FromMinutes(_options.RefreshTokenExpirationMinutes));
 
         return Ok(new LoginResponse(
             token,
             refresh.Token,
-            user.Username,
-            user.Role,
+            username,
+            role,
             _tokenService.GetAccessTokenExpiry()
         ));
     }
@@ -175,6 +211,7 @@ public class AuthController : ControllerBase
 }
 
 public sealed record LoginRequest(string Username, string Password);
+public sealed record RegisterRequest(string Email, string Password);
 public sealed record GoogleLoginRequest(string IdToken);
 public sealed record RefreshRequest(string RefreshToken);
 public sealed record LoginResponse(string Token, string RefreshToken, string Username, string Role, DateTime ExpiresAt);

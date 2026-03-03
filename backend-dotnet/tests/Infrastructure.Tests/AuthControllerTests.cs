@@ -18,6 +18,7 @@ public class AuthControllerTests : IDisposable
     private readonly GoogleOptions _googleOptions;
     private readonly JwtTokenService _tokenService;
     private readonly RefreshTokenStore _refreshTokenStore;
+    private readonly LocalUserStore _localUserStore;
     private readonly AuthController _controller;
 
     public AuthControllerTests()
@@ -65,11 +66,17 @@ public class AuthControllerTests : IDisposable
             env,
             new EphemeralDataProtectionProvider());
 
+        _localUserStore = new LocalUserStore(
+            NullLogger<LocalUserStore>.Instance,
+            env,
+            new EphemeralDataProtectionProvider());
+
         _controller = new AuthController(
             Options.Create(_jwtOptions),
             Options.Create(_googleOptions),
             _tokenService,
             _refreshTokenStore,
+            _localUserStore,
             NullLogger<AuthController>.Instance);
     }
 
@@ -236,6 +243,89 @@ public class AuthControllerTests : IDisposable
         Assert.IsType<UnauthorizedResult>(result);
     }
 
+    // ─── Register ──────────────────────────────────────────────
+
+    [Fact]
+    public void Register_ValidEmailAndPassword_ReturnsOkAndAutoLogin()
+    {
+        var result = _controller.Register(new RegisterRequest("new@example.com", "secret123"));
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<LoginResponse>(ok.Value);
+        Assert.False(string.IsNullOrWhiteSpace(response.Token));
+        Assert.False(string.IsNullOrWhiteSpace(response.RefreshToken));
+        Assert.Equal("new@example.com", response.Username);
+        Assert.Equal("User", response.Role);
+    }
+
+    [Fact]
+    public void Register_DuplicateEmail_ReturnsBadRequest()
+    {
+        _controller.Register(new RegisterRequest("dup@example.com", "secret123"));
+
+        var result = _controller.Register(new RegisterRequest("dup@example.com", "other456"));
+
+        var bad = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Contains("ya esta registrado", bad.Value?.ToString());
+    }
+
+    [Fact]
+    public void Register_InvalidEmail_ReturnsBadRequest()
+    {
+        var result = _controller.Register(new RegisterRequest("not-an-email", "secret123"));
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public void Register_ShortPassword_ReturnsBadRequest()
+    {
+        var result = _controller.Register(new RegisterRequest("short@example.com", "12345"));
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public void Register_NullRequest_ReturnsBadRequest()
+    {
+        var result = _controller.Register(null!);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public void Register_EmptyFields_ReturnsBadRequest()
+    {
+        var result = _controller.Register(new RegisterRequest("", ""));
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    // ─── Login with registered local user ─────────────────────
+
+    [Fact]
+    public void Login_WithRegisteredLocalUser_ReturnsOk()
+    {
+        _controller.Register(new RegisterRequest("local@example.com", "mypassword"));
+
+        var result = _controller.Login(new LoginRequest("local@example.com", "mypassword"));
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<LoginResponse>(ok.Value);
+        Assert.Equal("local@example.com", response.Username);
+        Assert.Equal("User", response.Role);
+    }
+
+    [Fact]
+    public void Login_RegisteredLocalUser_WrongPassword_ReturnsUnauthorized()
+    {
+        _controller.Register(new RegisterRequest("wrong@example.com", "correctpw"));
+
+        var result = _controller.Login(new LoginRequest("wrong@example.com", "wrongpw"));
+
+        Assert.IsType<UnauthorizedResult>(result);
+    }
+
     // ─── Google Login ─────────────────────────────────────────
 
     [Fact]
@@ -263,6 +353,7 @@ public class AuthControllerTests : IDisposable
             Options.Create(emptyGoogleOptions),
             _tokenService,
             _refreshTokenStore,
+            _localUserStore,
             NullLogger<AuthController>.Instance);
 
         var result = await controller.GoogleLogin(new GoogleLoginRequest("some-token"));

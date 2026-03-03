@@ -60,6 +60,23 @@ describe('AuthService', () => {
       role: 'User',
     });
   });
+
+  it('register sends email and password to /api/auth/register', () => {
+    service.register('new@example.com', 'secret123').subscribe((session) => {
+      expect(session.token).toBe('reg-token');
+      expect(session.username).toBe('new@example.com');
+    });
+
+    const req = httpMock.expectOne((r: any) => r.url.includes('/api/auth/register'));
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual({ email: 'new@example.com', password: 'secret123' });
+    req.flush({
+      token: 'reg-token',
+      refreshToken: 'reg-refresh',
+      username: 'new@example.com',
+      role: 'User',
+    });
+  });
 });
 
 function buildJwt(exp: number): string {

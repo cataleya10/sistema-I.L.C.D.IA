@@ -125,6 +125,7 @@ builder.Services.Configure<RateLimitOptions>(
 
 builder.Services.AddSingleton<JwtTokenService>();
 builder.Services.AddSingleton<RefreshTokenStore>();
+builder.Services.AddSingleton<LocalUserStore>();
 builder.Services.AddSingleton<Api.Services.MetricsService>();
 builder.Services.AddHostedService<Api.Services.DocumentProcessingWorker>();
 builder.Services.AddHostedService<Api.Services.StorageCleanupWorker>();

@@ -13,15 +13,17 @@ declare const google: any;
   imports: [CommonModule, FormsModule],
   template: `
     <section class="login">
-      <h2>Iniciar sesion</h2>
-      <form (ngSubmit)="submit()">
-        <label for="username">Usuario</label>
+      <h2>{{ isRegisterMode ? 'Registrarse' : 'Iniciar sesion' }}</h2>
+
+      <!-- LOGIN FORM -->
+      <form *ngIf="!isRegisterMode" (ngSubmit)="submit()">
+        <label for="username">Usuario o correo</label>
         <input
           id="username"
           type="text"
           name="username"
           [(ngModel)]="username"
-          placeholder="Usuario"
+          placeholder="Usuario o correo"
           autocomplete="username"
           required
         />
@@ -44,11 +46,49 @@ declare const google: any;
         <p class="error" *ngIf="error" role="alert">{{ errorMessage }}</p>
       </form>
 
-      <div class="divider" *ngIf="googleEnabled">
+      <!-- REGISTER FORM -->
+      <form *ngIf="isRegisterMode" (ngSubmit)="submitRegister()">
+        <label for="reg-email">Correo electronico</label>
+        <input
+          id="reg-email"
+          type="email"
+          name="regEmail"
+          [(ngModel)]="regEmail"
+          placeholder="tucorreo@gmail.com"
+          autocomplete="email"
+          required
+        />
+
+        <label for="reg-password">Contrasena (min. 6 caracteres)</label>
+        <input
+          id="reg-password"
+          type="password"
+          name="regPassword"
+          [(ngModel)]="regPassword"
+          placeholder="Contrasena"
+          autocomplete="new-password"
+          required
+        />
+
+        <button type="submit" [disabled]="isSubmitting">
+          {{ isSubmitting ? 'Registrando...' : 'Registrarse' }}
+        </button>
+
+        <p class="error" *ngIf="registerError" role="alert">{{ registerError }}</p>
+        <p class="success" *ngIf="registerSuccess" role="status">Registro exitoso</p>
+      </form>
+
+      <p class="toggle-link">
+        <a href="javascript:void(0)" (click)="toggleMode()">
+          {{ isRegisterMode ? 'Ya tengo cuenta — Iniciar sesion' : 'No tengo cuenta — Registrarme' }}
+        </a>
+      </p>
+
+      <div class="divider" *ngIf="googleEnabled && !isRegisterMode">
         <span>o</span>
       </div>
 
-      <div id="google-signin-btn" *ngIf="googleEnabled"></div>
+      <div id="google-signin-btn" *ngIf="googleEnabled && !isRegisterMode"></div>
       <p class="error" *ngIf="googleError" role="alert">{{ googleError }}</p>
     </section>
   `,
@@ -109,6 +149,22 @@ declare const google: any;
         display: flex;
         justify-content: center;
       }
+      .toggle-link {
+        text-align: center;
+        margin: 0;
+      }
+      .toggle-link a {
+        color: #4f46e5;
+        font-size: 13px;
+        text-decoration: none;
+      }
+      .toggle-link a:hover {
+        text-decoration: underline;
+      }
+      .success {
+        color: #15803d;
+        margin: 0;
+      }
     `
   ]
 })
@@ -120,6 +176,11 @@ export class LoginPage implements OnInit, AfterViewInit, OnDestroy {
   isSubmitting = false;
   googleEnabled = false;
   googleError = '';
+  isRegisterMode = false;
+  regEmail = '';
+  regPassword = '';
+  registerError = '';
+  registerSuccess = false;
   private googleClientId = '';
 
   constructor(
@@ -222,6 +283,45 @@ export class LoginPage implements OnInit, AfterViewInit, OnDestroy {
       },
       error: () => {
         this.error = true;
+        this.isSubmitting = false;
+      }
+    });
+  }
+
+  toggleMode(): void {
+    this.isRegisterMode = !this.isRegisterMode;
+    this.error = false;
+    this.registerError = '';
+    this.registerSuccess = false;
+    this.googleError = '';
+  }
+
+  submitRegister(): void {
+    this.registerError = '';
+    this.registerSuccess = false;
+    const email = this.regEmail.trim();
+
+    if (!email || !email.includes('@')) {
+      this.registerError = 'Ingresa un correo valido';
+      return;
+    }
+
+    if (!this.regPassword || this.regPassword.length < 6) {
+      this.registerError = 'La contrasena debe tener al menos 6 caracteres';
+      return;
+    }
+
+    this.isSubmitting = true;
+    this.auth.register(email, this.regPassword).subscribe({
+      next: (session) => {
+        this.auth.setToken(session.token);
+        this.auth.setRefreshToken(session.refreshToken);
+        this.auth.setUser(session.username, session.role);
+        this.isSubmitting = false;
+        this.router.navigate(['/documents']);
+      },
+      error: (err) => {
+        this.registerError = err?.error?.error || 'Error al registrarse';
         this.isSubmitting = false;
       }
     });

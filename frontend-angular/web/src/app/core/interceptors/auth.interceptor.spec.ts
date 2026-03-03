@@ -101,6 +101,17 @@ describe('AuthInterceptor', () => {
     expect(req.request.headers.has('Authorization')).toBeFalse();
     req.flush({});
   });
+
+  it('should skip auth header for register requests', () => {
+    const token = buildJwt(Math.floor(Date.now() / 1000) + 300);
+    authService.setToken(token);
+
+    http.post('/api/auth/register', { email: 'a@b.com', password: '123456' }).subscribe();
+
+    const req = httpMock.expectOne('/api/auth/register');
+    expect(req.request.headers.has('Authorization')).toBeFalse();
+    req.flush({});
+  });
 });
 
 function buildJwt(exp: number): string {

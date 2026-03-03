@@ -154,6 +154,108 @@ describe('LoginPage', () => {
 
     (window as any).__APP_CONFIG__ = { apiUrl: 'http://localhost:5000', googleClientId: '' };
   });
+
+  // ─── Register mode ──────────────────────────────────────
+
+  it('should toggle to register mode', () => {
+    createComponent();
+    expect(component.isRegisterMode).toBeFalse();
+
+    component.toggleMode();
+    fixture.detectChanges();
+
+    expect(component.isRegisterMode).toBeTrue();
+    const h2 = fixture.nativeElement.querySelector('h2');
+    expect(h2.textContent).toContain('Registrarse');
+  });
+
+  it('should toggle back to login mode', () => {
+    createComponent();
+    component.toggleMode(); // to register
+    component.toggleMode(); // back to login
+    fixture.detectChanges();
+
+    expect(component.isRegisterMode).toBeFalse();
+    const h2 = fixture.nativeElement.querySelector('h2');
+    expect(h2.textContent).toContain('Iniciar sesion');
+  });
+
+  it('should show register error for invalid email', () => {
+    createComponent();
+    component.toggleMode();
+    component.regEmail = 'not-an-email';
+    component.regPassword = 'secret123';
+    component.submitRegister();
+
+    expect(component.registerError).toBeTruthy();
+  });
+
+  it('should show register error for short password', () => {
+    createComponent();
+    component.toggleMode();
+    component.regEmail = 'user@example.com';
+    component.regPassword = '12345';
+    component.submitRegister();
+
+    expect(component.registerError).toContain('6 caracteres');
+  });
+
+  it('should call auth.register on valid register submit', () => {
+    createComponent();
+    component.toggleMode();
+    component.regEmail = 'user@example.com';
+    component.regPassword = 'secret123';
+    component.submitRegister();
+
+    expect(component.isSubmitting).toBeTrue();
+
+    const req = httpMock.expectOne((r) => r.url.includes('/api/auth/register'));
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual({ email: 'user@example.com', password: 'secret123' });
+
+    req.flush({
+      token: 'new-token',
+      refreshToken: 'new-refresh',
+      username: 'user@example.com',
+      role: 'User',
+    });
+
+    expect(component.isSubmitting).toBeFalse();
+    expect(router.navigate).toHaveBeenCalledWith(['/documents']);
+  });
+
+  it('should show error on register failure', () => {
+    createComponent();
+    component.toggleMode();
+    component.regEmail = 'dup@example.com';
+    component.regPassword = 'secret123';
+    component.submitRegister();
+
+    const req = httpMock.expectOne((r) => r.url.includes('/api/auth/register'));
+    req.flush({ error: 'El correo ya esta registrado' }, { status: 400, statusText: 'Bad Request' });
+
+    expect(component.registerError).toContain('ya esta registrado');
+    expect(component.isSubmitting).toBeFalse();
+  });
+
+  it('should clear errors when toggling mode', () => {
+    createComponent();
+    component.error = true;
+    component.googleError = 'some error';
+    component.toggleMode();
+
+    expect(component.error).toBeFalse();
+    expect(component.googleError).toBe('');
+    expect(component.registerError).toBe('');
+    expect(component.registerSuccess).toBeFalse();
+  });
+
+  it('should render toggle link', () => {
+    createComponent();
+    const link = fixture.nativeElement.querySelector('.toggle-link a');
+    expect(link).toBeTruthy();
+    expect(link.textContent).toContain('Registrarme');
+  });
 });
 
 function buildJwt(exp: number): string {
