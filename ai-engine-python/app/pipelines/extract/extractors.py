@@ -1803,6 +1803,9 @@ def _extract_generic_all_tables(
         first_row = " | ".join(str(c) for c in rows[0])[:120] if rows else "?"
         logger.info("[DEDUP] table[%d] src=%s rows=%d cols=%d first_row=%s",
                     ti, t.get("source", "?"), len(rows), t.get("column_count", 0), first_row)
+        # Dump ALL rows for diagnostics
+        for ri, row in enumerate(rows):
+            logger.info("[DEDUP]   table[%d] row[%d]: %s", ti, ri, " | ".join(str(c) for c in row)[:200])
 
     # ── Deduplicate tables ──────────────────────────────────────────────
     # Phase 1: exact signature match (first 6 rows normalised content)
