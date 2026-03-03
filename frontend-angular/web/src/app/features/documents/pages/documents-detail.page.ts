@@ -86,7 +86,7 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
         <a class="ghost" [routerLink]="['/documents', document.id, 'results']">Ver resultados</a>
       </div>
 
-      <div class="grid grid--full">
+      <div class="grid" [class.grid--full]="hideExtractedResults">
         <app-document-viewer
           [fileUrl]="previewFileUrl"
           [mimeType]="previewMimeType"
@@ -410,6 +410,9 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
         padding: 16px;
         display: grid;
         gap: 12px;
+        max-height: 85vh;
+        overflow-y: auto;
+        align-self: start;
       }
       .table-panel {
         background: #fff;
