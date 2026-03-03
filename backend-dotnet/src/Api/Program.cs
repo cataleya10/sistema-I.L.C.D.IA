@@ -87,6 +87,9 @@ builder.Services.Configure<UploadOptions>(
 builder.Services.Configure<JwtOptions>(
     builder.Configuration.GetSection(JwtOptions.SectionName));
 
+builder.Services.Configure<GoogleOptions>(
+    builder.Configuration.GetSection(GoogleOptions.SectionName));
+
 builder.Services.PostConfigure<JwtOptions>(options =>
 {
     var usersWithoutHash = options.Users

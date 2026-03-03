@@ -134,6 +134,26 @@ describe('LoginPage', () => {
     expect(alert).toBeTruthy();
     expect(alert.textContent).toContain('Credenciales invalidas');
   });
+
+  it('should hide google button when googleClientId is not configured', () => {
+    createComponent();
+    expect(component.googleEnabled).toBeFalse();
+
+    const googleBtn = fixture.nativeElement.querySelector('#google-signin-btn');
+    expect(googleBtn).toBeNull();
+  });
+
+  it('should show google button when googleClientId is configured', () => {
+    (window as any).__APP_CONFIG__ = { apiUrl: 'http://localhost:5000', googleClientId: 'test-client-id' };
+    createComponent();
+    expect(component.googleEnabled).toBeTrue();
+
+    const divider = fixture.nativeElement.querySelector('.divider');
+    expect(divider).toBeTruthy();
+    expect(divider.textContent).toContain('o');
+
+    (window as any).__APP_CONFIG__ = { apiUrl: 'http://localhost:5000', googleClientId: '' };
+  });
 });
 
 function buildJwt(exp: number): string {

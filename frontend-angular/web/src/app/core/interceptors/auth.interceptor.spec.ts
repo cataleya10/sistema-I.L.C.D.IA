@@ -90,6 +90,17 @@ describe('AuthInterceptor', () => {
     expect(req.request.headers.get('Authorization')).toBe('Custom xyz');
     req.flush([]);
   });
+
+  it('should skip auth header for google login requests', () => {
+    const token = buildJwt(Math.floor(Date.now() / 1000) + 300);
+    authService.setToken(token);
+
+    http.post('/api/auth/google', { id_token: 'gtoken' }).subscribe();
+
+    const req = httpMock.expectOne('/api/auth/google');
+    expect(req.request.headers.has('Authorization')).toBeFalse();
+    req.flush({});
+  });
 });
 
 function buildJwt(exp: number): string {

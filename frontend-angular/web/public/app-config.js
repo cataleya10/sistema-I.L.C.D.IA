@@ -1,3 +1,4 @@
 ﻿window.__APP_CONFIG__ = {
-  apiUrl: 'http://localhost:5000'
+  apiUrl: 'http://localhost:5000',
+  googleClientId: ''
 };

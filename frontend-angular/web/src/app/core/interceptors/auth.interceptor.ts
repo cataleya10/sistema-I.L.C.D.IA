@@ -28,6 +28,7 @@ export class AuthInterceptor implements HttpInterceptor {
   private isAuthRequest(req: HttpRequest<unknown>): boolean {
     return (
       req.url.includes('/api/auth/login') ||
+      req.url.includes('/api/auth/google') ||
       req.url.includes('/api/auth/refresh') ||
       req.url.includes('/api/auth/logout')
     );

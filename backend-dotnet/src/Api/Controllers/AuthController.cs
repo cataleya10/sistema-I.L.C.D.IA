@@ -1,4 +1,5 @@
 using Api.Services;
+using Google.Apis.Auth;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Shared.Options;
@@ -10,14 +11,23 @@ namespace Api.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly JwtOptions _options;
+    private readonly GoogleOptions _googleOptions;
     private readonly JwtTokenService _tokenService;
     private readonly RefreshTokenStore _refreshTokens;
+    private readonly ILogger<AuthController> _logger;
 
-    public AuthController(IOptions<JwtOptions> options, JwtTokenService tokenService, RefreshTokenStore refreshTokens)
+    public AuthController(
+        IOptions<JwtOptions> options,
+        IOptions<GoogleOptions> googleOptions,
+        JwtTokenService tokenService,
+        RefreshTokenStore refreshTokens,
+        ILogger<AuthController> logger)
     {
         _options = options.Value;
+        _googleOptions = googleOptions.Value;
         _tokenService = tokenService;
         _refreshTokens = refreshTokens;
+        _logger = logger;
     }
 
     [HttpPost("login")]
@@ -103,9 +113,69 @@ public class AuthController : ControllerBase
 
         return BCrypt.Net.BCrypt.Verify(password, user.PasswordHash);
     }
+
+    [HttpPost("google")]
+    public async Task<IActionResult> GoogleLogin([FromBody] GoogleLoginRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request?.IdToken))
+        {
+            return BadRequest(new { error = "id_token is required" });
+        }
+
+        if (string.IsNullOrWhiteSpace(_googleOptions.ClientId))
+        {
+            _logger.LogError("Google:ClientId is not configured");
+            return StatusCode(500, new { error = "Google login is not configured" });
+        }
+
+        GoogleJsonWebSignature.Payload payload;
+        try
+        {
+            var settings = new GoogleJsonWebSignature.ValidationSettings
+            {
+                Audience = new[] { _googleOptions.ClientId }
+            };
+            payload = await GoogleJsonWebSignature.ValidateAsync(request.IdToken, settings);
+        }
+        catch (InvalidJwtException ex)
+        {
+            _logger.LogWarning(ex, "Invalid Google ID token received");
+            return Unauthorized(new { error = "Invalid Google token" });
+        }
+
+        var email = payload.Email;
+        if (string.IsNullOrWhiteSpace(email) || !payload.EmailVerified)
+        {
+            return Unauthorized(new { error = "Google account email is not verified" });
+        }
+
+        var role = _googleOptions.AdminEmails
+            .Any(e => string.Equals(e, email, StringComparison.OrdinalIgnoreCase))
+            ? "Admin"
+            : "User";
+
+        var username = payload.Name ?? email.Split('@')[0];
+
+        _logger.LogInformation("Google login successful for {Email} as {Role}", email, role);
+
+        var token = _tokenService.CreateToken(username, role);
+        var refresh = _refreshTokens.IssueToken(
+            username,
+            role,
+            TimeSpan.FromMinutes(_options.RefreshTokenExpirationMinutes));
+
+        return Ok(new LoginResponse(
+            token,
+            refresh.Token,
+            username,
+            role,
+            _tokenService.GetAccessTokenExpiry()
+        ));
+    }
 }
 
 public sealed record LoginRequest(string Username, string Password);
+public sealed record GoogleLoginRequest(string IdToken);
 public sealed record RefreshRequest(string RefreshToken);
 public sealed record LoginResponse(string Token, string RefreshToken, string Username, string Role, DateTime ExpiresAt);
 

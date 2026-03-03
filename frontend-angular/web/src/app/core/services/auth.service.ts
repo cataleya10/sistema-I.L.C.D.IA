@@ -29,6 +29,12 @@ export class AuthService {
       .pipe(map((response) => this.normalizeSession(response)));
   }
 
+  loginWithGoogle(idToken: string) {
+    return this.http
+      .post<LoginResponse>(`${this.baseUrl}/google`, { id_token: idToken })
+      .pipe(map((response) => this.normalizeSession(response)));
+  }
+
   refreshToken(refreshToken: string) {
     return this.http
       .post<LoginResponse>(`${this.baseUrl}/refresh`, { refresh_token: refreshToken })

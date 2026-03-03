@@ -1,10 +1,11 @@
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { AuthService } from './auth.service';
 
 describe('AuthService', () => {
   let service: AuthService;
+  let httpMock: HttpTestingController;
 
   beforeEach(() => {
     localStorage.clear();
@@ -12,6 +13,11 @@ describe('AuthService', () => {
       providers: [provideHttpClient(), provideHttpClientTesting()]
     });
     service = TestBed.inject(AuthService);
+    httpMock = TestBed.inject(HttpTestingController);
+  });
+
+  afterEach(() => {
+    httpMock.verify();
   });
 
   it('returns token when it is not expired', () => {
@@ -36,6 +42,23 @@ describe('AuthService', () => {
 
     expect(service.getToken()).toBeNull();
     expect(service.isAuthenticated()).toBeFalse();
+  });
+
+  it('loginWithGoogle sends id_token to /api/auth/google', () => {
+    service.loginWithGoogle('google-id-token-abc').subscribe((session) => {
+      expect(session.token).toBe('jwt-token');
+      expect(session.username).toBe('googleuser');
+    });
+
+    const req = httpMock.expectOne((r: any) => r.url.includes('/api/auth/google'));
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual({ id_token: 'google-id-token-abc' });
+    req.flush({
+      token: 'jwt-token',
+      refresh_token: 'rt',
+      username: 'googleuser',
+      role: 'User',
+    });
   });
 });
 

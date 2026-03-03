@@ -2,6 +2,7 @@ import { environment } from '../../../environments/environment';
 
 type RuntimeConfig = {
   apiUrl?: string;
+  googleClientId?: string;
 };
 
 declare global {
@@ -43,4 +44,8 @@ export function getApiBaseUrl(): string {
   }
 
   throw new Error('API base URL is not configured. Set window.__APP_CONFIG__.apiUrl before deploying.');
+}
+
+export function getGoogleClientId(): string {
+  return window.__APP_CONFIG__?.googleClientId?.trim() ?? '';
 }

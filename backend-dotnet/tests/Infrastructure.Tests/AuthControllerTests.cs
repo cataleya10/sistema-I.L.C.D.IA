@@ -15,6 +15,7 @@ public class AuthControllerTests : IDisposable
 {
     private readonly string _tempDir;
     private readonly JwtOptions _jwtOptions;
+    private readonly GoogleOptions _googleOptions;
     private readonly JwtTokenService _tokenService;
     private readonly RefreshTokenStore _refreshTokenStore;
     private readonly AuthController _controller;
@@ -36,6 +37,12 @@ public class AuthControllerTests : IDisposable
                 new() { Username = "admin", PasswordHash = BCrypt.Net.BCrypt.HashPassword("admin123"), Role = "Admin" },
                 new() { Username = "user1", PasswordHash = BCrypt.Net.BCrypt.HashPassword("user123"), Role = "User" }
             }
+        };
+
+        _googleOptions = new GoogleOptions
+        {
+            ClientId = "test-google-client-id",
+            AdminEmails = new List<string> { "admin@example.com" }
         };
 
         _tokenService = new JwtTokenService(Options.Create(_jwtOptions));
@@ -60,8 +67,10 @@ public class AuthControllerTests : IDisposable
 
         _controller = new AuthController(
             Options.Create(_jwtOptions),
+            Options.Create(_googleOptions),
             _tokenService,
-            _refreshTokenStore);
+            _refreshTokenStore,
+            NullLogger<AuthController>.Instance);
     }
 
     public void Dispose()
@@ -225,6 +234,49 @@ public class AuthControllerTests : IDisposable
 
         var result = _controller.Refresh(new RefreshRequest(refreshToken));
         Assert.IsType<UnauthorizedResult>(result);
+    }
+
+    // ─── Google Login ─────────────────────────────────────────
+
+    [Fact]
+    public async Task GoogleLogin_EmptyIdToken_ReturnsBadRequest()
+    {
+        var result = await _controller.GoogleLogin(new GoogleLoginRequest(""));
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task GoogleLogin_NullRequest_ReturnsBadRequest()
+    {
+        var result = await _controller.GoogleLogin(null!);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task GoogleLogin_UnconfiguredClientId_Returns500()
+    {
+        var emptyGoogleOptions = new GoogleOptions { ClientId = "" };
+        var controller = new AuthController(
+            Options.Create(_jwtOptions),
+            Options.Create(emptyGoogleOptions),
+            _tokenService,
+            _refreshTokenStore,
+            NullLogger<AuthController>.Instance);
+
+        var result = await controller.GoogleLogin(new GoogleLoginRequest("some-token"));
+
+        var statusResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(500, statusResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task GoogleLogin_InvalidToken_ReturnsUnauthorized()
+    {
+        var result = await _controller.GoogleLogin(new GoogleLoginRequest("invalid-garbage-token"));
+
+        Assert.IsType<UnauthorizedObjectResult>(result);
     }
 
     // ─── Helpers ──────────────────────────────────────────────
