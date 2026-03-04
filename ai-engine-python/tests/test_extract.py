@@ -491,7 +491,7 @@ class ExtractPipelineTests(unittest.TestCase):
         )
         self.assertEqual(rows[1][0], "56783223195")
         self.assertEqual(rows[1][1], "1620260115134340581263")
-        self.assertEqual(rows[1][2], "$610.44")
+        self.assertEqual(rows[1][2], "610.44")
         self.assertEqual(rows[1][3], "MARLA GRISELDA")
         self.assertEqual(rows[1][4], "MENDEZ")
         self.assertEqual(rows[1][5], "FLORES")
@@ -499,7 +499,7 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertEqual(rows[1][7], "PAGO DE NOMINA")
         self.assertEqual(rows[2][0], "56936397470")
         self.assertEqual(rows[2][1], "1620260115134348451388")
-        self.assertEqual(rows[2][2], "$1,537.35")
+        self.assertEqual(rows[2][2], "1,537.35")
         self.assertEqual(rows[2][3], "ROLANDO ROGERIO")
         self.assertEqual(rows[2][4], "CONTRERAS")
         self.assertEqual(rows[2][5], "CAMARGO")
@@ -578,14 +578,14 @@ class ExtractPipelineTests(unittest.TestCase):
         # Referencia normalizada sin espacio
         self.assertEqual(rows[1][0], "56783223195")
         self.assertEqual(rows[1][1], "1620260115134340581263")
-        self.assertEqual(rows[1][2], "$610.44")
+        self.assertEqual(rows[1][2], "610.44")
         self.assertEqual(rows[1][3], "MARLA GRISELDA")
         self.assertEqual(rows[2][0], "56936397470")
         self.assertEqual(rows[2][1], "1620260115134348451388")
-        self.assertEqual(rows[2][2], "$1,537.35")
+        self.assertEqual(rows[2][2], "1,537.35")
         self.assertEqual(rows[3][0], "56905029323")
         self.assertEqual(rows[3][1], "1620260115134344071306")
-        self.assertEqual(rows[3][2], "$353.60")
+        self.assertEqual(rows[3][2], "353.60")
 
     def test_extract_factura_bbva_nomina_multipage_ocr_boxes(self):
         """Simula PDF multi-página donde OCR devuelve cada celda como un box separado.
@@ -747,7 +747,7 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertIn("002 - MARIO ANTONIO FLOTA ALPUCHE", payload.get("metadata", {}).get("usuario_sistema_nombre", ""))
         self.assertEqual(payload.get("metadata", {}).get("fecha_hora_validacion_archivo"), "SIN FECHA Y HORA DE REGISTRO")
         self.assertEqual(payload.get("metadata", {}).get("cantidad_total_movimientos"), "6")
-        self.assertEqual(payload.get("metadata", {}).get("importe_total_movimientos"), "$18,000.00")
+        self.assertEqual(payload.get("metadata", {}).get("importe_total_movimientos"), "18,000.00")
         rows = payload.get("table", {}).get("rows", [])
         self.assertGreaterEqual(len(rows), 1)
         self.assertIn("tipoderegistro", rows[0])
@@ -809,7 +809,7 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertGreaterEqual(len(summary), 2)
         self.assertEqual(summary[0].get("title"), "RESUMEN MOVIMIENTOS")
         self.assertEqual(summary[0].get("rows", [[]])[0][0], "6")
-        self.assertEqual(summary[0].get("rows", [[]])[0][1], "$18,000.00")
+        self.assertEqual(summary[0].get("rows", [[]])[0][1], "18,000.00")
         self.assertEqual(summary[1].get("title"), "RESUMEN TOTAL")
 
     def test_extract_factura_scotia_tablaceldas_includes_bottom_summary_cells(self):
@@ -844,7 +844,7 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertTrue(
             any(row[:4] == ["CANTIDAD DE MOVIMIENTOS ALTAS", "IMPORTE DE MOVIMIENTO ALTAS", "CANTIDAD DE MOVIMIENTOS BAJAS", "IMPORTE DE MOVIMIENTOS BAJAS"] for row in rows),
         )
-        self.assertTrue(any(row[:4] == ["6", "$18,000.00", "0", "$0.00"] for row in rows))
+        self.assertTrue(any(row[:4] == ["6", "18,000.00", "0", "0.00"] for row in rows))
         self.assertTrue(
             any(row[:4] == [
                 "TOTAL CANTIDAD DE MOVIMIENTOS ALTAS",
@@ -884,7 +884,7 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertGreaterEqual(len(canonical_rows), 1)
         self.assertEqual(canonical_rows[0].get("cuenta"), "000000001069485436")
         self.assertEqual(canonical_rows[0].get("referencia"), "8837492015")
-        self.assertEqual(canonical_rows[0].get("importe"), "$3,000.00")
+        self.assertEqual(canonical_rows[0].get("importe"), "3,000.00")
         self.assertIn("CARLOS ROBERTO", canonical_rows[0].get("nombre", ""))
         self.assertEqual(canonical_rows[0].get("estatus"), "APLICADO")
 
@@ -924,7 +924,7 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertIn("CARLOS ROBERTO", rows[1][1])
         self.assertEqual(rows[1][2], "01")
         self.assertEqual(rows[1][3], "000000001069485436")
-        self.assertEqual(rows[1][4], "$3,000.00")
+        self.assertEqual(rows[1][4], "3,000.00")
         self.assertIn(rows[1][5], {"TRANSMITIDO", "APLICADO", "ACEPTADO"})
         self.assertEqual(rows[1][6], "00")
         self.assertIn(rows[1][7], {"ACEPTADO", "APLICADO", "TRANSMITIDO"})
@@ -979,7 +979,7 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertEqual(rows[1][0], "0123965767")
         self.assertEqual(rows[1][2], "SANTANDER")
         self.assertEqual(rows[1][3], "014888567491511396")
-        self.assertEqual(rows[1][4], "$5,115.99")
+        self.assertEqual(rows[1][4], "5,115.99")
         self.assertEqual(rows[1][7], "01")
         self.assertEqual(rows[1][8], "BNET01002601150032369465")
         self.assertEqual(payload.get("bank"), "BBVA")
@@ -1044,7 +1044,7 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertIn("CARLOS ROBERTO", rows[1][1])
         self.assertEqual(rows[1][2], "01")
         self.assertEqual(rows[1][3], "000000001069485436")
-        self.assertEqual(rows[1][4], "$3,000.00")
+        self.assertEqual(rows[1][4], "3,000.00")
         self.assertEqual(rows[1][6], "00")
         self.assertEqual(rows[1][7], "ACEPTADO")
         self.assertIn("150120264263001PN7379597479", rows[1][8])
@@ -1778,7 +1778,7 @@ class ExtractPipelineTests(unittest.TestCase):
         meta = _extract_santander_payment_metadata(text)
         self.assertEqual(meta.get("numero_contrato"), "80122978989")
         self.assertEqual(meta.get("cuenta_cargo"), "65507763084")
-        self.assertIn("$140,948.59", meta.get("importe_detectado", ""))
+        self.assertIn("140,948.59", meta.get("importe_detectado", ""))
         self.assertEqual(meta.get("total_registros"), "94")
         self.assertEqual(meta.get("tipo_pago"), "DISPERSION DE PAGO DE NOMINA")
 
@@ -2694,25 +2694,25 @@ class TestOcrAmountFix(unittest.TestCase):
         from app.pipelines.extract import _normalize_payment_amount
         # "IMPORTE $1,500.00" — O in IMPORTE should NOT corrupt the amount
         result = _normalize_payment_amount("IMPORTE $1,500.00")
-        self.assertEqual(result, "$1,500.00")
+        self.assertEqual(result, "1,500.00")
 
     def test_normalize_payment_amount_with_ocr_o(self):
         from app.pipelines.extract import _normalize_payment_amount
         # "$1,5OO.OO" — O→0 within the numeric token
         result = _normalize_payment_amount("$1,5OO.OO")
-        self.assertEqual(result, "$1,500.00")
+        self.assertEqual(result, "1,500.00")
 
     def test_clean_amount_pesos_suffix_preserved(self):
         from app.pipelines.table_postprocess import _clean_amount
         # "$1,500.00 PESOS" — should extract amount correctly
         result = _clean_amount("$1,500.00 PESOS")
-        self.assertEqual(result, "$1,500.00")
+        self.assertEqual(result, "1,500.00")
 
     def test_clean_amount_with_text_prefix(self):
         from app.pipelines.table_postprocess import _clean_amount
         # Should NOT corrupt letters in surrounding text
         result = _clean_amount("IMPORTE $3,240.73")
-        self.assertEqual(result, "$3,240.73")
+        self.assertEqual(result, "3,240.73")
 
 
 # ==========================================================================

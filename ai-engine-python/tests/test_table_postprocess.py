@@ -8,20 +8,20 @@ class TestCleanAmount(unittest.TestCase):
 
     def test_standard_format_unchanged(self):
         from app.pipelines.table_postprocess import _clean_amount
-        self.assertEqual(_clean_amount("$3,240.73"), "$3,240.73")
+        self.assertEqual(_clean_amount("$3,240.73"), "3,240.73")
 
     def test_no_dollar_sign_adds_it(self):
         from app.pipelines.table_postprocess import _clean_amount
-        self.assertEqual(_clean_amount("3240.73"), "$3,240.73")
+        self.assertEqual(_clean_amount("3240.73"), "3,240.73")
 
     def test_comma_decimal_mexico_format(self):
         from app.pipelines.table_postprocess import _clean_amount
-        self.assertEqual(_clean_amount("$3.240,73"), "$3,240.73")
+        self.assertEqual(_clean_amount("$3.240,73"), "3,240.73")
 
     def test_ocr_letter_o_replaced(self):
         from app.pipelines.table_postprocess import _clean_amount
         result = _clean_amount("$3,24O.73")
-        self.assertEqual(result, "$3,240.73")
+        self.assertEqual(result, "3,240.73")
 
     def test_empty_returns_empty(self):
         from app.pipelines.table_postprocess import _clean_amount
@@ -30,12 +30,12 @@ class TestCleanAmount(unittest.TestCase):
 
     def test_whole_number(self):
         from app.pipelines.table_postprocess import _clean_amount
-        self.assertEqual(_clean_amount("$5000"), "$5,000.00")
+        self.assertEqual(_clean_amount("$5000"), "5,000.00")
 
     def test_currency_suffix_stripped(self):
         from app.pipelines.table_postprocess import _clean_amount
         result = _clean_amount("$3,240.73 MXN")
-        self.assertEqual(result, "$3,240.73")
+        self.assertEqual(result, "3,240.73")
 
 
 class TestCleanAccount(unittest.TestCase):
@@ -118,7 +118,7 @@ class TestPostprocessPaymentTable(unittest.TestCase):
         result_cols, result_rows = postprocess_payment_table(columns, rows, bank="BANORTE")
         self.assertEqual(len(result_rows), 1)
         row = result_rows[0]
-        self.assertEqual(row["importe"], "$3,240.73")  # Amount normalized
+        self.assertEqual(row["importe"], "3,240.73")  # Amount normalized
         self.assertEqual(row["nombre"], "JUAN PEREZ")  # Name uppercased
         self.assertEqual(row["estatus"], "APLICADO")  # Status preserved
 
@@ -184,7 +184,7 @@ class TestPostprocessPaymentTable(unittest.TestCase):
         self.assertEqual(len(result_rows), 5)
 
         # Row 0: amount & name cleaned, account dash stripped
-        self.assertEqual(result_rows[0]["importe"], "$3,240.73")
+        self.assertEqual(result_rows[0]["importe"], "3,240.73")
         self.assertEqual(result_rows[0]["nombre"], "JUAN PEREZ LOPEZ")
         self.assertEqual(result_rows[0]["cuenta"], "002180019912345678")
         self.assertEqual(result_rows[0]["estatus"], "APLICADO")
@@ -198,10 +198,10 @@ class TestPostprocessPaymentTable(unittest.TestCase):
         self.assertEqual(result_rows[2]["estatus"], "APLICADO")
 
         # Row 3: MXN suffix stripped from amount
-        self.assertEqual(result_rows[3]["importe"], "$2,100.00")
+        self.assertEqual(result_rows[3]["importe"], "2,100.00")
 
         # Row 4: OCR O→0 in amount, noise stripped from name, truncated status
-        self.assertEqual(result_rows[4]["importe"], "$450.25")
+        self.assertEqual(result_rows[4]["importe"], "450.25")
         self.assertEqual(result_rows[4]["nombre"], "ROBERTO DIAZ GOMEZ")
         self.assertEqual(result_rows[4]["estatus"], "ACEPTADO")
 
@@ -213,8 +213,8 @@ class TestPostprocessMetadata(unittest.TestCase):
         from app.pipelines.table_postprocess import postprocess_metadata
         meta = {"importe_detectado": "3240.73", "importe_total_movimientos": "$15,000.50 MXN"}
         result = postprocess_metadata(meta, bank="BBVA")
-        self.assertEqual(result["importe_detectado"], "$3,240.73")
-        self.assertEqual(result["importe_total_movimientos"], "$15,000.50")
+        self.assertEqual(result["importe_detectado"], "3,240.73")
+        self.assertEqual(result["importe_total_movimientos"], "15,000.50")
 
     def test_name_fields_uppercased(self):
         from app.pipelines.table_postprocess import postprocess_metadata
@@ -310,7 +310,7 @@ class TestIntegrationWithExtract(unittest.TestCase):
         row = canonical[0]
         # Amount should be normalized by Pandas post-processor
         if "importe" in row:
-            self.assertTrue(row["importe"].startswith("$"))
+            self.assertTrue(row["importe"][0].isdigit())
         # Name should be uppercased
         name_val = row.get("nombre") or row.get("nombre_beneficiario") or ""
         if name_val:
@@ -538,8 +538,8 @@ class TestSplitMergedRow(unittest.TestCase):
         # Second record should have RICARDO
         self.assertIn("RICARDO", result[1].get("nombre_beneficiario", ""))
         # Both should have amounts
-        self.assertEqual(result[0]["importe"], "$1,629.08")
-        self.assertEqual(result[1]["importe"], "$1,050.45")
+        self.assertEqual(result[0]["importe"], "1,629.08")
+        self.assertEqual(result[1]["importe"], "1,050.45")
 
     def test_single_record_not_split(self):
         from app.pipelines.table_postprocess import _split_merged_row

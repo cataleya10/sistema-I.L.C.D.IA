@@ -1077,12 +1077,12 @@ def _normalize_payment_amount(value: str) -> str:
         if not integer_digits:
             return ""
         cents = (cents_digits + "00")[:2]
-        return f"${int(integer_digits):,}.{cents}"
+        return f"{int(integer_digits):,}.{cents}"
 
     integer_digits = re.sub(r"\D", "", token)
     if not integer_digits:
         return ""
-    return f"${int(integer_digits):,}.00"
+    return f"{int(integer_digits):,}.00"
 
 
 def _normalize_payment_count(value: str) -> str:
