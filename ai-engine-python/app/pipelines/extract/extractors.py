@@ -1766,7 +1766,7 @@ def _extract_generic_identifiers(text: str, ocr_boxes: list[dict] | None = None)
         context_start = max(0, match.start() - 20)
         context = text[context_start:match.end() + 5].upper()
         if re.search(r"[$MXNUSD]|\bTOTAL\b|\bMONTO\b|\bIMPORTE\b|\bPAGO\b|\bSALDO\b|\bSUBTOTAL\b|\bIVA\b", context):
-            fields.append(_make_field("monto", "Monto", f"${val}", ocr_boxes, confidence=0.65))
+            fields.append(_make_field("monto", "Monto", f"{val}", ocr_boxes, confidence=0.65))
 
     # Dates
     for match in DATE_FLEX_PATTERN.finditer(upper):
