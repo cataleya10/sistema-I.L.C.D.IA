@@ -49,6 +49,7 @@ from .tables import (  # noqa: F811
     _extract_payment_table_payload,
     _extract_payment_table_rows_from_boxes,
     _extract_payment_table_rows_from_pdf_tables,
+    _extract_payment_table_rows_from_text,
     _extract_santander_payment_metadata,
     _fix_payment_ocr_column_errors,
     _header_cell_has_repeated_tokens,

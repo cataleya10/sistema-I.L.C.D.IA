@@ -12,7 +12,7 @@ from .constants import *  # noqa: F403
 from .common import *  # noqa: F403
 from .tables import *  # noqa: F403
 
-logger = __import__('logging').getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def _export_all():

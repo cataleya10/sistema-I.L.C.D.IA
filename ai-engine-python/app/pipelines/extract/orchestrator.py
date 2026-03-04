@@ -19,7 +19,7 @@ from app.pipelines.table_postprocess import (
     compute_table_quality_report,
 )
 
-logger = __import__('logging').getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def _export_all():

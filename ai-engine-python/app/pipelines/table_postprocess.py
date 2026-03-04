@@ -102,12 +102,12 @@ def _clean_amount(value: str) -> str:
         if not integer_digits:
             return text
         cents = (cents_digits + "00")[:2]
-        return f"{int(integer_digits):,}.{cents}"
+        return f"${int(integer_digits):,}.{cents}"
 
     integer_digits = re.sub(r"\D", "", token)
     if not integer_digits:
         return text
-    return f"{int(integer_digits):,}.00"
+    return f"${int(integer_digits):,}.00"
 
 
 def _clean_account(value: str) -> str:
