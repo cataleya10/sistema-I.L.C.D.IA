@@ -470,7 +470,7 @@ def _ascii_fold(text: str) -> str:
 
 
 def _normalize_keyword(text: str) -> str:
-    return re.sub(r"[^A-Z0-9]", "", text.upper())
+    return re.sub(r"[^A-Z0-9]", "", _ascii_fold(text).upper())
 
 
 def _is_junk_payment_header(header_cell: str) -> bool:
