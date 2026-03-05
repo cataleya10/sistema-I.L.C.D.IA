@@ -53,8 +53,8 @@ def _looks_like_generic_table_line(line: dict, min_large_gap: float = _GENERIC_T
     return (
         (box_count >= 2 and large_gap_count >= 1)          # standard: 2+ boxes, gap >= min_large_gap
         or (box_count >= 4 and max_gap >= 20.0)             # standard: 4+ boxes, gap >= 20px
-        or (box_count >= 3 and max_gap >= 10.0)             # compact tables: 3+ boxes, any gap >= 10px
-        or (box_count >= 2 and max_gap >= min_large_gap * 0.4)  # small images: 2+ boxes, 40% of threshold
+        or (box_count >= 3 and max_gap >= 8.0)              # compact tables: 3+ boxes, any gap >= 8px
+        or (box_count >= 2 and max_gap >= min_large_gap * 0.3)  # small images: 2+ boxes, 30% of threshold
     )
 
 

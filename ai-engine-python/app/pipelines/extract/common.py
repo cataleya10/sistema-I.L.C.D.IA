@@ -66,7 +66,7 @@ DATE_PATTERN = re.compile(r"\b\d{2}[/-]\d{2}[/-]\d{4}\b")
 DATE_FLEX_PATTERN = re.compile(
     r"\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}(?:\s+|[-/])[A-Z]{3,9}(?:\s+|[-/])\d{2,4})\b"
 )
-NAME_PATTERN = re.compile(r"\b[A-Z]{2,}(?:\s+[A-Z]{2,}){1,4}\b")
+NAME_PATTERN = re.compile(r"\b[A-Z]{2,}(?:\s+[A-Z]{2,}){1,7}\b")
 RFC_WITH_HOMOCLAVE = RFC_PATTERN  # alias — same regex, single compiled instance
 CP_PATTERN = re.compile(r"\b\d{5}\b")
 
@@ -1877,6 +1877,12 @@ def _looks_like_person_name(value: str) -> bool:
 def _is_allowed_field_for_type(document_type: str, key: str) -> bool:
     if key == "texto_detectado":
         return True
+    # Always allow additional table fields (tabla_celdas_2, tabla_celdas_3, ...)
+    if key.startswith("tabla_celdas_"):
+        return True
+    # Always allow name variant fields
+    if key in {"nombre_beneficiario", "nombre_asegurado", "nombre_titular"}:
+        return True
     allowed = _ALLOWED_FIELDS_BY_TYPE.get(document_type)
     if not allowed:
         return True
@@ -1889,7 +1895,7 @@ def _is_valid_by_contract(document_type: str, key: str, value: str) -> bool:
         return False
     upper = text.upper()
 
-    if key == "tabla_celdas":
+    if key == "tabla_celdas" or key.startswith("tabla_celdas_"):
         return _is_valid_table_cells_payload(text)
     if key == "pago_detalle":
         return _is_valid_payment_detail_payload(text)

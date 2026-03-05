@@ -139,19 +139,24 @@ CANONICAL_FIELD_KEYS: dict[str, str] = {
     "numero_de_seguridad_social": "nss",
     "sistema_nacional_de_seguridad_social": "nss",
     "sistema": "nss",
-    "nombre_beneficiario": "nombre",
-    "nombre_asegurado": "nombre",
-    "nombre_titular": "nombre",
-    "nombre_del_beneficiario": "nombre",
-    "nombre_del_asegurado": "nombre",
-    "nombre_del_titular": "nombre",
-    "beneficiario": "nombre",
-    "asegurado": "nombre",
+    # Name variants: keep each as a distinct key so documents with
+    # multiple people (beneficiario, titular, asegurado) preserve ALL names.
+    "nombre_beneficiario": "nombre_beneficiario",
+    "nombre_asegurado": "nombre_asegurado",
+    "nombre_titular": "nombre_titular",
+    "nombre_del_beneficiario": "nombre_beneficiario",
+    "nombre_del_asegurado": "nombre_asegurado",
+    "nombre_del_titular": "nombre_titular",
+    "beneficiario": "nombre_beneficiario",
+    "asegurado": "nombre_asegurado",
 }
 
 CANONICAL_FIELD_LABELS: dict[str, str] = {
     "nss": "NSS",
     "nombre": "Nombre",
+    "nombre_beneficiario": "Nombre Beneficiario",
+    "nombre_asegurado": "Nombre Asegurado",
+    "nombre_titular": "Nombre Titular",
     "titular": "Titular",
 }
 
@@ -176,6 +181,8 @@ def _resolve_canonical_key(key: str, label: str, document_type: str) -> str:
             resolved = normalized_key
 
     if document_type == "NSS" and resolved == "titular":
+        return "nombre"
+    if document_type == "NSS" and resolved == "nombre_titular":
         return "nombre"
     if document_type in {"COMPROBANTE_DOMICILIO", "FACTURA"} and resolved == "nombre":
         return "titular"
@@ -267,16 +274,16 @@ CRITICAL_KEY_ALIASES: dict[str, dict[str, list[str]]] = {
         "fecha_nacimiento": ["fecha_nacimiento", "fecha"],
     },
     "CURP": {
-        "nombre": ["nombre", "nombres", "nombre_completo"],
+        "nombre": ["nombre", "nombres", "nombre_completo", "nombre_beneficiario", "nombre_asegurado", "nombre_titular"],
     },
     "NSS": {
-        "nombre": ["nombre", "nombres", "nombre_beneficiario", "nombre_asegurado", "titular"],
+        "nombre": ["nombre", "nombres", "nombre_beneficiario", "nombre_asegurado", "nombre_titular", "titular"],
     },
     "DATOS_BANCARIOS": {
-        "titular": ["titular", "nombre", "nombre_completo"],
+        "titular": ["titular", "nombre", "nombre_completo", "nombre_titular"],
     },
     "FACTURA": {
-        "titular": ["titular", "nombre", "nombre_completo"],
+        "titular": ["titular", "nombre", "nombre_completo", "nombre_titular"],
         "tabla_celdas": ["tabla_celdas", "tabla", "celdas"],
     },
     "CONSTANCIA_SITUACION_FISCAL": {

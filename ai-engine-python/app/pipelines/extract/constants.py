@@ -40,10 +40,10 @@ _PAYMENT_TABLE_TEXT_LABELS = (
     "concepto",
 )
 
-_GENERIC_TABLE_MAX_TABLES = 20
-_GENERIC_TABLE_MAX_ROWS = 140
-_GENERIC_TABLE_MAX_COLS = 25
-_GENERIC_TABLE_MAX_CELL_TEXT = 240
+_GENERIC_TABLE_MAX_TABLES = 30
+_GENERIC_TABLE_MAX_ROWS = 300
+_GENERIC_TABLE_MAX_COLS = 30
+_GENERIC_TABLE_MAX_CELL_TEXT = 400
 _GENERIC_TABLE_BLOCK_GAP_Y = 36
 _GENERIC_TABLE_LARGE_GAP_X = 34
 _GENERIC_TABLE_JOIN_GAP_X = 16
@@ -83,6 +83,9 @@ _ALLOWED_FIELDS_BY_TYPE: dict[str, set[str]] = {
     "NSS": {
         "nss",
         "nombre",
+        "nombre_beneficiario",
+        "nombre_asegurado",
+        "nombre_titular",
     },
     "COMPROBANTE_DOMICILIO": {
         "proveedor",
@@ -103,6 +106,8 @@ _ALLOWED_FIELDS_BY_TYPE: dict[str, set[str]] = {
         "clabe",
         "cuenta",
         "titular",
+        "nombre_titular",
+        "nombre_beneficiario",
         "rfc",
         "fecha_corte",
         "periodo",

@@ -404,22 +404,37 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                     confidence=0.9,
                 )
             )
-        elif pdf_tables:
-            # Direct fallback: use structurally-detected tables (img2table/PDF) when
-            # payment-specific extraction found nothing. Picks the largest table.
+        # Extract ALL additional tables (not just the best one) so no
+        # table content is lost.  Each extra table becomes tabla_celdas_N.
+        if pdf_tables:
             _generic = _pdf_tables_to_generic_payloads(pdf_tables)
-            if _generic:
-                _best = max(_generic, key=lambda t: t.get("row_count", 0))
-                if _best.get("row_count", 0) >= 2:
+            _existing_tabla = any(str(f.get("key", "")) == "tabla_celdas" for f in fields)
+            _tabla_idx = 2
+            for _tbl in sorted(_generic, key=lambda t: t.get("row_count", 0), reverse=True):
+                if _tbl.get("row_count", 0) < 2:
+                    continue
+                if not _existing_tabla:
                     fields.append(
                         _make_field(
                             "tabla_celdas",
                             "Tabla detectada",
-                            json.dumps(_best, ensure_ascii=False),
+                            json.dumps(_tbl, ensure_ascii=False),
                             ocr_boxes,
                             confidence=0.8,
                         )
                     )
+                    _existing_tabla = True
+                else:
+                    fields.append(
+                        _make_field(
+                            f"tabla_celdas_{_tabla_idx}",
+                            f"Tabla detectada #{_tabla_idx}",
+                            json.dumps(_tbl, ensure_ascii=False),
+                            ocr_boxes,
+                            confidence=0.75,
+                        )
+                    )
+                    _tabla_idx += 1
         if payment_detail:
             fields.append(
                 _make_field(
@@ -1571,20 +1586,36 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
             _uni_tables = _extract_all_table_payloads(base_text_raw, ocr_boxes)
             logger.info("[DIAG-UNI] all_table_payloads=%d", len(_uni_tables))
         if _uni_tables:
-            _best_uni = max(_uni_tables, key=lambda t: t.get("row_count", 0))
-            logger.info("[DIAG-UNI] best_table rows=%d cols=%d source=%s",
-                        _best_uni.get("row_count", 0), _best_uni.get("column_count", 0),
-                        _best_uni.get("source", "?"))
-            if _best_uni.get("row_count", 0) >= 2:
-                fields.append(
-                    _make_field(
-                        "tabla_celdas",
-                        "Tabla detectada",
-                        json.dumps(_best_uni, ensure_ascii=False),
-                        ocr_boxes,
-                        confidence=0.8,
+            # Sort by row count descending — primary table is the largest
+            _uni_sorted = sorted(_uni_tables, key=lambda t: t.get("row_count", 0), reverse=True)
+            _uni_idx = 1
+            for _uni_tbl in _uni_sorted:
+                if _uni_tbl.get("row_count", 0) < 2:
+                    continue
+                if _uni_idx == 1:
+                    fields.append(
+                        _make_field(
+                            "tabla_celdas",
+                            "Tabla detectada",
+                            json.dumps(_uni_tbl, ensure_ascii=False),
+                            ocr_boxes,
+                            confidence=0.8,
+                        )
                     )
-                )
+                else:
+                    fields.append(
+                        _make_field(
+                            f"tabla_celdas_{_uni_idx}",
+                            f"Tabla detectada #{_uni_idx}",
+                            json.dumps(_uni_tbl, ensure_ascii=False),
+                            ocr_boxes,
+                            confidence=0.75,
+                        )
+                    )
+                _uni_idx += 1
+                logger.info("[DIAG-UNI] added table #%d rows=%d cols=%d source=%s",
+                            _uni_idx - 1, _uni_tbl.get("row_count", 0),
+                            _uni_tbl.get("column_count", 0), _uni_tbl.get("source", "?"))
 
     if base_text_raw:
         # Preserve line breaks for readable display; only collapse intra-line spaces
