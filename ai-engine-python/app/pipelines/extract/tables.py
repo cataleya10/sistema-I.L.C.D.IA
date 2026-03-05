@@ -1117,6 +1117,119 @@ def _extract_bbva_nomina_advanced_rows_impl(raw_text: str) -> list[list[str]]:
     return [_ADVANCED_NOMINA_TABLE_HEADER, *rows[:500]]
 
 
+# ---------------------------------------------------------------------------
+# BBVA "Dispersión de Pago de Nómina" – comprobante KV pages extractor
+# ---------------------------------------------------------------------------
+
+def _extract_bbva_nomina_comprobante_rows(raw_text: str) -> list[list[str]]:
+    """Extract rows from individual comprobante KV pages in BBVA nomina documents.
+
+    These documents have a summary table on the first page (handled by
+    ``_extract_bbva_nomina_advanced_rows``) followed by one comprobante page
+    per beneficiary with key-value pairs like::
+
+        DATOS DEL BENEFICIARIO
+        Número de cuenta de Abono:56775171706
+        Referencia:1620260115134903934215
+        Importe:$3,000.00 MXN
+        Estatus:Procesado
+        Concepto:Pago de Nómina
+        Nombre:PATRICIA
+        Apellido paterno:CRUZ
+        Apellido materno:TEJERO
+    """
+    try:
+        return _extract_bbva_nomina_comprobante_rows_impl(raw_text)
+    except Exception:
+        logger.debug("_extract_bbva_nomina_comprobante_rows: error", exc_info=True)
+        return []
+
+
+_NOMINA_KV_LABEL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("cuenta",    re.compile(r"(?:N[Uú]MERO\s+DE\s+CUENTA\s+DE\s+ABONO|CUENTA\s+DE\s+ABONO|CUENTA\s+ABONO)\s*:\s*(.+)", re.IGNORECASE)),
+    ("referencia", re.compile(r"REFERENCIA\s*:\s*(.+)", re.IGNORECASE)),
+    ("importe",   re.compile(r"IMPORTE\s*:\s*(.+)", re.IGNORECASE)),
+    ("estatus",   re.compile(r"ESTATUS\s*:\s*(.+)", re.IGNORECASE)),
+    ("concepto",  re.compile(r"CONCEPTO\s*:\s*([^:]+?)(?:\s*$)", re.IGNORECASE)),
+    ("nombre",    re.compile(r"NOMBRE\s*:\s*(.+)", re.IGNORECASE)),
+    ("apellido_paterno", re.compile(r"APELLIDO\s+PATERNO\s*:\s*(.+)", re.IGNORECASE)),
+    ("apellido_materno", re.compile(r"APELLIDO\s+MATERNO\s*:\s*(.+)", re.IGNORECASE)),
+]
+
+
+def _extract_bbva_nomina_comprobante_rows_impl(raw_text: str) -> list[list[str]]:
+    if not raw_text:
+        return []
+    folded = _ascii_fold(raw_text).upper()
+    # Guard: must look like a BBVA "Dispersión de Nómina" document with comprobante pages
+    if "NOMINA" not in folded:
+        return []
+    if "DISPERSION" not in folded and "DISPERSI" not in folded:
+        return []
+    if "DATOS DEL BENEFICIARIO" not in _ascii_fold(raw_text).upper():
+        return []
+
+    # Split text on "DATOS DEL BENEFICIARIO" to get one segment per employee
+    segments = re.split(r"DATOS\s+DEL\s+BENEFICIARIO", raw_text, flags=re.IGNORECASE)
+    if len(segments) < 2:
+        return []  # No beneficiary sections found
+
+    rows: list[list[str]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    for seg in segments[1:]:  # Skip preamble before first DATOS DEL BENEFICIARIO
+        lines = [line.strip() for line in seg.splitlines() if line.strip()]
+        # Only parse lines up to the next "Comprobante" / "DATOS DEL CLIENTE" marker
+        kv: dict[str, str] = {}
+        for line in lines:
+            # Stop if we hit a new section marker
+            line_upper = _ascii_fold(line).upper()
+            if "COMPROBANTE" in line_upper and "OPERACION" in line_upper:
+                break
+            if "DATOS DEL CLIENTE" in line_upper:
+                break
+            for field_name, pattern in _NOMINA_KV_LABEL_PATTERNS:
+                m = pattern.search(line)
+                if m and field_name not in kv:
+                    kv[field_name] = m.group(1).strip()
+                    break
+
+        cuenta = _normalize_numeric_field(kv.get("cuenta", ""))
+        referencia = _normalize_value_for_key("referencia", kv.get("referencia", ""))
+        importe = _normalize_payment_amount(kv.get("importe", ""))
+        estatus = _normalize_table_cell(kv.get("estatus", ""))
+        concepto = _normalize_table_cell(kv.get("concepto", ""))
+        nombre = _normalize_name(kv.get("nombre", ""))
+        apellido_paterno = _normalize_name(kv.get("apellido_paterno", ""))
+        apellido_materno = _normalize_name(kv.get("apellido_materno", ""))
+
+        # Quality gate: at least cuenta + importe + nombre
+        if not cuenta or not importe or not nombre:
+            continue
+
+        dedupe_key = (cuenta, referencia, importe)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+
+        rows.append([
+            cuenta,
+            referencia,
+            importe,
+            nombre,
+            apellido_paterno,
+            apellido_materno,
+            estatus,
+            concepto or "PAGO DE NOMINA",
+        ])
+
+    if not rows:
+        return []
+
+    logger.info("[BBVA_NOMINA_COMPROBANTE] extracted %d rows from comprobante KV pages", len(rows))
+    return [_ADVANCED_NOMINA_TABLE_HEADER, *rows[:500]]
+
+
 _ALL_STATUSES_SET = frozenset(_ALL_PAYMENT_STATUSES)
 
 
@@ -1156,9 +1269,31 @@ def _extract_payment_table_rows_from_text(raw_text: str) -> list[list[str]]:
     try:
         advanced_rows = _extract_bbva_nomina_advanced_rows_from_text(raw_text)
         if advanced_rows:
+            # Also try extracting from comprobante KV pages and merge unique rows
+            comprobante_rows = _extract_bbva_nomina_comprobante_rows(raw_text)
+            if comprobante_rows and len(comprobante_rows) > 1:
+                # Build set of existing (cuenta, referencia, importe) from advanced rows
+                existing = set()
+                for row in advanced_rows[1:]:  # skip header
+                    if len(row) >= 3:
+                        existing.add((row[0], row[1], row[2]))
+                for row in comprobante_rows[1:]:  # skip header
+                    if len(row) >= 3:
+                        key = (row[0], row[1], row[2])
+                        if key not in existing:
+                            advanced_rows.append(row)
+                            existing.add(key)
             return advanced_rows
     except Exception:
         logger.debug("_extract_payment_table_rows_from_text: bbva advanced failed", exc_info=True)
+
+    # Try BBVA nomina comprobante KV pages as standalone (no summary table found)
+    try:
+        comprobante_rows = _extract_bbva_nomina_comprobante_rows(raw_text)
+        if comprobante_rows:
+            return comprobante_rows
+    except Exception:
+        logger.debug("_extract_payment_table_rows_from_text: bbva nomina comprobante failed", exc_info=True)
 
     # Try BBVA vertical key-value receipt BEFORE generic text splitting so
     # that "Grupo Pago Mismo Banco" / comprobante documents are not polluted
