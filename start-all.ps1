@@ -117,12 +117,16 @@ Invoke-ApiPreflight -rootPath $root
 Write-Host "Starting IA Engine..." -ForegroundColor Cyan
 $aiLog = Join-Path $logs "ai-engine.log"
 $aiErr = Join-Path $logs "ai-engine.err.log"
+$venvPython = Join-Path $root "ai-engine-python\.venv\Scripts\python.exe"
+if (-not (Test-Path $venvPython)) {
+    $venvPython = "python"
+}
 $ai = Start-Process powershell -PassThru -ArgumentList @(
     '-NoProfile',
     '-ExecutionPolicy',
     'Bypass',
     '-Command',
-    "Set-Location -LiteralPath '$root\ai-engine-python'; . '$root\\load-env.ps1'; uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    "Set-Location -LiteralPath '$root\ai-engine-python'; . '$root\\load-env.ps1'; & '$venvPython' -m uvicorn app.main:app --host 0.0.0.0 --port 8000"
 ) -RedirectStandardOutput $aiLog -RedirectStandardError $aiErr
 
 Write-Host "Starting Backend API..." -ForegroundColor Cyan
