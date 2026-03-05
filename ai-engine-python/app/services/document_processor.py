@@ -444,7 +444,9 @@ async def process_document(file, document_id: str, source: str, options: str | N
             options_data = {}
     forced_doc_type = _resolve_forced_document_type(options_data)
 
+    t0 = time.time()
     preprocess_result = await preprocess(file)
+    logger.info("[PERF] preprocess: %.1fms", (time.time() - t0) * 1000)
     text_layer_boxes: list[dict] = []
     pdf_tables: list[list[list[str]]] = []
     table_cell_grids: list = []
@@ -499,7 +501,9 @@ async def process_document(file, document_id: str, source: str, options: str | N
                 fields = candidate_fields
 
     if not fields:
+        t1 = time.time()
         ocr_text, ocr_boxes = await run_ocr(images)
+        logger.info("[PERF] OCR (%d pages): %.1fms", len(images), (time.time() - t1) * 1000)
         ocr_engine = "paddleocr" if ocr_text else "none"
         if extracted_text:
             if not ocr_text:
@@ -535,7 +539,9 @@ async def process_document(file, document_id: str, source: str, options: str | N
         if (ocr_text or extracted_text) and doc_type not in {"UNKNOWN", "GENERICO"}:
             doc_confidence = max(doc_confidence, 0.85)
         extraction_boxes = ocr_boxes if ocr_boxes else text_layer_boxes
+        t2 = time.time()
         fields = await extract_fields(doc_type, ocr_text, extraction_boxes, extracted_text, file.filename, pdf_tables)
+        logger.info("[PERF] extract_fields (%s): %.1fms", doc_type, (time.time() - t2) * 1000)
         fields = await validate_fields(fields)
         fields = _normalize_fields(doc_type, fields)
         fields = _postprocess_fields(doc_type, fields)

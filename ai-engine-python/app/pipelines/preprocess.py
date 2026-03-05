@@ -447,6 +447,7 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
     ``table_cell_grids`` is a list of img2table cell grids (for images) that
     can later be filled with OCR box text via :func:`fill_grid_tables_from_ocr_boxes`.
     """
+    import asyncio
     content = await file.read()
     if len(content) > MAX_UPLOAD_BYTES:
         raise ValueError(f"File too large ({len(content)} bytes, max {MAX_UPLOAD_BYTES})")
@@ -457,27 +458,29 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
         extracted_parts: list[str] = []
         text_layer_boxes: list[dict[str, Any]] = []
         pdf_tables: list[list[list[str]]] = []
+        images: list[Image.Image] = []
+
+        # Single PDF open: extract text, boxes, tables, AND render images
         with fitz.open(stream=content, filetype="pdf") as doc:  # type: ignore[attr-defined]
             max_pages = min(len(doc), settings.max_pages)
             for index in range(max_pages):
                 page = doc.load_page(index)
                 extracted_parts.append(str(page.get_text("text") or ""))
                 words: Any = page.get_text("words")
-                if not isinstance(words, list):
-                    continue
-                for raw_word in words:
-                    payload = _word_payload(raw_word)
-                    if payload is None:
-                        continue
-                    x0, y0, x1, y1, text_str = payload
-                    text_layer_boxes.append(
-                        {
-                            "text": text_str,
-                            "confidence": 1.0,
-                            "bbox": [[x0, y0], [x1, y0], [x1, y1], [x0, y1]],
-                            "page": index + 1,
-                        }
-                    )
+                if isinstance(words, list):
+                    for raw_word in words:
+                        payload = _word_payload(raw_word)
+                        if payload is None:
+                            continue
+                        x0, y0, x1, y1, text_str = payload
+                        text_layer_boxes.append(
+                            {
+                                "text": text_str,
+                                "confidence": 1.0,
+                                "bbox": [[x0, y0], [x1, y0], [x1, y1], [x0, y1]],
+                                "page": index + 1,
+                            }
+                        )
                 # Extract structured tables via PyMuPDF find_tables()
                 try:
                     tab_finder = page.find_tables()
@@ -494,17 +497,26 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
                 except Exception:
                     logger.debug("find_tables() failed on page %d, skipping", index + 1)
 
+                # Render page to image in the same pass (avoids second PDF open)
+                pix = page.get_pixmap(dpi=settings.pdf_render_dpi)
+                image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                image = ImageOps.autocontrast(image)
+                image = ImageEnhance.Contrast(image.convert("L")).enhance(2.0)
+                image = ImageEnhance.Sharpness(image).enhance(2.0)
+                image = image.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3)).convert("RGB")
+                images.append(image)
+
         extracted_text = "\n\n".join(part for part in extracted_parts if part)
 
-        # ── Multi-source table extraction ───────────────────────────
-        # 2) pdfplumber: different algorithm, catches tables PyMuPDF misses
-        plumber_tables = _extract_tables_pdfplumber(content, max_pages)
+        # ── Multi-source table extraction (parallel) ────────────────
+        loop = asyncio.get_event_loop()
+        plumber_fut = loop.run_in_executor(None, _extract_tables_pdfplumber, content, max_pages)
+        img2t_fut = loop.run_in_executor(None, _extract_tables_img2table_pdf, content, max_pages)
+        plumber_tables, img2t_tables = await asyncio.gather(plumber_fut, img2t_fut)
+
         if plumber_tables:
             logger.debug("pdfplumber found %d table(s)", len(plumber_tables))
             pdf_tables.extend(plumber_tables)
-
-        # 3) img2table (PDF mode): OpenCV structural detection for scanned pages
-        img2t_tables = _extract_tables_img2table_pdf(content, max_pages)
         if img2t_tables:
             logger.debug("img2table PDF found %d table(s)", len(img2t_tables))
             pdf_tables.extend(img2t_tables)
@@ -514,21 +526,10 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
         logger.debug("Total unique tables after multi-source merge: %d", len(pdf_tables))
         # ────────────────────────────────────────────────────────────
 
-        if settings.enable_text_layer_short_circuit and _has_sufficient_text_layer(extracted_text):
+        has_text = _has_sufficient_text_layer(extracted_text)
+        if has_text:
+            # Text layer is good — skip OCR images to save time
             return [], extracted_text, text_layer_boxes, pdf_tables, []
-
-        images: list[Image.Image] = []
-        with fitz.open(stream=content, filetype="pdf") as doc:  # type: ignore[attr-defined]
-            max_pages = min(len(doc), settings.max_pages)
-            for index in range(max_pages):
-                page = doc.load_page(index)
-                pix = page.get_pixmap(dpi=settings.pdf_render_dpi)
-                image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-                image = ImageOps.autocontrast(image)
-                image = ImageEnhance.Contrast(image.convert("L")).enhance(2.0)
-                image = ImageEnhance.Sharpness(image).enhance(2.0)
-                image = image.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3)).convert("RGB")
-                images.append(image)
 
         return images, extracted_text, text_layer_boxes, pdf_tables, []
 

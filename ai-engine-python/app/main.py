@@ -143,4 +143,17 @@ async def validate_runtime_security():
         logger.warning("API_KEY is empty — all endpoints are unprotected. Set API_KEY env var.")
 
 
+@app.on_event("startup")
+async def _preload_ocr_models():
+    """Pre-load OCR models in background so first request is fast."""
+    import asyncio
+    async def _warm():
+        try:
+            from app.pipelines.ocr import warm_up
+            await asyncio.to_thread(warm_up)
+        except Exception:
+            logger.warning("OCR warm-up failed, will retry on first request", exc_info=True)
+    asyncio.create_task(_warm())
+
+
 app.include_router(router)

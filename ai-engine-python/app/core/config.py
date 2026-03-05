@@ -23,7 +23,7 @@ class Settings(BaseModel):
     pdf_render_dpi: int = int(os.getenv("PDF_RENDER_DPI", "300"))
     min_text_layer_chars: int = int(os.getenv("MIN_TEXT_LAYER_CHARS", "180"))
     min_text_layer_words: int = int(os.getenv("MIN_TEXT_LAYER_WORDS", "25"))
-    enable_text_layer_short_circuit: bool = _env_bool("ENABLE_TEXT_LAYER_SHORT_CIRCUIT", False)
+    enable_text_layer_short_circuit: bool = _env_bool("ENABLE_TEXT_LAYER_SHORT_CIRCUIT", True)
     text_layer_fastpath_types: list[str] = _env_csv_upper(
         "TEXT_LAYER_FASTPATH_TYPES",
         "INE,CURP,ACTA_NACIMIENTO,COMPROBANTE_DOMICILIO,NSS,DATOS_BANCARIOS,FACTURA,CONSTANCIA_SITUACION_FISCAL",

@@ -1792,9 +1792,14 @@ def _extract_generic_all_tables(
         pdf_generic = _pdf_tables_to_generic_payloads(pdf_tables)
         all_tables.extend(pdf_generic)
 
-    # 2. OCR box-based tables
-    ocr_tables = _extract_all_table_payloads(base_text_raw, ocr_boxes)
-    all_tables.extend(ocr_tables)
+    # 2. OCR box-based tables — skip if PDF already found substantial tables,
+    #    since this is an expensive re-analysis of the same data.
+    pdf_total_rows = sum(t.get("row_count", 0) for t in all_tables)
+    if pdf_total_rows < 10:
+        ocr_tables = _extract_all_table_payloads(base_text_raw, ocr_boxes)
+        all_tables.extend(ocr_tables)
+    else:
+        ocr_tables = []
 
     logger.info("[DEDUP] raw tables: pdf=%d ocr=%d total=%d",
                 len(pdf_generic) if pdf_tables else 0, len(ocr_tables), len(all_tables))
@@ -1803,9 +1808,10 @@ def _extract_generic_all_tables(
         first_row = " | ".join(str(c) for c in rows[0])[:120] if rows else "?"
         logger.info("[DEDUP] table[%d] src=%s rows=%d cols=%d first_row=%s",
                     ti, t.get("source", "?"), len(rows), t.get("column_count", 0), first_row)
-        # Dump ALL rows for diagnostics
-        for ri, row in enumerate(rows):
-            logger.info("[DEDUP]   table[%d] row[%d]: %s", ti, ri, " | ".join(str(c) for c in row)[:200])
+        # Detailed row dump only at DEBUG level to avoid perf overhead
+        if logger.isEnabledFor(logging.DEBUG):
+            for ri, row in enumerate(rows):
+                logger.debug("[DEDUP]   table[%d] row[%d]: %s", ti, ri, " | ".join(str(c) for c in row)[:200])
 
     # ── Deduplicate tables ──────────────────────────────────────────────
     # Phase 1: exact signature match (first 6 rows normalised content)
@@ -1842,13 +1848,11 @@ def _extract_generic_all_tables(
         is_dup = False
         for pi, prev_rs in enumerate(accepted_rows):
             overlap = len(rs & prev_rs)
-            logger.info("[DEDUP] Phase2 comparing table (rows=%d) vs accepted[%d]: overlap=%d threshold=%d",
-                        len(rs), pi, overlap, max(2, int(len(rs) * 0.5)))
             if overlap >= max(2, len(rs) * 0.5):
                 is_dup = True
                 break
         if is_dup:
-            logger.info("[DEDUP] Phase2 dropped duplicate")
+            logger.debug("[DEDUP] Phase2 dropped duplicate")
             continue
         accepted.append(table)
         accepted_rows.append(rs)
