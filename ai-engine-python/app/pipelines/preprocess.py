@@ -460,7 +460,7 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
         pdf_tables: list[list[list[str]]] = []
         images: list[Image.Image] = []
 
-        # Single PDF open: extract text, boxes, tables, AND render images
+        # Phase 1: extract text, word boxes, and tables (fast — no image rendering)
         with fitz.open(stream=content, filetype="pdf") as doc:  # type: ignore[attr-defined]
             max_pages = min(len(doc), settings.max_pages)
             for index in range(max_pages):
@@ -497,7 +497,31 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
                 except Exception:
                     logger.debug("find_tables() failed on page %d, skipping", index + 1)
 
-                # Render page to image in the same pass (avoids second PDF open)
+        extracted_text = "\n\n".join(part for part in extracted_parts if part)
+
+        # Check text layer sufficiency BEFORE spending time on images
+        has_text = _has_sufficient_text_layer(extracted_text)
+
+        if has_text:
+            # Text layer is good — skip image rendering AND heavy parallel extractors.
+            # PyMuPDF find_tables() already ran per-page; only run pdfplumber on
+            # a limited page range as a complement.
+            table_pages = min(max_pages, 10)
+            loop = asyncio.get_event_loop()
+            plumber_tables = await loop.run_in_executor(
+                None, _extract_tables_pdfplumber, content, table_pages,
+            )
+            if plumber_tables:
+                logger.debug("pdfplumber found %d table(s) [text-fastpath, %d pages]", len(plumber_tables), table_pages)
+                pdf_tables.extend(plumber_tables)
+            pdf_tables = _deduplicate_tables(pdf_tables)
+            logger.info("[PERF] text-layer shortcut: skipped image rendering for %d pages", max_pages)
+            return [], extracted_text, text_layer_boxes, pdf_tables, []
+
+        # Phase 2: text layer insufficient — render page images for OCR
+        with fitz.open(stream=content, filetype="pdf") as doc:  # type: ignore[attr-defined]
+            for index in range(max_pages):
+                page = doc.load_page(index)
                 pix = page.get_pixmap(dpi=settings.pdf_render_dpi)
                 image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
                 image = ImageOps.autocontrast(image)
@@ -505,8 +529,6 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
                 image = ImageEnhance.Sharpness(image).enhance(2.0)
                 image = image.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3)).convert("RGB")
                 images.append(image)
-
-        extracted_text = "\n\n".join(part for part in extracted_parts if part)
 
         # ── Multi-source table extraction (parallel) ────────────────
         loop = asyncio.get_event_loop()
@@ -525,11 +547,6 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
         pdf_tables = _deduplicate_tables(pdf_tables)
         logger.debug("Total unique tables after multi-source merge: %d", len(pdf_tables))
         # ────────────────────────────────────────────────────────────
-
-        has_text = _has_sufficient_text_layer(extracted_text)
-        if has_text:
-            # Text layer is good — skip OCR images to save time
-            return [], extracted_text, text_layer_boxes, pdf_tables, []
 
         return images, extracted_text, text_layer_boxes, pdf_tables, []
 
