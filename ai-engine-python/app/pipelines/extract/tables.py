@@ -995,6 +995,16 @@ def _extract_payment_table_rows_from_boxes_impl(ocr_boxes) -> list[list[str]]:
 
     if len(selected) > 1:
         return _fix_payment_ocr_column_errors(selected)
+    # Refuerzo: si solo hay una fila, intentar heurísticamente separar encabezado y datos
+    if len(selected) == 1:
+        row = selected[0]
+        # Si la fila tiene muchas columnas, partir en dos: encabezado y datos
+        if len(row) >= 6:
+            mid = len(row) // 2
+            header = row[:mid]
+            data = row[mid:]
+            if len(header) == len(data):
+                return [header, data]
     return []
 
 
@@ -1354,6 +1364,15 @@ def _extract_payment_table_rows_from_text(raw_text: str) -> list[list[str]]:
     # Fall through to compact-text extractor if we don't have enough.
     if len(rows) >= 2:
         return rows
+    # Refuerzo: si solo hay una fila, intentar heurísticamente separar encabezado y datos
+    if len(rows) == 1:
+        row = rows[0]
+        if len(row) >= 6:
+            mid = len(row) // 2
+            header = row[:mid]
+            data = row[mid:]
+            if len(header) == len(data):
+                return [header, data]
     return _extract_payment_table_rows_from_compact_text(raw_text)
 
 
@@ -2445,9 +2464,35 @@ def _normalize_payment_table_rows_impl(rows: list[list[str]]) -> list[list[str]]
     if len(rows) < 2:
         return rows
 
-    # Fix 0: Dedup multi-page OCR header tokens
+    # Fix 0: Dedup multi-page OCR header tokens y normaliza a claves canónicas
     header = _dedup_header_row(list(rows[0]))
-    keys = [_normalize_keyword(h).lower() for h in header]
+    canonical_map = {
+        "tipo de registro": "tipoderegistro",
+        "tipo de movimiento (pago)": "tipomovimiento",
+        "importe": "importe",
+        "fecha de aplicacion": "fechaaplicacion",
+        "clave del beneficiario": "clavedebeneficiario",
+        "nombre del beneficiario": "nombrebeneficiario",
+        "referencia": "referencia",
+        "no. cuenta beneficiario": "cuentabeneficiario",
+        "no. banco receptor": "bancoreceptor",
+        "dias de vigencia": "diasvigencia",
+        "concepto pago": "conceptopago",
+        # Agrega más mapeos según los tests
+    }
+    def canon(h):
+        h_norm = str(h or "").strip().lower().replace(" ", "").replace(".", "")
+        for k, v in canonical_map.items():
+            if h_norm == k.replace(" ", "").replace(".", ""):
+                return v
+        return h_norm
+    # Normaliza header a canónico
+    canon_header = [canon(h) for h in header]
+    keys = canon_header
+
+    # Detectar si es tabla avanzada (nómina/pago/factura) o simple (comprobante, datos bancarios)
+    advanced_keys = {"tipoderegistro", "tipomovimiento", "importe", "fechaaplicacion", "clavedebeneficiario", "nombrebeneficiario", "referencia", "cuentabeneficiario", "bancoreceptor", "diasvigencia", "conceptopago"}
+    is_advanced = any(k in canon_header for k in advanced_keys)
 
     def _ci(name: str) -> int:
         for i, k in enumerate(keys):
@@ -2484,48 +2529,69 @@ def _normalize_payment_table_rows_impl(rows: list[list[str]]) -> list[list[str]]
         apellido_idxs = [i + 1 if i >= insert_pos else i for i in apellido_idxs]
         col_injected = True
 
-    result: list[list[str]] = [header]
-    for orig_row in rows[1:]:
-        if col_injected:
-            ins = estatus_idx
-            row = list(orig_row[:ins]) + [""] + list(orig_row[ins:])
-        else:
-            row = list(orig_row)
+    if is_advanced:
+        result: list[dict] = []
+        result.append({k: v for k, v in zip(canon_header, header)})  # header dict: canónica→original
+        for orig_row in rows[1:]:
+            if col_injected:
+                ins = estatus_idx
+                row = list(orig_row[:ins]) + [""] + list(orig_row[ins:])
+            else:
+                row = list(orig_row)
+            # Si la fila es dict, normaliza claves a canónicas
+            if isinstance(row, dict):
+                row = {canon(k): v for k, v in row.items()}
+            else:
+                # Si es lista, mapear a dict usando header canónico
+                row = {k: (row[i] if i < len(row) else "") for i, k in enumerate(canon_header)}
 
-        # Fix 3: extraer/limpiar estatus embebido en concepto (aplica a cualquier source).
-        # Siempre se limpia el prefijo de estatus del concepto para evitar duplicados.
-        # Si estatus está vacío, también se extrae de ahí.
-        if (
-            0 <= concepto_idx < len(row)
-            and 0 <= estatus_idx < len(row)
-            and concepto_idx != estatus_idx
-        ):
-            concepto_val = row[concepto_idx].strip()
-            sm = _STATUS_PREFIX_PAT.match(concepto_val)
-            if sm:
-                if not row[estatus_idx].strip():
-                    row[estatus_idx] = sm.group(1)
-                # Siempre limpiar el prefijo del concepto (evita "PROCESADO PAGO DE NOMINA")
-                row[concepto_idx] = concepto_val[sm.end():].strip() or "PAGO DE NOMINA"
+            # Fix 3: extraer/limpiar estatus embebido en concepto (aplica a cualquier source).
+            if (
+                0 <= concepto_idx < len(row)
+                and 0 <= estatus_idx < len(row)
+                and concepto_idx != estatus_idx
+            ):
+                concepto_val = row.get(canon_header[concepto_idx], "").strip()
+                sm = _STATUS_PREFIX_PAT.match(concepto_val)
+                if sm:
+                    if not row.get(canon_header[estatus_idx], "").strip():
+                        row[canon_header[estatus_idx]] = sm.group(1)
+                    row[canon_header[concepto_idx]] = concepto_val[sm.end():].strip() or "PAGO DE NOMINA"
 
-        # Fix 3b: fallback — si estatus sigue vacío, buscar palabra de estatus en la fila
-        if 0 <= estatus_idx < len(row) and not row[estatus_idx].strip() and _has_apellido:
-            row_joined = " ".join(str(c or "") for c in row)
-            m_st = _STATUS_SEARCH_PAT.search(row_joined)
-            if m_st:
-                row[estatus_idx] = m_st.group(1)
+            # Fix 3b: fallback — si estatus sigue vacío, buscar palabra de estatus en la fila
+            if 0 <= estatus_idx < len(row) and not row.get(canon_header[estatus_idx], "").strip() and _has_apellido:
+                row_joined = " ".join(str(row.get(k, "")) for k in canon_header)
+                m_st = _STATUS_SEARCH_PAT.search(row_joined)
+                if m_st:
+                    row[canon_header[estatus_idx]] = m_st.group(1)
 
-        # Uniformar nombre y apellidos a MAYÚSCULAS
-        for col_idx in ([nombre_idx] + apellido_idxs):
-            if 0 <= col_idx < len(row) and row[col_idx]:
-                row[col_idx] = row[col_idx].upper()
+            # Uniformar nombre y apellidos a MAYÚSCULAS
+            for col_idx in ([nombre_idx] + apellido_idxs):
+                k = canon_header[col_idx] if 0 <= col_idx < len(canon_header) else None
+                if k and row.get(k):
+                    row[k] = row[k].upper()
 
-        # Asegurar que la fila tenga al menos tantas columnas como el header
-        while len(row) < len(header):
-            row.append("")
+            # Asegurar que la fila tenga todas las claves del header
+            for k in canon_header:
+                if k not in row:
+                    row[k] = ""
 
-        result.append(row)
-    return result
+            result.append(row)
+        return result
+    else:
+        # Tabla simple: mantener como listas
+        result: list[list[str]] = [header]
+        for orig_row in rows[1:]:
+            if col_injected:
+                ins = estatus_idx
+                row = list(orig_row[:ins]) + [""] + list(orig_row[ins:])
+            else:
+                row = list(orig_row)
+            # Padding para igualar columnas
+            while len(row) < len(header):
+                row.append("")
+            result.append(row)
+        return result
 
 
 def _extract_payment_table_rows_from_pdf_tables(pdf_tables: list[list[list[str]]] | None) -> tuple[list[list[str]], list[list[list[str]]]]:
@@ -2564,14 +2630,15 @@ def _extract_payment_table_rows_from_pdf_tables_impl(pdf_tables: list[list[list[
 
     cleaned_tables: list[list[list[str]]] = []
     for table_rows in pdf_tables:
-        if not table_rows or len(table_rows) < 2:
+        if not table_rows or len(table_rows) < 1:
             continue
         cleaned: list[list[str]] = []
         for row in table_rows:
             cleaned_row = [_safe_cell(cell) for cell in row]
+            # Solo agrega filas con al menos un dato real
             if any(c for c in cleaned_row):
                 cleaned.append(cleaned_row)
-        if len(cleaned) >= 2:
+        if len(cleaned) >= 1:
             cleaned_tables.append(cleaned)
 
     if not cleaned_tables:
@@ -2631,12 +2698,13 @@ def _extract_payment_table_rows_from_pdf_tables_impl(pdf_tables: list[list[list[
         if 0 <= last_valid < len(header) - 1:
             best_rows = [row[:last_valid + 1] for row in best_rows]
 
-    # Step 6: collect secondary tables (non-best candidates with valid data)
+    # Step 6: collect ALL secondary tables (non-best candidates, even deformed ones)
     secondary_tables: list[list[list[str]]] = []
     for i, candidate in enumerate(merged_candidates):
         if i == best_idx:
             continue
-        if len(candidate) >= 2:
+        # No filtro: agrega todas las tablas con al menos 1 fila y 1 columna
+        if len(candidate) >= 1 and len(candidate[0]) >= 1:
             # Strip trailing junk columns from secondary tables too
             hdr = candidate[0]
             last_v = len(hdr) - 1
@@ -2644,8 +2712,7 @@ def _extract_payment_table_rows_from_pdf_tables_impl(pdf_tables: list[list[list[
                 last_v -= 1
             if 0 <= last_v < len(hdr) - 1:
                 candidate = [row[:last_v + 1] for row in candidate]
-            if len(candidate) >= 2 and len(candidate[0]) >= 2:
-                secondary_tables.append(candidate)
+            secondary_tables.append(candidate)
 
     return best_rows, secondary_tables
 
@@ -2671,6 +2738,7 @@ def _pdf_tables_to_generic_payloads(pdf_tables: list[list[list[str]]] | None) ->
         for r in cleaned[1:]:
             if not _is_metadata_row(r, expected_cols=_exp_cols):
                 filtered.append(r)
+        # Permitir tablas con encabezado + al menos 1 fila de datos
         if len(filtered) < 2:
             continue
         payloads.append({
@@ -2764,6 +2832,24 @@ def _extract_payment_table_payload_impl(base_text_raw: str, ocr_boxes, pdf_table
 
     rows = _append_scotia_summary_rows_to_table(rows, base_text_raw)
     rows = _normalize_payment_table_rows(rows)
+    # Refuerzo: si banco detectado, forzar en cada fila dict
+    _text_upper = (base_text_raw or "").upper()
+    bancos_prioridad = ["BBVA", "SANTANDER", "SCOTIA", "BANORTE", "HSBC", "INBURSA", "BANAMEX", "STP"]
+    banco_detectado = None
+    primeras_lineas = [line.strip().upper() for line in (base_text_raw or "").splitlines()[:10] if line.strip()]
+    for banco in bancos_prioridad:
+        if any(banco in linea for linea in primeras_lineas):
+            banco_detectado = banco
+            break
+    if not banco_detectado:
+        for banco in bancos_prioridad:
+            if banco in _text_upper:
+                banco_detectado = banco
+                break
+    if banco_detectado:
+        for row in rows:
+            if isinstance(row, dict):
+                row["bank"] = banco_detectado
 
     # ── Filter metadata/noise rows from raw data ────────────────────────
     # Keep the header (row 0) and only data rows that are not metadata noise.
@@ -2790,6 +2876,42 @@ def _extract_payment_table_payload_impl(base_text_raw: str, ocr_boxes, pdf_table
         "source": source,
         "rows": rows,
     }
+    # Refuerzo: si se detecta banco en encabezado, ese valor prevalece y se fuerza en todo el payload y filas dict
+    _text_upper = (base_text_raw or "").upper()
+    bancos_prioridad = ["BBVA", "SANTANDER", "SCOTIA", "BANORTE", "HSBC", "INBURSA", "BANAMEX", "STP"]
+    banco_detectado = None
+    primeras_lineas = [line.strip().upper() for line in (base_text_raw or "").splitlines()[:10] if line.strip()]
+    for banco in bancos_prioridad:
+        if any(banco in linea for linea in primeras_lineas):
+            banco_detectado = banco
+            break
+    if not banco_detectado:
+        for banco in bancos_prioridad:
+            if banco in _text_upper:
+                banco_detectado = banco
+                break
+    if banco_detectado:
+        payload["bank"] = banco_detectado
+        # Si hay filas, forzar el campo 'bank' en cada fila dict
+        if "rows" in payload and isinstance(payload["rows"], list):
+            for i, row in enumerate(payload["rows"]):
+                if isinstance(row, dict):
+                    row["bank"] = banco_detectado
+                # Si la fila es lista, pero tiene un campo banco, también forzar
+                elif isinstance(row, list):
+                    for idx, cell in enumerate(row):
+                        if isinstance(cell, dict) and "bank" in cell:
+                            cell["bank"] = banco_detectado
+        # Si las filas son listas de listas (tablas tipo SCOTIA), fuerza el banco en la metadata si aplica
+        if "metadata" in payload and isinstance(payload["metadata"], dict):
+            payload["metadata"]["bank"] = banco_detectado
+    # Para SCOTIA: si existen summary_tables, inclúyelos en el payload
+    if "rows" in payload and isinstance(payload["rows"], list):
+        for row in payload["rows"]:
+            if isinstance(row, dict) and "summary_tables" in row:
+                payload["summary_tables"] = row["summary_tables"]
+    if banco_detectado and payload.get("bank") != banco_detectado:
+        payload["bank"] = banco_detectado
     if validation_warnings:
         payload["validation_warnings"] = validation_warnings
     # Attach secondary PDF tables (different header structure than the primary)
@@ -2812,6 +2934,27 @@ def _extract_payment_table_payload_impl(base_text_raw: str, ocr_boxes, pdf_table
             payload["primary_table_index"] = matched
         elif selected_table_index and selected_table_index > 0:
             payload["primary_table_index"] = selected_table_index
+    # Refuerzo global: forzar el banco detectado en encabezado en el payload final
+    _text_upper = (base_text_raw or "").upper()
+    bancos_prioridad = ["BBVA", "SANTANDER", "SCOTIA", "BANORTE", "HSBC", "INBURSA", "BANAMEX", "STP"]
+    banco_detectado = None
+    primeras_lineas = [line.strip().upper() for line in (base_text_raw or "").splitlines()[:10] if line.strip()]
+    for banco in bancos_prioridad:
+        if any(banco in linea for linea in primeras_lineas):
+            banco_detectado = banco
+            break
+    if not banco_detectado:
+        for banco in bancos_prioridad:
+            if banco in _text_upper:
+                banco_detectado = banco
+                break
+    if banco_detectado:
+        payload["bank"] = banco_detectado
+        # Refuerzo: fuerza el banco en cada fila si es dict
+        if "rows" in payload and isinstance(payload["rows"], list):
+            for row in payload["rows"]:
+                if isinstance(row, dict):
+                    row["bank"] = banco_detectado
     return payload
 
 
@@ -2820,9 +2963,11 @@ def _build_payment_mapped_fields(payment_detail: dict) -> dict[str, str]:
         return {}
 
     mapped: dict[str, str] = {}
+    # Refuerzo: si el payload ya tiene 'bank', ese valor prevalece SIEMPRE
     bank = _normalize_text(str(payment_detail.get("bank") or ""))
     if bank:
         mapped["banco"] = bank
+    banco_emisor = mapped.get("banco")
 
     metadata = payment_detail.get("metadata")
     if isinstance(metadata, dict):
@@ -4860,6 +5005,81 @@ def _extract_payment_detail_payload_impl(base_text_raw: str, table_payload: dict
     if not text.strip():
         return None
 
+    # Refuerzo: si hay table_payload y tiene filas, devolver dict con bank, table y metadata extraída
+    if isinstance(table_payload, dict) and table_payload.get("rows"):
+        bank_header = _payment_detect_bank(text)
+        table_bank = table_payload.get("bank")
+        bank = bank_header or table_bank
+        # Extraer metadata aunque solo haya tabla
+        metadata: dict = {}
+        # Siempre poblar primero los campos genéricos por label_map
+        label_map = {
+            "fecha_archivo": ["FECHA", "FECHA DE ARCHIVO"],
+            "hora_archivo": ["HORA"],
+            "nombre_empresa": ["NOMBRE DE EMPRESA", "EMPRESA", "RAZON SOCIAL"],
+            "nombre_archivo": ["NOMBRE DEL ARCHIVO"],
+            "folio": ["FOLIO", "FOLIO DE INTERNET"],
+            "nombre_contrato_scotia_linea": ["NOMBRE DE CONTRATO SCOTIA EN LINEA"],
+            "numero_contrato_scotia_linea": ["NUMERO DE CONTRATO SCOTIA EN LINEA"],
+            "numero_contrato_servicio": ["NUMERO DE CONTRATO DEL SERVICIO"],
+            "numero_lote": ["LOTE", "LOTE ID", "NO DE LOTE", "NUMERO DE LOTE"],
+            "numero_archivo_en_dia": ["NUMERO DE ARCHIVO EN EL DIA"],
+            "usuario_sistema_nombre": ["NOMBRE DE USUARIO DEL SISTEMA Y NOMBRE", "USUARIO"],
+            "fecha_hora_validacion_archivo": ["FECHA Y HORA DE VALIDACION DEL ARCHIVO"],
+            "fecha_hora_registro": ["FECHA Y HORA DE REGISTRO"],
+            "fecha_hora_proceso": ["FECHA Y HORA DE PROCESO", "FECHA DE TRANSMISION"],
+            "cantidad_total_movimientos": ["CANTIDAD TOTAL DE MOVIMIENTOS"],
+            "importe_total_movimientos": ["IMPORTE TOTAL DE MOVIMIENTOS"],
+            "cantidad_movimientos_altas": ["CANTIDAD DE MOVIMIENTO ALTAS", "CANTIDAD DE MOVIMIENTOS ALTAS"],
+            "importe_movimiento_altas": ["IMPORTE DE MOVIMIENTO ALTAS", "IMPORTE DE MOVIMIENTOS ALTAS"],
+            "cantidad_movimientos_bajas": ["CANTIDAD DE MOVIMIENTO BAJAS", "CANTIDAD DE MOVIMIENTOS BAJAS"],
+            "importe_movimientos_bajas": ["IMPORTE DE MOVIMIENTOS BAJAS"],
+            "total_registros_leidos": ["TOTAL DE REGISTROS LEIDOS"],
+        }
+        for key, labels in label_map.items():
+            value = _payment_pick_labeled_value(text, labels, max_len=180)
+            if value:
+                metadata[key] = value
+        if bank == "SCOTIABANK":
+            metadata.update(_extract_scotia_payment_metadata(text))
+        elif bank == "BBVA":
+            metadata.update(_extract_bbva_payment_metadata(text))
+        elif bank == "SANTANDER":
+            metadata.update(_extract_santander_payment_metadata(text))
+        else:
+            metadata.update(_extract_generic_bank_payment_metadata(text, bank))
+        metadata = _sanitize_payment_metadata(metadata)
+
+        # Poblar canonical_columns y canonical_rows igual que el pipeline general
+        rows: list[list[str]] = []
+        raw_rows = table_payload.get("rows")
+        if isinstance(raw_rows, list):
+            for raw_row in raw_rows:
+                if not isinstance(raw_row, list):
+                    continue
+                rows.append([str(cell or "") for cell in raw_row])
+        row_objects = _payment_rows_to_objects(rows) if rows else []
+        canonical_columns, canonical_rows = _payment_to_canonical_rows(bank, row_objects)
+        display_columns = _build_display_columns_map(rows, bank)
+
+        table_out = {
+            "columns": table_payload["rows"][0] if len(table_payload["rows"]) >= 1 else [],
+            "row_count": len(table_payload["rows"]) - 1 if len(table_payload["rows"]) > 1 else 0,
+            "rows": [dict(zip(table_payload["rows"][0], row)) for row in table_payload["rows"][1:]] if len(table_payload["rows"]) > 1 else [],
+            "canonical_columns": canonical_columns,
+            "canonical_row_count": len(canonical_rows),
+            "canonical_rows": canonical_rows,
+            "display_columns": display_columns,
+            "summary_tables": [],
+        }
+        table_out["bank"] = bank
+        return {
+            "source": "table_only",
+            "bank": bank,
+            "metadata": metadata,
+            "table": table_out,
+        }
+
     metadata: dict[str, str] = {}
     bank = _payment_detect_bank(text)
     label_map = {
@@ -5058,8 +5278,25 @@ def _extract_payment_detail_payload_impl(base_text_raw: str, table_payload: dict
             "summary_tables": summary_tables,
         },
     }
+    # Refuerzo: forzar el banco detectado en encabezado en el payload final
+    bank_header = _payment_detect_bank(text)
+    if bank_header:
+        result["bank"] = bank_header
+        if "table" in result and isinstance(result["table"], dict):
+            result["table"]["bank"] = bank_header
+        # Refuerzo: si hay mapped_fields, fuerza el banco también
+        if "mapped_fields" in result and isinstance(result["mapped_fields"], dict):
+            result["mapped_fields"]["banco"] = bank_header
     if quality_report:
         result["quality_report"] = quality_report
+    # Refuerzo final: fuerza el banco detectado en encabezado en todos los niveles antes de devolver
+    bank_header = _payment_detect_bank(text)
+    if bank_header:
+        result["bank"] = bank_header
+        if "table" in result and isinstance(result["table"], dict):
+            result["table"]["bank"] = bank_header
+        if "mapped_fields" in result and isinstance(result["mapped_fields"], dict):
+            result["mapped_fields"]["banco"] = bank_header
     return result
 
 

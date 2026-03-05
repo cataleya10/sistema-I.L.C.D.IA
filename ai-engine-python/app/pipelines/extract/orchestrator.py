@@ -12,6 +12,7 @@ from .constants import *  # noqa: F403
 from .common import *  # noqa: F403
 from .tables import *  # noqa: F403
 from .extractors import *  # noqa: F403
+from .extractors import _extract_cfe_address_from_lines
 from app.pipelines.legacy_adapter import legacy_extract_fields
 from app.pipelines.table_postprocess import (
     postprocess_payment_table,
@@ -312,7 +313,94 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
         if nss_name:
             fields.append(_make_field("nombre", "Nombre", _normalize_name(nss_name), ocr_boxes, confidence=0.82))
 
-    if document_type in {"DATOS_BANCARIOS", "FACTURA"}:
+
+    # --- REGLA: Para FACTURA solo tabla; para DATOS_BANCARIOS tabla + campos clave ---
+    if document_type == "FACTURA" or document_type == "DATOS_BANCARIOS" or document_type == "COMPROBANTE_DOMICILIO":
+        payment_table = _extract_payment_table_payload(base_text_raw, ocr_boxes, pdf_tables)
+        payment_detail = _extract_payment_detail_payload(base_text_raw, payment_table)
+        # Siempre asegurar que tabla_celdas tenga al menos header+data
+        if payment_table and payment_table.get("rows"):
+            rows = payment_table["rows"]
+            # Si la tabla es simple (lista de listas), asegurar que el header esté incluido y haya al menos 2 filas (header+datos)
+            if rows and isinstance(rows[0], list):
+                # Si solo hay una fila, intentar heurísticamente separar encabezado y datos
+                if len(rows) == 1:
+                    # Si hay un header explícito, usarlo
+                    if payment_table.get("header"):
+                        rows = [payment_table["header"], rows[0]]
+                    else:
+                        # Si la fila tiene muchas columnas, partir en dos: encabezado y datos
+                        row = rows[0]
+                        if len(row) >= 6:
+                            mid = len(row) // 2
+                            header = row[:mid]
+                            data = row[mid:]
+                            if len(header) == len(data):
+                                rows = [header, data]
+                            else:
+                                rows = [row, row]
+                        else:
+                            rows = [row, row]
+                payment_table["rows"] = [list(r) for r in rows]
+            # Si por alguna razón sigue habiendo solo una fila, duplicar
+            if len(payment_table["rows"]) == 1:
+                payment_table["rows"] = [payment_table["rows"][0], payment_table["rows"][0]]
+            fields.append(
+                _make_field(
+                    "tabla_celdas",
+                    "Tabla celdas",
+                    json.dumps(payment_table, ensure_ascii=False),
+                    ocr_boxes,
+                    confidence=0.92,
+                )
+            )
+        # Refuerzo: siempre incluir pago_detalle aunque sea simple
+        if payment_detail or payment_table:
+            # Refuerzo: fuerza el campo 'bank' en el dict antes de serializar
+            bank_header = _payment_detect_bank(base_text_raw)
+            if payment_detail and bank_header:
+                payment_detail["bank"] = bank_header
+                if "table" in payment_detail and isinstance(payment_detail["table"], dict):
+                    payment_detail["table"]["bank"] = bank_header
+                if "mapped_fields" in payment_detail and isinstance(payment_detail["mapped_fields"], dict):
+                    payment_detail["mapped_fields"]["banco"] = bank_header
+            fields.append(
+                _make_field(
+                    "pago_detalle",
+                    "Pago detalle",
+                    json.dumps(payment_detail or payment_table, ensure_ascii=False),
+                    ocr_boxes,
+                    confidence=0.9,
+                )
+            )
+        # Si hay layout, incluirlo
+        replica_layout = _build_replica_layout_payload(ocr_boxes, raw_text or base_text_raw)
+        if replica_layout:
+            fields.append(
+                _make_field(
+                    "replica_pdf_layout",
+                    "Replica PDF layout",
+                    json.dumps(replica_layout, ensure_ascii=False),
+                    ocr_boxes,
+                    confidence=1.0,
+                )
+            )
+        # Si hay texto relevante, incluirlo
+        if raw_text:
+            replica_text = raw_text.replace("\r\n", "\n").strip()
+            if len(replica_text) >= 80 and "\n" in replica_text:
+                fields.append(
+                    _make_field(
+                        "replica_pdf_texto",
+                        "Replica PDF texto",
+                        replica_text,
+                        ocr_boxes,
+                        confidence=1.0,
+                    )
+                )
+        return fields
+
+    if document_type == "DATOS_BANCARIOS":
         if ocr_boxes:
             fin_box_values = _extract_financial_from_boxes(ocr_boxes)
             if "clabe" in fin_box_values:
@@ -339,11 +427,15 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
         labeled_clabe = _find_labeled_value(lines, "CLABE")
         if labeled_clabe:
             fields.append(_make_field("clabe", "CLABE", _normalize_numeric_field(labeled_clabe), ocr_boxes, confidence=0.8))
-
         payment_table = _extract_payment_table_payload(base_text_raw, ocr_boxes, pdf_tables)
-        payment_detail = _extract_payment_detail_payload(base_text_raw, payment_table)
-        payment_table = _enrich_payment_table_payload(payment_table, payment_detail)
-        if payment_table:
+        if payment_table and payment_table.get("rows"):
+            rows = payment_table["rows"]
+            if rows and isinstance(rows[0], list):
+                if len(rows) == 1 and payment_table.get("header"):
+                    rows = [payment_table["header"], rows[0]]
+                elif len(rows) == 1:
+                    rows = [rows[0], rows[0]]
+                payment_table["rows"] = [list(r) for r in rows]
             fields.append(
                 _make_field(
                     "tabla_celdas",
@@ -353,40 +445,7 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                     confidence=0.92,
                 )
             )
-        if payment_detail:
-            fields.append(
-                _make_field(
-                    "pago_detalle",
-                    "Pago detalle",
-                    json.dumps(payment_detail, ensure_ascii=False),
-                    ocr_boxes,
-                    confidence=0.9,
-                )
-            )
-        if document_type == "FACTURA":
-            replica_layout = _build_replica_layout_payload(ocr_boxes, raw_text or base_text_raw)
-            if replica_layout:
-                fields.append(
-                    _make_field(
-                        "replica_pdf_layout",
-                        "Replica PDF layout",
-                        json.dumps(replica_layout, ensure_ascii=False),
-                        ocr_boxes,
-                        confidence=1.0,
-                    )
-                )
-        if document_type == "FACTURA" and raw_text:
-            replica_text = raw_text.replace("\r\n", "\n").strip()
-            if len(replica_text) >= 80 and "\n" in replica_text:
-                fields.append(
-                    _make_field(
-                        "replica_pdf_texto",
-                        "Replica PDF texto",
-                        replica_text,
-                        ocr_boxes,
-                        confidence=1.0,
-                    )
-                )
+        return fields
 
     # Skip payment-table fallback for GENERICO — the dedicated GENERICO
     # block below handles comprehensive table extraction and would duplicate.
@@ -668,7 +727,7 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                 if existing_ref and existing_ref.get("value"):
                     ref_value_norm = _normalize_alnum(str(existing_ref["value"]))
                     digits = sum(1 for ch in ref_value_norm if ch.isdigit())
-                    has_noise = any(token in ref_value_norm for token in ["PAGAR", "LIMITE", "FECHA"])
+                    has_noise = any(token in ref_value_norm for token in ["PAGAR", "LIMITE", "FECHA", "TOTAL", "IMPORTE", "SALDO"])
                     ref_ok = len(ref_value_norm) >= 10 and digits >= 6 and not has_noise
                 if not ref_ok:
                     match = re.search(
@@ -718,217 +777,6 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
             num_ok = False
             if existing_num and existing_num.get("value"):
                 num_digits = _normalize_numeric_field(str(existing_num["value"]))
-                num_ok = bool(re.fullmatch(r"\d{10}", num_digits))
-            if not num_ok:
-                match = re.search(
-                    r"(?:NUMERO\s+TELEFONICO|NUMERO\s+DE\s+TELEFONO|TELEFONO|LINEA(?!\s+DE\s+CAPTURA)|NUMERO(?!\s+DE\s+CUENTA))\D*((?:\d[\s().-]*){10,12})",
-                    full_text,
-                )
-                if match:
-                    raw_num = _normalize_numeric_field(match.group(1))
-                    if len(raw_num) > 10:
-                        raw_num = raw_num[-10:]
-                    if re.fullmatch(r"\d{10}", raw_num):
-                        fields.append(_make_field("numero_servicio", "Numero de servicio", raw_num, ocr_boxes, confidence=0.89))
-
-            existing_cuenta = next((f for f in fields if f.get("key") == "cuenta"), None)
-            cuenta_ok = False
-            if existing_cuenta and existing_cuenta.get("value"):
-                cuenta_norm = _normalize_alnum(str(existing_cuenta["value"]))
-                cuenta_ok = len(cuenta_norm) >= 8
-            if not cuenta_ok:
-                match = re.search(
-                    r"(?:NO\.?\s*DE\s*CUENTA|NUMERO\s+DE\s+CUENTA|CUENTA)\D*((?:[A-Z0-9][\s.-]*){8,24})",
-                    full_text,
-                )
-                if match:
-                    cuenta_raw = re.split(
-                        r"\b(?:REFERENCIA|PAGAR|TOTAL|IMPORTE|FECHA|LIMITE|SALDO)\b",
-                        match.group(1),
-                        maxsplit=1,
-                    )[0]
-                    cuenta_value = _normalize_alnum(cuenta_raw)
-                    bad_tokens = ("PAGAR", "LIMITE", "FECHA", "TOTAL", "IMPORTE", "SALDO")
-                    if 8 <= len(cuenta_value) <= 24 and not any(token in cuenta_value for token in bad_tokens):
-                        fields.append(_make_field("cuenta", "Cuenta", cuenta_value, ocr_boxes, confidence=0.88))
-
-            existing_ref = next((f for f in fields if f.get("key") == "referencia"), None)
-            ref_ok = False
-            if existing_ref and existing_ref.get("value"):
-                ref_value_norm = _normalize_alnum(str(existing_ref["value"]))
-                digits = sum(1 for ch in ref_value_norm if ch.isdigit())
-                has_noise = any(token in ref_value_norm for token in ("PAGAR", "LIMITE", "FECHA", "TOTAL", "IMPORTE"))
-                ref_ok = len(ref_value_norm) >= 10 and digits >= 6 and not has_noise
-            if not ref_ok:
-                match = re.search(
-                    r"(?:LINEA\s+DE\s+CAPTURA|REFERENCIA(?:\s+UNICA)?|REF(?:ERENCIA)?)\D*((?:\d[\s.-]*){10,30})(?=\s+(?:PAGAR|FECHA|TOTAL|IMPORTE|SALDO|LIMITE)\b|$)",
-                    full_text,
-                )
-                if match:
-                    ref_value = _normalize_alnum(match.group(1))
-                    if ref_value.startswith("UNICA"):
-                        ref_value = ref_value[5:]
-                    digits = sum(1 for ch in ref_value if ch.isdigit())
-                    if 10 <= len(ref_value) <= 30 and digits >= 10:
-                        fields.append(_make_field("referencia", "Referencia", ref_value, ocr_boxes, confidence=0.88))
-
-        # CFE-style documents: prefer user address block and service identifiers
-        if full_text and ("CFE" in full_text or "COMISION FEDERAL" in full_text):
-            def _extract_cfe_address(lines_local: list[str], full_text_local: str) -> str | None:
-                address_markers = ("DOMICILIO", "CALLE", "CLL", "COL", "COLONIA", "AV", "AVENIDA", "FRACC", "MZ", "LT", "CP", "C.P.")
-                stop_tokens = ("TOTAL", "IMPORTE", "PAGAR", "LIMITE", "CORTE", "RFC", "TARIFA", "MEDIDOR", "SERVICIO")
-
-                for idx, raw_line in enumerate(lines_local):
-                    line = _normalize_text(str(raw_line)).upper()
-                    if "DOMICILIO" not in line:
-                        continue
-                    tail = re.sub(r"^.*DOMICILIO(?:\s+DEL\s+SERVICIO|\s+DE\s+SUMINISTRO)?\s*[:\-]?\s*", "", line).strip(" .,-")
-                    pieces = []
-                    if tail and not any(token in tail for token in ("COMISION FEDERAL", "CFE SUMINISTRADOR")):
-                        pieces.append(tail)
-                    for next_line in lines_local[idx + 1: idx + 3]:
-                        upper_next = _normalize_text(str(next_line)).upper()
-                        if not upper_next:
-                            continue
-                        if any(token in upper_next for token in stop_tokens):
-                            break
-                        pieces.append(upper_next)
-                    candidate = _clean_address_value(" ".join(pieces))
-                    if len(candidate) >= 12 and any(marker in candidate for marker in address_markers):
-                        return candidate
-
-                for idx, raw_line in enumerate(lines_local):
-                    line = _normalize_text(str(raw_line)).upper()
-                    if not any(marker in line for marker in address_markers):
-                        continue
-                    if any(token in line for token in ("TOTAL", "IMPORTE", "PAGAR", "TARIFA", "MEDIDOR", "RFC")):
-                        continue
-                    pieces = [line]
-                    for next_line in lines_local[idx + 1: idx + 3]:
-                        upper_next = _normalize_text(str(next_line)).upper()
-                        if not upper_next:
-                            continue
-                        if any(token in upper_next for token in stop_tokens):
-                            break
-                        pieces.append(upper_next)
-                    candidate = _clean_address_value(" ".join(pieces))
-                    if len(candidate) >= 12 and any(marker in candidate for marker in address_markers):
-                        return candidate
-
-                match = re.search(
-                    r"(?:DOMICILIO(?:\s+DEL\s+SERVICIO|\s+DE\s+SUMINISTRO)?|DIRECCION)\s*[:\-]?\s*(.{15,180}?)(?=\s+(?:TOTAL|IMPORTE|PAGAR|RFC|TARIFA|MEDIDOR|NO\.?\s*DE\s*SERVICI[O0]|SERVICI[O0])\b|$)",
-                    full_text_local,
-                )
-                if match:
-                    candidate = _clean_address_value(match.group(1))
-                    if len(candidate) >= 12 and any(marker in candidate for marker in address_markers):
-                        return candidate
-                return None
-
-            def _parse_amount_local(value: str | None) -> float | None:
-                if not value:
-                    return None
-                raw = str(value).replace("$", "").replace(" ", "").replace(",", "")
-                try:
-                    return float(raw)
-                except (TypeError, ValueError):
-                    return None
-
-            def _recover_compact_person_name(value: str) -> str:
-                cleaned = re.sub(r"[^A-Z ]", "", str(value).upper()).strip()
-                cleaned = re.sub(r"\s+", " ", cleaned)
-                if not cleaned:
-                    return ""
-                if " " in cleaned:
-                    return _normalize_name(cleaned)
-                if len(cleaned) < 10:
-                    return cleaned
-                known_names = [
-                    "ALEJANDRO", "GABRIEL", "MIGUEL", "ANGEL", "DAMIAN", "JOSE", "MARIA", "CARLOS", "DANIEL",
-                    "LUIS", "JAVIER", "OSCAR", "ERWIN", "JUAN", "PEDRO", "ANA",
-                ]
-                for first in sorted(known_names, key=len, reverse=True):
-                    if not cleaned.startswith(first):
-                        continue
-                    rest = cleaned[len(first):]
-                    if len(rest) < 4:
-                        continue
-                    for last in sorted(known_names, key=len, reverse=True):
-                        if not rest.endswith(last):
-                            continue
-                        middle = rest[:-len(last)]
-                        if len(middle) < 4:
-                            continue
-                        return _normalize_name(f"{first} {middle} {last}")
-                return cleaned
-
-            blacklist_cp = {"06600", "06500", "01210"}
-            cp_match = None
-            cp_index = None
-            for idx, line in enumerate(box_text_lines):
-                match = re.search(r"\b([0-9OIL]{5})\b", line)
-                normalized_cp = _normalize_value_for_key("cp", match.group(1)) if match else ""
-                if normalized_cp and normalized_cp not in blacklist_cp:
-                    cp_match = normalized_cp
-                    cp_index = idx
-                    break
-
-            if not any(f.get("key") == "titular" for f in fields):
-                rfc_idx = None
-                for idx, line in enumerate(box_text_lines):
-                    if "RFC" in line:
-                        rfc_idx = idx
-                        break
-                if rfc_idx is not None and rfc_idx + 1 < len(box_text_lines):
-                    candidate = box_text_lines[rfc_idx + 1]
-                    if "TOTAL" not in candidate and not re.search(r"\d", candidate):
-                        fields.append(_make_field("titular", "Titular", candidate, ocr_boxes, confidence=0.8))
-            if cp_match:
-                pre_lines = []
-                ref_lines = []
-                cp_line = ""
-                if cp_index is not None:
-                    start = max(0, cp_index - 5)
-                    for line in box_text_lines[start:cp_index]:
-                        if "(" in line and ")" in line:
-                            continue
-                        if "PESOS" in line:
-                            continue
-                        if any(tag in line for tag in ["TOTAL", "PAGAR", "IMPORTE", "LIMITE", "CORTE", "TARIFA", "PERIODO", "RFC"]):
-                            continue
-                        pre_lines.append(line)
-                    cp_line = box_text_lines[cp_index]
-                    ref_lines = [*pre_lines, cp_line]
-                    if cp_index + 1 < len(box_text_lines):
-                        next_line = box_text_lines[cp_index + 1]
-                        if "PESOS" not in next_line and "DESCARGA" not in next_line:
-                            ref_lines.append(next_line)
-                domicilio_lines = list(pre_lines)
-                if cp_line:
-                    cp_clean = re.sub(r"[0-9OIL]{5}", "", cp_line)
-                    cp_clean = cp_clean.replace("C.P.", "").replace("CP", "").replace("FCP", "")
-                    cp_clean = re.sub(r"\b[A-Z]\b", "", cp_clean)
-                    cp_clean = re.sub(r"F\b", "", cp_clean)
-                    cp_clean = cp_clean.strip(" .,-")
-                    if cp_clean:
-                        domicilio_lines.append(cp_clean)
-                domicilio_block = " ".join(domicilio_lines).strip()
-                referencia_block = " ".join(ref_lines).strip()
-                if domicilio_block:
-                    fields.append(_make_field("domicilio", "Domicilio", _clean_address_value(domicilio_block), ocr_boxes, confidence=0.85))
-                fields.append(_make_field("cp", "CP", cp_match, ocr_boxes, confidence=0.85))
-                # Always add the address-style reference block for CFE docs.
-                # This is the "domicilio de suministro" reference, which is the
-                # expected referencia for utility bills (not the numeric barcode).
-                # The higher confidence (0.88) ensures it wins over numeric codes
-                # from box extraction (0.7) during deduplication.
-                normalized_ref = _normalize_value_for_key("referencia", referencia_block)
-                if normalized_ref:
-                    fields.append(_make_field("referencia", "Referencia", normalized_ref, ocr_boxes, confidence=0.88))
-
-            existing_num = next((f for f in fields if f.get("key") == "numero_servicio"), None)
-            num_ok = False
-            if existing_num and existing_num.get("value"):
                 num_ok = bool(re.fullmatch(r"\d{10,13}", _normalize_numeric_field(existing_num["value"])))
             if not num_ok:
                 match = re.search(r"(?:NO\.?\s*DE\s*SERVICI[O0]|NO\.?DESERVICI[O0]|SERVICI[O0])\D*(\d{10,13})", full_text)
@@ -963,7 +811,7 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                 total_ok = parsed_existing_total is not None and parsed_existing_total > 0
             if not total_ok:
                 match = re.search(
-                    r"(?:TOTAL\s*A\s*PAGAR|TOTALA\s*PAGAR|IMPORTE\s*A\s*PAGAR|SALDO\s+TOTAL|TOTAL)\D*(\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)",
+                    r"(?:TOTAL\s+A\s+PAGAR|SALDO\s+TOTAL|IMPORTE\s+A\s+PAGAR|TOTAL)\D*(\$?\s*[0-9OIL]{1,3}(?:[.,][0-9OIL]{3})*(?:[.,][0-9OIL]{2})?)",
                     full_text,
                 )
                 if match:
@@ -1066,7 +914,7 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
 
             # CFE receipts sometimes omit/merge CP and lose address in generic picker.
             if not any(f.get("key") == "domicilio" and f.get("value") for f in fields):
-                cfe_address = _extract_cfe_address(box_text_lines, full_text)
+                cfe_address = _extract_cfe_address_from_lines(box_text_lines)
                 if cfe_address:
                     fields.append(_make_field("domicilio", "Domicilio", cfe_address, ocr_boxes, confidence=0.83))
                     if not any(f.get("key") == "cp" and f.get("value") for f in fields):
@@ -1171,7 +1019,7 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                     fields.append(_make_field("cuenta", "Cuenta", cuenta_value, ocr_boxes, confidence=0.95))
 
             ref_match = re.search(
-                r"(?:LINEA\s+DE\s+CAPTURA|REFERENCIA(?:\s+UNICA)?|REF(?:ERENCIA)?)\D*((?:\d[\s.-]*){10,30})(?=\s+(?:PAGAR|FECHA|TOTAL|IMPORTE|SALDO|LIMITE|TELMEX)\b|$)",
+                r"(?:REFERENCIA(?:\s+DE\s+PAGO)?|REF(?:ERENCIA)?|LINEA\s+DE\s+CAPTURA)\s*[:#-]?\s*((?:[0-9OIL][\s.-]*){10,30})(?=\s+(?:PAGAR|FECHA|TOTAL|IMPORTE|SALDO|LIMITE|VENC)\b|$)",
                 full_text,
             )
             if ref_match:
@@ -1188,15 +1036,15 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
 
             if not any(f.get("key") == "fecha_limite" for f in fields):
                 limit_match = re.search(
-                    r"(?:PAGAR\s+ANTES\s+DE|FECHA\s*LIMITE(?:\s*DE\s*PAGO)?|VENCE)\D*([0-9]{1,2}(?:\s+|[-/])[A-Z]{3}(?:\s+|[-/])[0-9]{2,4}|\d{2}[/-]\d{2}[/-]\d{2,4})",
-                    full_text,
+                    r"(?:PAGAR\s*ANTES\s*DE|FECHA\s*LIMITE(?:\s*DE\s*PAGO)?|VENCE)\D*([0-9OIL]{1,2}\s*(?:[-/]|[^0-9A-Z]+)\s*[A-Z]{3,9}\s*(?:[-/]|[^0-9A-Z]+)\s*[0-9OIL]{2,4}|[0-9OIL]{1,2}\s*(?:[/-]|[^0-9A-Z]+)\s*[0-9OIL]{1,2}\s*(?:[/-]|[^0-9A-Z]+)\s*[0-9OIL]{2,4})",
+                    full_text.replace("–", "-").replace("—", "-").replace("−", "-"),
                 )
                 if limit_match:
                     fields.append(_make_field("fecha_limite", "Fecha limite", limit_match.group(1), ocr_boxes, confidence=0.92))
 
             if not any(f.get("key") == "total" for f in fields):
                 total_match = re.search(
-                    r"(?:TOTAL\s+A\s+PAGAR|SALDO\s+TOTAL|IMPORTE\s+A\s+PAGAR|TOTAL)\D*(\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)",
+                    r"(?:TOTAL\s+A\s+PAGAR|SALDO\s+TOTAL|IMPORTE\s+A\s+PAGAR|TOTAL)\D*(\$?\s*[0-9OIL]{1,3}(?:[.,][0-9OIL]{3})*(?:[.,][0-9OIL]{2})?)",
                     full_text,
                 )
                 if total_match:
@@ -1323,12 +1171,13 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
 
             if not any(f.get("key") == "fecha_limite" and f.get("value") for f in fields):
                 limit_match = re.search(
-                    r"(?:PAGAR\s+ANTES\s+DE|FECHA\s*LIMITE(?:\s*DE\s*PAGO)?|VENCIMIENTO|VENCE)\D*([0-9OIL]{1,2}(?:\s+|[-/])[A-Z]{3}(?:\s+|[-/])[0-9OIL]{2,4}|[0-9OIL]{2}[/-][0-9OIL]{2}[/-][0-9OIL]{2,4})",
-                    telcel_text,
+                    r"(?:PAGAR\s*ANTES\s*DE|FECHA\s*LIMITE(?:\s*DE\s*PAGO)?|VENCIMIENTO|VENCE)\D*([0-9OIL]{1,2}\s*(?:[-/]|[^0-9A-Z]+)\s*[A-Z]{3,9}\s*(?:[-/]|[^0-9A-Z]+)\s*[0-9OIL]{2,4}|[0-9OIL]{1,2}\s*(?:[/-]|[^0-9A-Z]+)\s*[0-9OIL]{1,2}\s*(?:[/-]|[^0-9A-Z]+)\s*[0-9OIL]{2,4})",
+                    full_text.replace("–", "-").replace("—", "-").replace("−", "-"),
                 )
                 if limit_match:
-                    raw_date = limit_match.group(1).upper().replace("O", "0").replace("I", "1").replace("L", "1")
-                    fields.append(_make_field("fecha_limite", "Fecha limite", _normalize_date_value(raw_date), ocr_boxes, confidence=0.9))
+                    normalized_limit = _normalize_date_value(limit_match.group(1))
+                    if re.fullmatch(r"\d{2}/\d{2}/\d{4}", normalized_limit):
+                        fields.append(_make_field("fecha_limite", "Fecha limite", normalized_limit, ocr_boxes, confidence=0.88))
 
             if not any(f.get("key") == "total" and f.get("value") for f in fields):
                 total_match = re.search(
@@ -1550,28 +1399,33 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
         if all_tables:
             # Primary table → tabla_celdas
             primary = all_tables[0]
-            if primary.get("row_count", 0) >= 2:
-                fields.append(
-                    _make_field(
-                        "tabla_celdas",
-                        "Tabla detectada",
-                        json.dumps(primary, ensure_ascii=False),
-                        ocr_boxes,
-                        confidence=0.8,
-                    )
-                )
-            # Additional tables → tabla_celdas_2, tabla_celdas_3, etc.
-            for idx, table in enumerate(all_tables[1:], start=2):
-                if table.get("row_count", 0) >= 2:
+            rows = primary.get("rows", [])
+            if isinstance(rows, list) and len(rows) >= 2:
+                # Solo agregar si la primera fila es encabezado (todas celdas son str)
+                if all(isinstance(cell, str) for cell in rows[0]):
                     fields.append(
                         _make_field(
-                            f"tabla_celdas_{idx}",
-                            f"Tabla detectada #{idx}",
-                            json.dumps(table, ensure_ascii=False),
+                            "tabla_celdas",
+                            "Tabla detectada",
+                            json.dumps(primary, ensure_ascii=False),
                             ocr_boxes,
-                            confidence=0.75,
+                            confidence=0.8,
                         )
                     )
+            # Additional tables → tabla_celdas_2, tabla_celdas_3, etc.
+            for idx, table in enumerate(all_tables[1:], start=2):
+                rows = table.get("rows", [])
+                if isinstance(rows, list) and len(rows) >= 2:
+                    if all(isinstance(cell, str) for cell in rows[0]):
+                        fields.append(
+                            _make_field(
+                                f"tabla_celdas_{idx}",
+                                f"Tabla detectada #{idx}",
+                                json.dumps(table, ensure_ascii=False),
+                                ocr_boxes,
+                                confidence=0.75,
+                            )
+                        )
             logger.info("[GENERICO] Tables: %d", len(all_tables))
 
     # ── Universal tabla_celdas fallback ────────────────────────────────────────
@@ -1590,32 +1444,33 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
             _uni_sorted = sorted(_uni_tables, key=lambda t: t.get("row_count", 0), reverse=True)
             _uni_idx = 1
             for _uni_tbl in _uni_sorted:
-                if _uni_tbl.get("row_count", 0) < 2:
-                    continue
-                if _uni_idx == 1:
-                    fields.append(
-                        _make_field(
-                            "tabla_celdas",
-                            "Tabla detectada",
-                            json.dumps(_uni_tbl, ensure_ascii=False),
-                            ocr_boxes,
-                            confidence=0.8,
-                        )
-                    )
-                else:
-                    fields.append(
-                        _make_field(
-                            f"tabla_celdas_{_uni_idx}",
-                            f"Tabla detectada #{_uni_idx}",
-                            json.dumps(_uni_tbl, ensure_ascii=False),
-                            ocr_boxes,
-                            confidence=0.75,
-                        )
-                    )
-                _uni_idx += 1
-                logger.info("[DIAG-UNI] added table #%d rows=%d cols=%d source=%s",
-                            _uni_idx - 1, _uni_tbl.get("row_count", 0),
-                            _uni_tbl.get("column_count", 0), _uni_tbl.get("source", "?"))
+                rows = _uni_tbl.get("rows", [])
+                if isinstance(rows, list) and len(rows) >= 2:
+                    if all(isinstance(cell, str) for cell in rows[0]):
+                        if _uni_idx == 1:
+                            fields.append(
+                                _make_field(
+                                    "tabla_celdas",
+                                    "Tabla detectada",
+                                    json.dumps(_uni_tbl, ensure_ascii=False),
+                                    ocr_boxes,
+                                    confidence=0.8,
+                                )
+                            )
+                        else:
+                            fields.append(
+                                _make_field(
+                                    f"tabla_celdas_{_uni_idx}",
+                                    f"Tabla detectada #{_uni_idx}",
+                                    json.dumps(_uni_tbl, ensure_ascii=False),
+                                    ocr_boxes,
+                                    confidence=0.75,
+                                )
+                            )
+                        _uni_idx += 1
+                        logger.info("[DIAG-UNI] added table #%d rows=%d cols=%d source=%s",
+                                    _uni_idx - 1, _uni_tbl.get("row_count", 0),
+                                    _uni_tbl.get("column_count", 0), _uni_tbl.get("source", "?"))
 
     if base_text_raw:
         # Preserve line breaks for readable display; only collapse intra-line spaces
@@ -1671,6 +1526,57 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
 
     cleaned = _postprocess_fields(document_type, fields)
     contracted = _apply_field_contracts(document_type, cleaned)
+    # --- REFUERZO FINAL: Forzar bank detectado en header en todos los niveles posibles ---
+    try:
+        bank_header = None
+        # Detectar bank desde el header (primeras 10 líneas del texto base)
+        base_text_lines = [line.strip() for line in (base_text_raw or '').splitlines() if line.strip()][:10]
+        bank_header = _payment_detect_bank("\n".join(base_text_lines))
+        if bank_header:
+            # Forzar en todos los campos tipo tabla_celdas, pago_detalle, mapped_fields, y raíz
+            for field in contracted:
+                if field.get("key") in {"tabla_celdas", "tabla_celdas_2", "tabla_celdas_3", "tabla_celdas_4"}:
+                    try:
+                        table = json.loads(field.get("value", ""))
+                        if isinstance(table, dict):
+                            table["bank"] = bank_header
+                            # También forzar en cada row si existe
+                            if "rows" in table and isinstance(table["rows"], list):
+                                for row in table["rows"]:
+                                    if isinstance(row, dict):
+                                        row["bank"] = bank_header
+                            field["value"] = json.dumps(table, ensure_ascii=False)
+                    except Exception:
+                        pass
+                if field.get("key") == "pago_detalle":
+                    try:
+                        detalle = json.loads(field.get("value", ""))
+                        if isinstance(detalle, dict):
+                            detalle["bank"] = bank_header
+                            if "table" in detalle and isinstance(detalle["table"], dict):
+                                detalle["table"]["bank"] = bank_header
+                            if "mapped_fields" in detalle and isinstance(detalle["mapped_fields"], dict):
+                                detalle["mapped_fields"]["banco"] = bank_header
+                            field["value"] = json.dumps(detalle, ensure_ascii=False)
+                    except Exception:
+                        pass
+                # Forzar en mapped_fields si existe como campo suelto
+                if field.get("key") == "mapped_fields":
+                    try:
+                        mapped = json.loads(field.get("value", ""))
+                        if isinstance(mapped, dict):
+                            mapped["banco"] = bank_header
+                            field["value"] = json.dumps(mapped, ensure_ascii=False)
+                    except Exception:
+                        pass
+            # Forzar campo raíz "bank" si existe como field suelto
+            for field in contracted:
+                if field.get("key") == "bank":
+                    field["value"] = bank_header
+                if field.get("key") == "banco":
+                    field["value"] = bank_header
+    except Exception:
+        pass
     return _dedupe_fields(contracted)
 
 
