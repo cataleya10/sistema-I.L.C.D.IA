@@ -2530,10 +2530,18 @@ def _pdf_tables_to_generic_payloads(pdf_tables: list[list[list[str]]] | None) ->
         ]
         if len(cleaned) < 2:
             continue
+        # Filter metadata/noise rows from generic tables too
+        _exp_cols = len(cleaned[0]) if cleaned else 0
+        filtered = [cleaned[0]]  # keep header
+        for r in cleaned[1:]:
+            if not _is_metadata_row(r, expected_cols=_exp_cols):
+                filtered.append(r)
+        if len(filtered) < 2:
+            continue
         payloads.append({
-            "rows": cleaned,
-            "row_count": len(cleaned),
-            "column_count": len(cleaned[0]) if cleaned else 0,
+            "rows": filtered,
+            "row_count": len(filtered),
+            "column_count": _exp_cols,
             "table_index": idx,
             "source": "pdf_structure",
         })
@@ -2625,9 +2633,10 @@ def _extract_payment_table_payload_impl(base_text_raw: str, ocr_boxes, pdf_table
     # ── Filter metadata/noise rows from raw data ────────────────────────
     # Keep the header (row 0) and only data rows that are not metadata noise.
     if len(rows) >= 2:
+        _expected_cols = len(rows[0])
         clean = [rows[0]]
         for data_row in rows[1:]:
-            if not _is_metadata_row(data_row):
+            if not _is_metadata_row(data_row, expected_cols=_expected_cols):
                 clean.append(data_row)
         rows = clean
 
@@ -4245,27 +4254,56 @@ _METADATA_NOISE_PATTERNS = (
 # When a row has very few non-empty cells and those cells match these
 # prefixes, the row is metadata noise — not payment data.
 _METADATA_LABEL_PREFIXES = (
-    "FECHA Y HO", "BBVA NET", "BBVA ME", "DATOS D", "ESTADO",
+    "FECHA Y HO", "FECHA DE", "BBVA NET", "BBVA ME", "DATOS D",
+    "ESTADO", "ESTATUS",
     "REPORTE DE", "COMPROBANTE", "DISPERSION",
     "NUMERO DE CON", "NUMERO DE SEC", "TIPO DE PAGO",
     "FECHA DE ENV", "FECHA DE TRANS",
     "DATOS DEL C", "OPERACION RE",
+    "TRANSF", "TRA ", "PAGO", "PA ",
+    "CONCEPTO", "IMPORTE", "MONEDA", "DIVISA",
+    "TITULAR", "CUENTA DE", "FOLIO",
+    "HORA DE", "MOTIVO",
 )
 
 
-def _is_metadata_row(row: list[str]) -> bool:
+def _is_metadata_row(row: list[str], expected_cols: int = 0) -> bool:
     """Detect metadata label rows that leaked into the table.
 
     Rows containing document metadata labels (contract numbers, sequence IDs,
     etc.) should NOT be data rows in the payment table.
+
+    *expected_cols*: when provided (>0), the number of columns the header row
+    has.  In wide tables (≥5 cols), rows with very few non-empty cells are
+    almost certainly metadata noise, not real data.
     """
     row_joined = " ".join(str(cell or "").strip().upper() for cell in row)
     noise_count = sum(1 for pat in _METADATA_NOISE_PATTERNS if pat in row_joined)
     if noise_count >= 2:
         return True
 
-    # Rows with very few non-empty cells that are metadata labels (not data)
     non_empty = [str(c or "").strip() for c in row if str(c or "").strip()]
+
+    # ── Wide-table heuristic ───────────────────────────────────────────
+    # In tables with many columns (≥5), real data rows always populate
+    # several cells.  A row with only 1 non-empty cell is metadata noise
+    # (e.g. "Fecha y ho", "Tra", "D", "Es" from BBVA headers).
+    if expected_cols >= 5:
+        if len(non_empty) <= 1:
+            return True
+        # 2 non-empty cells that are short text → still metadata labels
+        if len(non_empty) == 2:
+            combined_len = sum(len(c) for c in non_empty)
+            if combined_len <= 25:
+                combined = " ".join(non_empty).upper()
+                if any(combined.startswith(prefix) for prefix in _METADATA_LABEL_PREFIXES):
+                    return True
+                # Very short orphan text (e.g. "PA", "D", "Es") not matching
+                # a prefix is still noise if each cell is ≤ 4 chars.
+                if all(len(c) <= 4 for c in non_empty):
+                    return True
+
+    # Rows with very few non-empty cells that are metadata labels (not data)
     if len(non_empty) <= 2 and non_empty:
         combined = " ".join(non_empty).upper()
         if any(combined.startswith(prefix) for prefix in _METADATA_LABEL_PREFIXES):
@@ -4330,6 +4368,7 @@ def _payment_rows_to_objects(rows: list[list[str]]) -> list[dict]:
         keys = _payment_header_keys_from_cells(header)
         if not keys:
             return []
+        _expected_cols = len(header)
         objects: list[dict] = []
         for row in rows[1:]:
             try:
@@ -4337,7 +4376,7 @@ def _payment_rows_to_objects(rows: list[list[str]]) -> list[dict]:
                 if _is_summary_row(row):
                     continue
                 # Skip metadata label rows that leaked into the table
-                if _is_metadata_row(row):
+                if _is_metadata_row(row, expected_cols=_expected_cols):
                     continue
                 item: dict[str, str] = {}
                 for idx, key in enumerate(keys):

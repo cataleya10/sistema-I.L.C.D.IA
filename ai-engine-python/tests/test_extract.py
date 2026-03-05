@@ -2979,6 +2979,27 @@ class TestMetadataRowFilter(unittest.TestCase):
         ]
         self.assertFalse(_is_metadata_row(row))
 
+    def test_single_cell_metadata_in_wide_table(self):
+        """Rows with only 1 non-empty cell in a wide table (≥5 cols) are always noise."""
+        from app.pipelines.extract import _is_metadata_row
+        for label in ("Fecha y ho", "BBVA Net", "Tra", "PA", "D", "Es", "Estado"):
+            row = [label, "", "", "", "", "", "", "", "", ""]
+            self.assertTrue(
+                _is_metadata_row(row, expected_cols=10),
+                f"Should filter single-cell metadata row: {label!r}",
+            )
+
+    def test_normal_data_row_not_filtered_wide_table(self):
+        """Real data rows with many cells pass even in wide tables."""
+        from app.pipelines.extract import _is_metadata_row
+        row = [
+            "GRUPO PAGO MISMO BANCO", "PENSION 15 ENE", "3317.69",
+            "000000000103552403", "1595352408", "MXP",
+            "BUFETE DE MANTENIMIENTO", "15/01/2026", "15/01/2026",
+            "20:13:17", "PAGO", "7749675952",
+        ]
+        self.assertFalse(_is_metadata_row(row, expected_cols=12))
+
 
 class TestCleanMetadataFromCell(unittest.TestCase):
     """Tests for _clean_metadata_from_cell — noise removal from cells."""
