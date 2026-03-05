@@ -1574,8 +1574,8 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertNotIn("$", result[1][3], "El nombre no debe contener el símbolo de moneda")
         self.assertIn("ROLANDO", result[1][3], "El nombre debe contener la parte de texto")
 
-    def test_fix_ocr_invalid_nombre_discards_row(self):
-        """Si nombre es solo un monto (sin nombre real), la fila se descarta."""
+    def test_fix_ocr_invalid_nombre_keeps_row(self):
+        """Si nombre es solo un monto (sin nombre real), la fila se conserva (los demás campos son válidos)."""
         from app.pipelines.extract import _fix_payment_ocr_column_errors
 
         rows = [
@@ -1583,7 +1583,7 @@ class ExtractPipelineTests(unittest.TestCase):
             ["56783223195", "1620260115134340581263", "$140948.59", "$610.44", "MENDEZ", "FLORES", "", "PAGO DE NOMINA"],
         ]
         result = _fix_payment_ocr_column_errors(rows)
-        self.assertEqual(len(result), 1, "Fila con nombre inválido debe descartarse (solo queda header)")
+        self.assertEqual(len(result), 2, "Fila con nombre inválido debe conservarse (cuenta, referencia, importe siguen siendo válidos)")
 
     def test_fix_ocr_status_extracted_from_concepto(self):
         """Si concepto empieza con palabra de estado y estatus está vacío, se separa."""

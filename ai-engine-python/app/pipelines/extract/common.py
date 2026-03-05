@@ -1836,10 +1836,10 @@ def _looks_like_person_name(value: str) -> bool:
     text = _normalize_name(value).upper()
     if not text:
         return False
-    if len(text) < 5 or len(text) > 90:
+    if len(text) < 2 or len(text) > 120:
         return False
     tokens = [t for t in text.split() if t]
-    if len(tokens) < 2:
+    if not tokens:
         return False
     banned = {
         "PRESTACIONES",
@@ -1848,20 +1848,10 @@ def _looks_like_person_name(value: str) -> bool:
         "REQUISITOS",
         "OTORGARAN",
         "CUMPLIDO",
-        "LUGAR",
-        "NACIMIENTO",
-        "ACTA",
-        "SEXO",
-        "FECHA",
     }
     banned_fragments = (
-        "CONSUMO",
-        "GRAFIC",
         "SUBTOTAL",
         "MULTIPLICADOR",
-        "IMPORTE",
-        "PAGAR",
-        "SERVICIO",
         "KWH",
         "TARIFA",
     )
@@ -1869,7 +1859,7 @@ def _looks_like_person_name(value: str) -> bool:
         return False
     if any(fragment in text for fragment in banned_fragments):
         return False
-    if sum(1 for ch in text if ch.isdigit()) >= 4:
+    if sum(1 for ch in text if ch.isdigit()) >= len(text) * 0.5:
         return False
     return True
 

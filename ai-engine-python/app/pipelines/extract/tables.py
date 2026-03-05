@@ -888,14 +888,15 @@ def _fix_payment_ocr_column_errors(structured_rows: list[list[str]]) -> list[lis
                     row[importe_idx] = amount_str
                 row[nombre_idx] = name_after
 
-        # Fix 2: validar nombre — descartar si tiene un valor inválido no-vacío.
-        # Nombre vacío (sin caja OCR asignada) se deja pasar para completar desde texto.
+        # Fix 2: validar nombre — si tiene un valor inválido no-vacío, limpiar
+        # pero NUNCA descartar la fila completa (los demás campos son valiosos).
         if 0 <= nombre_idx < len(row):
-            nombre_original = orig_row[nombre_idx].strip() if nombre_idx < len(orig_row) else ""
             nombre_after_fix = row[nombre_idx].strip()
-            if not _looks_like_person_name(nombre_after_fix):
-                if nombre_original:
-                    continue
+            if nombre_after_fix and not _looks_like_person_name(nombre_after_fix):
+                # Solo limpiar el nombre si parece basura (números, símbolos);
+                # NO descartar la fila — cuenta, referencia, importe siguen siendo válidos.
+                if sum(1 for ch in nombre_after_fix if ch.isdigit()) > len(nombre_after_fix) * 0.5:
+                    row[nombre_idx] = ""
 
         # Fix 3: estatus embebido en concepto.
         # Siempre limpiar concepto cuando empieza con palabra de estatus.
