@@ -2622,6 +2622,15 @@ def _extract_payment_table_payload_impl(base_text_raw: str, ocr_boxes, pdf_table
     rows = _append_scotia_summary_rows_to_table(rows, base_text_raw)
     rows = _normalize_payment_table_rows(rows)
 
+    # ── Filter metadata/noise rows from raw data ────────────────────────
+    # Keep the header (row 0) and only data rows that are not metadata noise.
+    if len(rows) >= 2:
+        clean = [rows[0]]
+        for data_row in rows[1:]:
+            if not _is_metadata_row(data_row):
+                clean.append(data_row)
+        rows = clean
+
     # ── L1 + L2: Validate cells and cross-coherence ─────────────────────
     validation_warnings: list[str] = []
     try:
@@ -4232,6 +4241,17 @@ _METADATA_NOISE_PATTERNS = (
     "DATOSDELCLIENTE",
 )
 
+# Short metadata labels that appear in BBVA/bank header sections.
+# When a row has very few non-empty cells and those cells match these
+# prefixes, the row is metadata noise — not payment data.
+_METADATA_LABEL_PREFIXES = (
+    "FECHA Y HO", "BBVA NET", "BBVA ME", "DATOS D", "ESTADO",
+    "REPORTE DE", "COMPROBANTE", "DISPERSION",
+    "NUMERO DE CON", "NUMERO DE SEC", "TIPO DE PAGO",
+    "FECHA DE ENV", "FECHA DE TRANS",
+    "DATOS DEL C", "OPERACION RE",
+)
+
 
 def _is_metadata_row(row: list[str]) -> bool:
     """Detect metadata label rows that leaked into the table.
@@ -4243,6 +4263,14 @@ def _is_metadata_row(row: list[str]) -> bool:
     noise_count = sum(1 for pat in _METADATA_NOISE_PATTERNS if pat in row_joined)
     if noise_count >= 2:
         return True
+
+    # Rows with very few non-empty cells that are metadata labels (not data)
+    non_empty = [str(c or "").strip() for c in row if str(c or "").strip()]
+    if len(non_empty) <= 2 and non_empty:
+        combined = " ".join(non_empty).upper()
+        if any(combined.startswith(prefix) for prefix in _METADATA_LABEL_PREFIXES):
+            return True
+
     # If a cell IS a known metadata label (not data), skip the row
     for cell in row:
         upper = str(cell or "").strip().upper()
@@ -4252,9 +4280,9 @@ def _is_metadata_row(row: list[str]) -> bool:
         if upper in ("TIPO DE OPERACION:", "FECHA DE ENVIO DE PAGO:", "CUENTA", "IMPORTE", "NOMBRE"):
             # Check if this looks like a re-emitted header instead of data
             if upper in ("CUENTA", "IMPORTE", "NOMBRE"):
-                non_empty = [c for c in row if str(c or "").strip()]
+                non_empty_cells = [c for c in row if str(c or "").strip()]
                 # If most cells are header-like tokens, this is a re-emitted header
-                header_like = sum(1 for c in non_empty if _normalize_keyword(c).upper() in
+                header_like = sum(1 for c in non_empty_cells if _normalize_keyword(c).upper() in
                     ("CUENTA", "IMPORTE", "NOMBRE", "REFERENCIA", "ESTATUS", "CONCEPTO",
                      "APELLIDOPATERNO", "APELLIDOMATERNO"))
                 if header_like >= 3:
