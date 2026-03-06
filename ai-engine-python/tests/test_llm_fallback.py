@@ -5,10 +5,14 @@ Los tests mockean el cliente Anthropic para no requerir API key real.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
+
+def _run(coro):
+    return asyncio.run(coro)
 
 from app.services.llm_fallback import (
     _build_prompt,
@@ -171,26 +175,43 @@ def test_merge_preserves_field_at_exactly_075_threshold():
 # try_llm_fallback (async)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
-async def test_fallback_fills_missing_field():
+class _FakeAuthenticationError(Exception):
+    pass
+
+
+class _FakeRateLimitError(Exception):
+    pass
+
+
+def _mock_anthropic(response_message=None, side_effect=None):
+    """Build a fake `anthropic` module with a mocked AsyncAnthropic client."""
+    mock_client = AsyncMock()
+    if side_effect:
+        mock_client.messages.create = AsyncMock(side_effect=side_effect)
+    else:
+        mock_client.messages.create = AsyncMock(return_value=response_message)
+    mock_module = MagicMock()
+    mock_module.AsyncAnthropic.return_value = mock_client
+    mock_module.AuthenticationError = _FakeAuthenticationError
+    mock_module.RateLimitError = _FakeRateLimitError
+    return mock_module
+
+
+def test_fallback_fills_missing_field():
     llm_response = json.dumps({
         "fields": [{"key": "curp", "value": "BADD840901HDFNNN09", "confidence": 0.88}]
     })
     mock_message = _make_anthropic_response(llm_response)
 
-    with patch("anthropic.AsyncAnthropic") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_message)
-        mock_cls.return_value = mock_client
-
-        result = await try_llm_fallback(
+    with patch.dict(sys.modules, {"anthropic": _mock_anthropic(mock_message)}):
+        result = _run(try_llm_fallback(
             doc_type="INE",
             ocr_text="NOMBRE JOSE GARCIA CURP BADD840901HDFNNN09",
             missing_keys=["curp"],
             existing_fields=[],
             api_key="test-key",
             model="claude-haiku-4-5-20251001",
-        )
+        ))
 
     assert len(result) == 1
     assert result[0]["key"] == "curp"
@@ -198,75 +219,62 @@ async def test_fallback_fills_missing_field():
     assert result[0]["confidence"] <= 0.85
 
 
-@pytest.mark.asyncio
-async def test_fallback_returns_empty_on_api_error():
-    with patch("anthropic.AsyncAnthropic") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(side_effect=Exception("Connection error"))
-        mock_cls.return_value = mock_client
-
-        result = await try_llm_fallback(
+def test_fallback_returns_empty_on_api_error():
+    with patch.dict(sys.modules, {"anthropic": _mock_anthropic(side_effect=Exception("Connection error"))}):
+        result = _run(try_llm_fallback(
             doc_type="INE",
             ocr_text="TEXTO OCR DE PRUEBA CON CONTENIDO SUFICIENTE",
             missing_keys=["curp"],
             existing_fields=[],
             api_key="test-key",
-        )
+        ))
 
     assert result == []
 
 
-@pytest.mark.asyncio
-async def test_fallback_returns_empty_on_invalid_json():
+def test_fallback_returns_empty_on_invalid_json():
     mock_message = _make_anthropic_response("Lo siento, no pude encontrar los datos.")
 
-    with patch("anthropic.AsyncAnthropic") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_message)
-        mock_cls.return_value = mock_client
-
-        result = await try_llm_fallback(
+    with patch.dict(sys.modules, {"anthropic": _mock_anthropic(mock_message)}):
+        result = _run(try_llm_fallback(
             doc_type="INE",
             ocr_text="TEXTO OCR",
             missing_keys=["curp"],
             existing_fields=[],
             api_key="test-key",
-        )
+        ))
 
     assert result == []
 
 
-@pytest.mark.asyncio
-async def test_fallback_returns_empty_without_api_key():
-    result = await try_llm_fallback(
+def test_fallback_returns_empty_without_api_key():
+    result = _run(try_llm_fallback(
         doc_type="INE",
         ocr_text="TEXTO OCR SUFICIENTE PARA PROCESAR",
         missing_keys=["curp"],
         existing_fields=[],
         api_key=None,
-    )
+    ))
     assert result == []
 
 
-@pytest.mark.asyncio
-async def test_fallback_returns_empty_when_missing_keys_empty():
-    result = await try_llm_fallback(
+def test_fallback_returns_empty_when_missing_keys_empty():
+    result = _run(try_llm_fallback(
         doc_type="INE",
         ocr_text="TEXTO OCR",
         missing_keys=[],
         existing_fields=[],
         api_key="test-key",
-    )
+    ))
     assert result == []
 
 
-@pytest.mark.asyncio
-async def test_fallback_returns_empty_on_short_ocr_text():
-    result = await try_llm_fallback(
+def test_fallback_returns_empty_on_short_ocr_text():
+    result = _run(try_llm_fallback(
         doc_type="INE",
         ocr_text="OK",
         missing_keys=["curp"],
         existing_fields=[],
         api_key="test-key",
-    )
+    ))
     assert result == []
