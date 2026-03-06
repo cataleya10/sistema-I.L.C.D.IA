@@ -2529,20 +2529,17 @@ def _normalize_payment_table_rows_impl(rows: list[list[str]]) -> list[list[str]]
         apellido_idxs = [i + 1 if i >= insert_pos else i for i in apellido_idxs]
         col_injected = True
 
+    result: list[list[str]]
     if is_advanced:
-        norm_rows: list[dict] = []
+        norm_rows: list[dict[str, str]] = []
         for orig_row in rows[1:]:
             if col_injected:
                 ins = estatus_idx
-                row = list(orig_row[:ins]) + [""] + list(orig_row[ins:])
+                raw_row: list[str] = list(orig_row[:ins]) + [""] + list(orig_row[ins:])
             else:
-                row = list(orig_row)
-            # Si la fila es dict, normaliza claves a canónicas
-            if isinstance(row, dict):
-                row = {canon(k): v for k, v in row.items()}
-            else:
-                # Si es lista, mapear a dict usando header canónico
-                row = {k: (row[i] if i < len(row) else "") for i, k in enumerate(canon_header)}
+                raw_row = list(orig_row)
+            # Mapear a dict usando header canónico
+            row: dict[str, str] = {k: (raw_row[i] if i < len(raw_row) else "") for i, k in enumerate(canon_header)}
 
             # Fix 3: extraer/limpiar estatus embebido en concepto (aplica a cualquier source).
             if (
@@ -2578,13 +2575,13 @@ def _normalize_payment_table_rows_impl(rows: list[list[str]]) -> list[list[str]]
             norm_rows.append(row)
 
         # Siempre devolver lista de listas: [header_list, data_row_list, ...]
-        result: list[list[str]] = [header]
+        result = [header]
         for row_dict in norm_rows:
             result.append([row_dict.get(k, "") for k in canon_header])
         return result
     else:
         # Tabla simple: mantener como listas
-        result: list[list[str]] = [header]
+        result = [header]
         for orig_row in rows[1:]:
             if col_injected:
                 ins = estatus_idx
