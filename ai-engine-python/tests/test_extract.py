@@ -2552,6 +2552,31 @@ class TestContentBasedMerge(unittest.TestCase):
         cuenta_values = [r[0] for r in merged[1:]]
         self.assertIn("9999999999", cuenta_values)
 
+    def test_unmatched_backup_row_preserves_real_missing_columns(self):
+        from app.pipelines.extract import _merge_payment_rows_with_backup
+
+        primary = [
+            ["CUENTA", "REFERENCIA", "IMPORTE"],
+            ["1111111111", "REF001", "$100.00"],
+            ["2222222222", "REF002", "$200.00"],
+        ]
+        backup = [
+            ["CUENTA", "REFERENCIA", "IMPORTE", "ESTATUS", "CONCEPTO"],
+            ["2222222222", "REF002", "$200.00", "PROCESADO", "PAGO DE NOMINA"],
+            ["9999999999", "REF009", "$900.00", "RECHAZADO", "PAGO DE NOMINA"],
+            ["1111111111", "REF001", "$100.00", "PROCESADO", "PAGO DE NOMINA"],
+        ]
+
+        merged = _merge_payment_rows_with_backup(primary, backup)
+        header = [str(c or "") for c in merged[0]]
+        data_rows = merged[1:]
+        status_idx = header.index("ESTATUS")
+        concepto_idx = header.index("CONCEPTO")
+
+        row_9999 = next(r for r in data_rows if str(r[0]) == "9999999999")
+        self.assertEqual(str(row_9999[status_idx]), "RECHAZADO")
+        self.assertEqual(str(row_9999[concepto_idx]), "PAGO DE NOMINA")
+
     def test_no_cross_contamination_with_missing_rows(self):
         from app.pipelines.extract import _merge_payment_rows_with_backup
         primary = [

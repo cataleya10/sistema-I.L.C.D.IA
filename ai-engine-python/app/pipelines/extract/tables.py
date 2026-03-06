@@ -3646,6 +3646,8 @@ def _merge_payment_rows_with_backup_impl(primary_rows: list[list[str]], backup_r
     # Content-based matching: for each primary row find best backup match
     # Track which backup index matched each primary position for ordering
     merged_data: list[list[str]] = []
+    # Backup source index per merged row (None means no reliable match).
+    merged_backup_indices: list[int | None] = []
     used_backup: set[int] = set()
     primary_to_backup: dict[int, int] = {}  # primary_idx → backup_idx
     for p_i, p_row in enumerate(primary_data):
@@ -3662,16 +3664,18 @@ def _merge_payment_rows_with_backup_impl(primary_rows: list[list[str]], backup_r
             used_backup.add(best_b_idx)
             primary_to_backup[p_i] = best_b_idx
             merged_data.append(_fill_empty_cells(list(p_row), backup_data[best_b_idx]))
+            merged_backup_indices.append(best_b_idx)
         else:
             row = list(p_row)
             if len(row) < len(primary_header):
                 row.extend([""] * (len(primary_header) - len(row)))
             merged_data.append(row)
+            merged_backup_indices.append(None)
 
     # Insert unmatched backup rows at estimated positions (ordered by original
     # backup index, placed after the last matched primary row that maps to a
     # backup row before the unmatched one).
-    unmatched_backups: list[tuple[int, list[str]]] = []
+    unmatched_backups: list[tuple[int, list[str], int]] = []
     for b_i, b_row in enumerate(backup_data):
         if b_i in used_backup:
             continue
@@ -3695,12 +3699,13 @@ def _merge_payment_rows_with_backup_impl(primary_rows: list[list[str]], backup_r
             for p_i, mb_i in primary_to_backup.items():
                 if mb_i < b_i and p_i > insert_after:
                     insert_after = p_i
-            unmatched_backups.append((insert_after, new_row))
+            unmatched_backups.append((insert_after, new_row, b_i))
 
     # Insert in reverse order so indices remain valid
     unmatched_backups.sort(key=lambda x: x[0], reverse=True)
-    for insert_after, new_row in unmatched_backups:
+    for insert_after, new_row, source_b_idx in unmatched_backups:
         merged_data.insert(insert_after + 1, new_row)
+        merged_backup_indices.insert(insert_after + 1, source_b_idx)
 
     # --- Supplement missing columns from backup ---
     # If the backup has columns that the primary doesn't (e.g., ESTATUS,
@@ -3718,16 +3723,12 @@ def _merge_payment_rows_with_backup_impl(primary_rows: list[list[str]], backup_r
     if missing_cols:
         # Find matched backup rows for each merged_data row
         matched_backup_for_row: list[list[str] | None] = []
-        if len(primary_data) == len(backup_data):
-            # Fast-path merge used positional matching
-            matched_backup_for_row = [list(b) for b in backup_data]
-        else:
-            for p_i in range(len(merged_data)):
-                b_i = primary_to_backup.get(p_i)
-                if b_i is not None and b_i < len(backup_data):
-                    matched_backup_for_row.append(list(backup_data[b_i]))
-                else:
-                    matched_backup_for_row.append(None)
+        for row_i in range(len(merged_data)):
+            b_i = merged_backup_indices[row_i] if row_i < len(merged_backup_indices) else None
+            if b_i is not None and b_i < len(backup_data):
+                matched_backup_for_row.append(list(backup_data[b_i]))
+            else:
+                matched_backup_for_row.append(None)
 
         # Extend header and all data rows with the missing columns
         result_header = list(primary_header if len(primary_data) == len(backup_data) else primary_header)
