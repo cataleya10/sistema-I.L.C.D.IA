@@ -2578,7 +2578,8 @@ def _normalize_payment_table_rows_impl(rows: list[list[str]]) -> list[list[str]]
         result = [header]
         for row_dict in norm_rows:
             result.append([row_dict.get(k, "") for k in canon_header])
-        return _prune_redundant_payment_columns(result)
+        result = _prune_redundant_payment_columns(result)
+        return _reorder_nomina_payment_columns(result)
     else:
         # Tabla simple: mantener como listas
         result = [header]
@@ -2592,7 +2593,8 @@ def _normalize_payment_table_rows_impl(rows: list[list[str]]) -> list[list[str]]
             while len(row_values) < len(header):
                 row_values.append("")
             result.append(row_values)
-        return _prune_redundant_payment_columns(result)
+        result = _prune_redundant_payment_columns(result)
+        return _reorder_nomina_payment_columns(result)
 
 
 def _prune_redundant_payment_columns(rows: list[list[str]]) -> list[list[str]]:
@@ -2647,6 +2649,60 @@ def _prune_redundant_payment_columns(rows: list[list[str]]) -> list[list[str]]:
     for row in rows:
         cleaned_rows.append([str(cell or "") for i, cell in enumerate(row) if i not in drop_idx])
     return cleaned_rows
+
+
+def _reorder_nomina_payment_columns(rows: list[list[str]]) -> list[list[str]]:
+    """Reorder advanced payroll table columns to match the PDF reading order."""
+    if len(rows) < 2:
+        return rows
+
+    header = [str(cell or "") for cell in rows[0]]
+    norm_header = [_normalize_keyword(cell).upper() for cell in header]
+    if not norm_header:
+        return rows
+
+    def _pick_idx(candidates: tuple[str, ...]) -> int:
+        for idx, token in enumerate(norm_header):
+            if token in candidates:
+                return idx
+        return -1
+
+    idx_cuenta = _pick_idx((
+        "CUENTA",
+        "NOCUENTA",
+        "NODECUENTA",
+        "NUMERODECUENTA",
+        "CUENTABENEFICIARIO",
+        "NUMERODECUENTABENEFICIARIO",
+    ))
+    idx_ref = _pick_idx(("REFERENCIA", "REFERENCIANUMERICA", "REFERENCIAREFERENCIA"))
+    idx_imp = _pick_idx(("IMPORTE", "IMPORTETOTAL", "MONTO", "IMPORTEIMPORTE"))
+    idx_nombre = _pick_idx(("NOMBRE", "NOMBREBENEFICIARIO", "NOMBRENOMBRE", "BENEFICIARIO"))
+    idx_ap_pat = _pick_idx(("APELLIDOPATERNO",))
+    idx_ap_mat = _pick_idx(("APELLIDOMATERNO",))
+    idx_estatus = _pick_idx(("ESTATUS", "ESTADO", "RESULTADODELTRASPASO"))
+    idx_concepto = _pick_idx(("CONCEPTO", "CONCEPTOPAGO", "CONCEPTODEPAGO", "CONCEPTOCONCEPTO"))
+
+    # Only reorder when the row clearly contains the full payroll schema.
+    if min(idx_cuenta, idx_ref, idx_imp, idx_nombre, idx_estatus, idx_concepto) < 0:
+        return rows
+
+    preferred = [idx_cuenta, idx_ref, idx_imp, idx_nombre, idx_ap_pat, idx_ap_mat, idx_estatus, idx_concepto]
+    ordered_idx: list[int] = []
+    for idx in preferred:
+        if idx >= 0 and idx not in ordered_idx:
+            ordered_idx.append(idx)
+    for idx in range(len(header)):
+        if idx not in ordered_idx:
+            ordered_idx.append(idx)
+
+    reordered: list[list[str]] = []
+    for row in rows:
+        row_vals = [str(cell or "") for cell in row]
+        if len(row_vals) < len(header):
+            row_vals.extend([""] * (len(header) - len(row_vals)))
+        reordered.append([row_vals[idx] if idx < len(row_vals) else "" for idx in ordered_idx])
+    return reordered
 
 
 def _extract_payment_table_rows_from_pdf_tables(pdf_tables: list[list[list[str]]] | None) -> tuple[list[list[str]], list[list[list[str]]]]:
@@ -3157,10 +3213,15 @@ def _enrich_payment_table_payload_impl(
 
     detail_table = payment_detail.get("table")
     if isinstance(detail_table, dict):
+        canonical_columns_clean: list[str] = []
+        canonical_rows_clean: list[dict[str, str]] = []
+        display_columns_map: dict[str, str] = {}
+
         canonical_columns = detail_table.get("canonical_columns")
         if isinstance(canonical_columns, list):
             columns = [_normalize_text(str(column or "")) for column in canonical_columns if _normalize_text(str(column or ""))]
             if columns:
+                canonical_columns_clean = columns
                 enriched["canonical_columns"] = columns
 
         canonical_rows = detail_table.get("canonical_rows")
@@ -3177,13 +3238,58 @@ def _enrich_payment_table_payload_impl(
                 if normalized_row:
                     rows.append(normalized_row)
             if rows:
+                canonical_rows_clean = rows
                 enriched["canonical_rows"] = rows
                 enriched["canonical_row_count"] = len(rows)
 
         # Propagate display_columns (original PDF header labels) to table payload
         display_columns = detail_table.get("display_columns")
         if isinstance(display_columns, dict) and display_columns:
-            enriched["display_columns"] = display_columns
+            display_columns_map = {str(k): str(v) for k, v in display_columns.items() if str(v).strip()}
+            enriched["display_columns"] = display_columns_map
+
+        # Build a clean table view for advanced payroll exports so column order
+        # matches the source PDF and ghost/composite headers are hidden.
+        nomina_required = {
+            "cuenta", "referencia", "importe", "nombre",
+            "apellido_paterno", "apellido_materno", "estatus", "concepto_pago",
+        }
+        if canonical_columns_clean and canonical_rows_clean and nomina_required.issubset(set(canonical_columns_clean)):
+            preferred_order = [
+                "cuenta",
+                "referencia",
+                "importe",
+                "nombre",
+                "apellido_paterno",
+                "apellido_materno",
+                "estatus",
+                "concepto_pago",
+            ]
+            ordered_cols = [col for col in preferred_order if col in canonical_columns_clean]
+            ordered_cols.extend([col for col in canonical_columns_clean if col not in ordered_cols])
+
+            label_fallback = {
+                "cuenta": "Cuenta",
+                "referencia": "REFERENCIA",
+                "importe": "IMPORTE",
+                "nombre": "Nombre",
+                "apellido_paterno": "Apellido paterno",
+                "apellido_materno": "Apellido materno",
+                "estatus": "Estatus",
+                "concepto_pago": "Concepto",
+            }
+            header_labels = [
+                display_columns_map.get(col) or label_fallback.get(col, col.replace("_", " ").title())
+                for col in ordered_cols
+            ]
+            clean_rows: list[list[str]] = [header_labels]
+            for crow in canonical_rows_clean:
+                clean_rows.append([_normalize_text(str(crow.get(col, "") or "")) for col in ordered_cols])
+            if len(clean_rows) >= 2:
+                enriched["rows"] = clean_rows
+                enriched["row_count"] = len(clean_rows) - 1
+                enriched["column_count"] = len(ordered_cols)
+                enriched["canonical_columns"] = ordered_cols
 
         # When summary_tables exist (BBVA Grupo Pago multi-payment), replace
         # the raw structural rows with clean canonical data so the "Tabla
@@ -4932,6 +5038,25 @@ def _canonical_payment_key(bank: str, raw_key: str) -> str:
     return key
 
 
+_PAYMENT_PERSON_TOKEN_OCR_FIXES: dict[str, str] = {
+    # Common OCR vowel drift in surnames from bank payment tables.
+    "HERNENDEZ": "HERNANDEZ",
+}
+
+
+def _normalize_payment_person_value(value: str) -> str:
+    normalized = _normalize_name(str(value or ""))
+    if not normalized:
+        return ""
+    fixed_tokens: list[str] = []
+    for token in normalized.split():
+        if token in _PAYMENT_PERSON_TOKEN_OCR_FIXES:
+            fixed_tokens.append(_PAYMENT_PERSON_TOKEN_OCR_FIXES[token])
+        else:
+            fixed_tokens.append(token)
+    return " ".join(fixed_tokens).strip()
+
+
 def _payment_to_canonical_rows(bank: str, rows: list[dict]) -> tuple[list[str], list[dict]]:
     if not rows:
         return [], []
@@ -5048,6 +5173,14 @@ def _payment_to_canonical_rows(bank: str, rows: list[dict]) -> tuple[list[str], 
                 # Only remove from canonical_keys if it wasn't already replaced in-place above
                 if "nombre_beneficiario" in canonical_keys:
                     canonical_keys.remove("nombre_beneficiario")
+
+            for person_key in ("nombre", "nombre_beneficiario", "apellido_paterno", "apellido_materno", "titular"):
+                current_val = _normalize_text(str(canonical_row.get(person_key) or ""))
+                if not current_val:
+                    continue
+                fixed_val = _normalize_payment_person_value(current_val)
+                if fixed_val:
+                    canonical_row[person_key] = fixed_val
 
             if canonical_row:
                 canonical_rows.append(canonical_row)

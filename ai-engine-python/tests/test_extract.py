@@ -888,6 +888,23 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertIn("CARLOS ROBERTO", canonical_rows[0].get("nombre", ""))
         self.assertEqual(canonical_rows[0].get("estatus"), "APLICADO")
 
+    def test_extract_factura_payment_detail_fixes_hernendez_ocr_typo(self):
+        ocr_text = "\n".join(
+            [
+                "REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS",
+                "Cuenta Referencia Importe Nombre Apellido paterno Apellido materno Estatus Concepto",
+                "000000001069485436 8837492015 $3,000.00 ANA MARIA HERNENDEZ LOPEZ APLICADO PAGO DE NOMINA",
+            ]
+        )
+        fields = _run_sync(extract_fields("FACTURA", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertIn("pago_detalle", data)
+        payload = json.loads(data["pago_detalle"])
+        canonical_rows = payload.get("table", {}).get("canonical_rows", [])
+        self.assertGreaterEqual(len(canonical_rows), 1)
+        self.assertEqual(canonical_rows[0].get("apellido_paterno"), "HERNANDEZ")
+
     def test_extract_factura_payment_table_from_bbva_transmision_text(self):
         ocr_text = "\n".join(
             [
