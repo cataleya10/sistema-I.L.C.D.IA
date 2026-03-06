@@ -3150,6 +3150,24 @@ class TestConditionalNameSplitting(unittest.TestCase):
         self.assertEqual(row.get("estatus"), "APLICADO")
         self.assertEqual(row.get("apellido_paterno"), "LOPEZ")
 
+    def test_combo_overrides_noisy_explicit_apellidos_and_is_removed(self):
+        from app.pipelines.extract import _payment_rows_to_objects, _payment_to_canonical_rows
+
+        rows = [
+            ["Cuenta", "Nombre", "Apellido paterno", "Apellido materno", "Apellido Paterno Apellido Materno Estatus", "Importe"],
+            ["123456", "PATRICIA", "HERNANDEZ", "HERNANDEZ", "CRUZ TEJERO PROCESADO", "$3,000.00"],
+        ]
+        objects = _payment_rows_to_objects(rows)
+        canonical_columns, canonical_rows = _payment_to_canonical_rows("BBVA", objects)
+
+        self.assertEqual(len(canonical_rows), 1)
+        row = canonical_rows[0]
+        self.assertEqual(row.get("apellido_paterno"), "CRUZ")
+        self.assertEqual(row.get("apellido_materno"), "TEJERO")
+        self.assertEqual(row.get("estatus"), "PROCESADO")
+        self.assertNotIn("apellido_combo_estatus", canonical_columns)
+        self.assertNotIn("apellido_combo_estatus", row)
+
 
 # ── Level 1: Field-level validation tests ──────────────────────────────────
 

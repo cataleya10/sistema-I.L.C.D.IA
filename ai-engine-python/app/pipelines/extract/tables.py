@@ -5030,6 +5030,35 @@ def _normalize_payment_person_value(value: str) -> str:
     return " ".join(fixed_tokens).strip()
 
 
+def _split_payment_apellidos_combo(value: str) -> tuple[str, str, str]:
+    """Split 'APELLIDO PATERNO APELLIDO MATERNO ESTATUS' composite values."""
+    combo = _normalize_name(str(value or ""))
+    if not combo:
+        return "", "", ""
+
+    status = ""
+    # Prefer longest statuses first (e.g. "EN PROCESO" before "PROCESADO").
+    for st in sorted(_ALL_PAYMENT_STATUSES, key=len, reverse=True):
+        if not st:
+            continue
+        pattern = rf"\b{re.escape(st)}\b"
+        if re.search(pattern, combo):
+            status = st
+            combo = re.sub(pattern, " ", combo).strip()
+            break
+
+    parts = [part for part in combo.split() if part]
+    if not parts:
+        return "", "", status
+    if len(parts) == 1:
+        return parts[0], "", status
+    if len(parts) == 2:
+        return parts[0], parts[1], status
+    # Conservative heuristic for compound surnames:
+    # keep the last token as maternal and the rest as paternal.
+    return " ".join(parts[:-1]).strip(), parts[-1], status
+
+
 def _payment_to_canonical_rows(bank: str, rows: list[dict]) -> tuple[list[str], list[dict]]:
     if not rows:
         return [], []
@@ -5059,30 +5088,32 @@ def _payment_to_canonical_rows(bank: str, rows: list[dict]) -> tuple[list[str], 
                 if canon_key not in canonical_keys:
                     canonical_keys.append(canon_key)
 
-            source_has_explicit_apellidos = bool(
-                source_canonical_keys.intersection({"apellido_paterno", "apellido_materno"})
-            )
             combo = _normalize_text(str(canonical_row.get("apellido_combo_estatus") or ""))
-            if combo and not source_has_explicit_apellidos:
-                _status_combo_pat = rf"\b({'|'.join(_ALL_PAYMENT_STATUSES)})\b"
-                status_match = re.search(_status_combo_pat, combo)
-                if status_match and not canonical_row.get("estatus"):
-                    canonical_row["estatus"] = _normalize_text(status_match.group(1))
+            if combo:
+                combo_ap_pat, combo_ap_mat, combo_status = _split_payment_apellidos_combo(combo)
+
+                if combo_status and not canonical_row.get("estatus"):
+                    canonical_row["estatus"] = _normalize_text(combo_status)
                     if "estatus" not in canonical_keys:
                         canonical_keys.append("estatus")
 
-                combo_name = re.sub(_status_combo_pat, "", combo).strip()
-                combo_parts = [part for part in _normalize_name(combo_name).split() if part]
-                if combo_parts:
-                    if len(combo_parts) >= 1 and not canonical_row.get("apellido_paterno"):
-                        canonical_row["apellido_paterno"] = combo_parts[0]
-                        if "apellido_paterno" not in canonical_keys:
-                            canonical_keys.append("apellido_paterno")
-                    if len(combo_parts) >= 2 and not canonical_row.get("apellido_materno"):
-                        canonical_row["apellido_materno"] = combo_parts[1]
-                        if "apellido_materno" not in canonical_keys:
-                            canonical_keys.append("apellido_materno")
+                # When combo has both surnames, prioritize it as the canonical
+                # source (it is usually the most complete field in noisy PDFs).
+                if combo_ap_pat and combo_ap_mat:
+                    canonical_row["apellido_paterno"] = combo_ap_pat
+                    canonical_row["apellido_materno"] = combo_ap_mat
+                else:
+                    if combo_ap_pat and not canonical_row.get("apellido_paterno"):
+                        canonical_row["apellido_paterno"] = combo_ap_pat
+                    if combo_ap_mat and not canonical_row.get("apellido_materno"):
+                        canonical_row["apellido_materno"] = combo_ap_mat
 
+                if canonical_row.get("apellido_paterno") and "apellido_paterno" not in canonical_keys:
+                    canonical_keys.append("apellido_paterno")
+                if canonical_row.get("apellido_materno") and "apellido_materno" not in canonical_keys:
+                    canonical_keys.append("apellido_materno")
+
+                # Drop composite key from output columns once split.
                 canonical_row.pop("apellido_combo_estatus", None)
                 if "apellido_combo_estatus" in canonical_keys:
                     canonical_keys.remove("apellido_combo_estatus")
