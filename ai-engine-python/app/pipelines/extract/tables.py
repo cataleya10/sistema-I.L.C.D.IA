@@ -3628,19 +3628,6 @@ def _merge_payment_rows_with_backup_impl(primary_rows: list[list[str]], backup_r
                 missing_cols.append((raw_label, b_idx))
 
         if missing_cols:
-            # Pre-compute dominant value per missing column for fallback
-            from collections import Counter
-            dominant_for_col_fp: dict[int, str] = {}
-            for _, b_col_idx in missing_cols:
-                counts: Counter[str] = Counter()
-                for b_row_d in backup_data:
-                    if b_col_idx < len(b_row_d):
-                        val = _normalize_text(str(b_row_d[b_col_idx] or ""))
-                        if val and val.upper() != "NAN":
-                            counts[val] += 1
-                if counts:
-                    dominant_for_col_fp[b_col_idx] = counts.most_common(1)[0][0]
-
             result_header = list(primary_header)
             for col_label, _ in missing_cols:
                 result_header.append(col_label)
@@ -3649,9 +3636,9 @@ def _merge_payment_rows_with_backup_impl(primary_rows: list[list[str]], backup_r
                 for _, b_col_idx in missing_cols:
                     if b_col_idx < len(b_row):
                         val = str(b_row[b_col_idx] or "")
-                        row.append(val if val and val.upper() != "NAN" else dominant_for_col_fp.get(b_col_idx, ""))
+                        row.append(val if val and val.upper() != "NAN" else "")
                     else:
-                        row.append(dominant_for_col_fp.get(b_col_idx, ""))
+                        row.append("")
             return [result_header] + merged
 
         return [primary_header] + merged
@@ -3729,21 +3716,6 @@ def _merge_payment_rows_with_backup_impl(primary_rows: list[list[str]], backup_r
             missing_cols.append((raw_label, b_idx))
 
     if missing_cols:
-        # Pre-compute the dominant (most common non-empty) value per missing
-        # backup column.  Used as fallback when a primary row has no matched
-        # backup row (e.g. ESTATUS = "PROCESADO" for every row).
-        from collections import Counter
-        dominant_for_col: dict[int, str] = {}
-        for _, b_col_idx in missing_cols:
-            counts: Counter[str] = Counter()
-            for b_row in backup_data:
-                if b_col_idx < len(b_row):
-                    val = _normalize_text(str(b_row[b_col_idx] or ""))
-                    if val and val.upper() != "NAN":
-                        counts[val] += 1
-            if counts:
-                dominant_for_col[b_col_idx] = counts.most_common(1)[0][0]
-
         # Find matched backup rows for each merged_data row
         matched_backup_for_row: list[list[str] | None] = []
         if len(primary_data) == len(backup_data):
@@ -3767,10 +3739,10 @@ def _merge_payment_rows_with_backup_impl(primary_rows: list[list[str]], backup_r
             for _, b_col_idx in missing_cols:
                 if backup_row and b_col_idx < len(backup_row):
                     val = str(backup_row[b_col_idx] or "")
-                    row.append(val if val and val.upper() != "NAN" else dominant_for_col.get(b_col_idx, ""))
+                    row.append(val if val and val.upper() != "NAN" else "")
                 else:
-                    # No matched backup row — use dominant value as fallback
-                    row.append(dominant_for_col.get(b_col_idx, ""))
+                    # No matched backup row: keep empty to avoid synthetic values.
+                    row.append("")
 
         return [result_header] + merged_data
 
@@ -5065,10 +5037,12 @@ def _payment_to_canonical_rows(bank: str, rows: list[dict]) -> tuple[list[str], 
     for row in rows:
         try:
             canonical_row: dict[str, str] = {}
+            source_canonical_keys: set[str] = set()
             for raw_key, raw_value in row.items():
                 canon_key = _canonical_payment_key(bank, str(raw_key or ""))
                 if not canon_key:
                     continue
+                source_canonical_keys.add(canon_key)
                 value = _normalize_text(str(raw_value or ""))
                 if not value:
                     continue
@@ -5084,8 +5058,11 @@ def _payment_to_canonical_rows(bank: str, rows: list[dict]) -> tuple[list[str], 
                 if canon_key not in canonical_keys:
                     canonical_keys.append(canon_key)
 
+            source_has_explicit_apellidos = bool(
+                source_canonical_keys.intersection({"apellido_paterno", "apellido_materno"})
+            )
             combo = _normalize_text(str(canonical_row.get("apellido_combo_estatus") or ""))
-            if combo:
+            if combo and not source_has_explicit_apellidos:
                 _status_combo_pat = rf"\b({'|'.join(_ALL_PAYMENT_STATUSES)})\b"
                 status_match = re.search(_status_combo_pat, combo)
                 if status_match and not canonical_row.get("estatus"):
@@ -5112,6 +5089,7 @@ def _payment_to_canonical_rows(bank: str, rows: list[dict]) -> tuple[list[str], 
             # Composite headers in some Santander/BBVA exports can produce a
             # synthetic "referenciaimporte" column. Keep it only if it adds
             # unique information not already captured by split columns.
+            source_has_explicit_referencia = "referencia" in source_canonical_keys
             referencia_importe = _normalize_text(str(canonical_row.get("referenciaimporte") or ""))
             if referencia_importe:
                 has_referencia = bool(_normalize_text(str(canonical_row.get("referencia") or "")))
@@ -5120,7 +5098,7 @@ def _payment_to_canonical_rows(bank: str, rows: list[dict]) -> tuple[list[str], 
                     canonical_row.pop("referenciaimporte", None)
                     if "referenciaimporte" in canonical_keys:
                         canonical_keys.remove("referenciaimporte")
-                elif not has_referencia:
+                elif not has_referencia and not source_has_explicit_referencia:
                     ref_digits = _normalize_numeric_field(referencia_importe)
                     if len(ref_digits) >= 10:
                         canonical_row["referencia"] = ref_digits
