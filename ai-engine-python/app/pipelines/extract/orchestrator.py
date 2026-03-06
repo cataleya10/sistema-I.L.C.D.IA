@@ -1256,14 +1256,28 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
     # CFE fallback: many receipts only expose RMU and no explicit "Referencia" label.
     if document_type == "COMPROBANTE_DOMICILIO":
         has_ref = any(f.get("key") == "referencia" and f.get("value") for f in fields)
+        has_dom = any(f.get("key") == "domicilio" and f.get("value") for f in fields)
         provider_val = next((str(f.get("value", "")).upper() for f in fields if f.get("key") == "proveedor"), "")
         is_cfe = provider_val == "CFE" or "CFE" in text or "COMISION FEDERAL" in text
+        if is_cfe and provider_val != "CFE":
+            fields.append(_make_field("proveedor", "Proveedor", "CFE", ocr_boxes, confidence=0.86))
         if is_cfe and not has_ref:
             rmu_match = re.search(r"\bRMU[:\s-]*([A-Z0-9-]{12,40})", text)
             if rmu_match:
                 rmu_value = _normalize_value_for_key("referencia", rmu_match.group(1))
                 if rmu_value:
                     fields.append(_make_field("referencia", "Referencia", rmu_value, ocr_boxes, confidence=0.86))
+        if is_cfe and not has_dom:
+            cfe_source_lines = box_text_lines if box_text_lines else lines
+            cfe_address = _extract_cfe_address_from_lines(cfe_source_lines)
+            if (not cfe_address or not cfe_address.strip()) and orig_lines:
+                cfe_address = _extract_cfe_address_from_lines(orig_lines)
+            if cfe_address:
+                fields.append(_make_field("domicilio", "Domicilio", cfe_address, ocr_boxes, confidence=0.92))
+                if not any(f.get("key") == "cp" and f.get("value") for f in fields):
+                    cfe_cp = _extract_postal_code(cfe_address)
+                    if cfe_cp:
+                        fields.append(_make_field("cp", "CP", cfe_cp, ocr_boxes, confidence=0.86))
         if is_cfe:
             best_dom = next((str(f.get("value", "")).strip() for f in fields if f.get("key") == "domicilio" and f.get("value")), "")
             if best_dom:

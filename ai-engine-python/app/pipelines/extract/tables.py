@@ -2539,7 +2539,7 @@ def _normalize_payment_table_rows_impl(rows: list[list[str]]) -> list[list[str]]
             else:
                 raw_row = list(orig_row)
             # Mapear a dict usando header canónico
-            row: dict[str, str] = {k: (raw_row[i] if i < len(raw_row) else "") for i, k in enumerate(canon_header)}
+            row_map: dict[str, str] = {k: (raw_row[i] if i < len(raw_row) else "") for i, k in enumerate(canon_header)}
 
             # Fix 3: extraer/limpiar estatus embebido en concepto (aplica a cualquier source).
             if (
@@ -2547,52 +2547,106 @@ def _normalize_payment_table_rows_impl(rows: list[list[str]]) -> list[list[str]]
                 and 0 <= estatus_idx < len(canon_header)
                 and concepto_idx != estatus_idx
             ):
-                concepto_val = row.get(canon_header[concepto_idx], "").strip()
+                concepto_val = row_map.get(canon_header[concepto_idx], "").strip()
                 sm = _STATUS_PREFIX_PAT.match(concepto_val)
                 if sm:
-                    if not row.get(canon_header[estatus_idx], "").strip():
-                        row[canon_header[estatus_idx]] = sm.group(1)
-                    row[canon_header[concepto_idx]] = concepto_val[sm.end():].strip() or "PAGO DE NOMINA"
+                    if not row_map.get(canon_header[estatus_idx], "").strip():
+                        row_map[canon_header[estatus_idx]] = sm.group(1)
+                    row_map[canon_header[concepto_idx]] = concepto_val[sm.end():].strip() or "PAGO DE NOMINA"
 
             # Fix 3b: fallback — si estatus sigue vacío, buscar palabra de estatus en la fila
-            if 0 <= estatus_idx < len(canon_header) and not row.get(canon_header[estatus_idx], "").strip() and _has_apellido:
-                row_joined = " ".join(str(row.get(k, "")) for k in canon_header)
+            if 0 <= estatus_idx < len(canon_header) and not row_map.get(canon_header[estatus_idx], "").strip() and _has_apellido:
+                row_joined = " ".join(str(row_map.get(k, "")) for k in canon_header)
                 m_st = _STATUS_SEARCH_PAT.search(row_joined)
                 if m_st:
-                    row[canon_header[estatus_idx]] = m_st.group(1)
+                    row_map[canon_header[estatus_idx]] = m_st.group(1)
 
             # Uniformar nombre y apellidos a MAYÚSCULAS
             for col_idx in ([nombre_idx] + apellido_idxs):
                 k = canon_header[col_idx] if 0 <= col_idx < len(canon_header) else None
-                if k and row.get(k):
-                    row[k] = row[k].upper()
+                if k and row_map.get(k):
+                    row_map[k] = row_map[k].upper()
 
             # Asegurar que la fila tenga todas las claves del header
             for k in canon_header:
-                if k not in row:
-                    row[k] = ""
+                if k not in row_map:
+                    row_map[k] = ""
 
-            norm_rows.append(row)
+            norm_rows.append(row_map)
 
         # Siempre devolver lista de listas: [header_list, data_row_list, ...]
         result = [header]
         for row_dict in norm_rows:
             result.append([row_dict.get(k, "") for k in canon_header])
-        return result
+        return _prune_redundant_payment_columns(result)
     else:
         # Tabla simple: mantener como listas
         result = [header]
         for orig_row in rows[1:]:
             if col_injected:
                 ins = estatus_idx
-                row = list(orig_row[:ins]) + [""] + list(orig_row[ins:])
+                row_values = list(orig_row[:ins]) + [""] + list(orig_row[ins:])
             else:
-                row = list(orig_row)
+                row_values = list(orig_row)
             # Padding para igualar columnas
-            while len(row) < len(header):
-                row.append("")
-            result.append(row)
-        return result
+            while len(row_values) < len(header):
+                row_values.append("")
+            result.append(row_values)
+        return _prune_redundant_payment_columns(result)
+
+
+def _prune_redundant_payment_columns(rows: list[list[str]]) -> list[list[str]]:
+    """Drop redundant/ghost columns from wide payment tables.
+
+    Some bank PDFs include duplicated composite headers (e.g. "REFERENCIA IMPORTE")
+    along with the real split columns ("REFERENCIA", "IMPORTE"), or trailing
+    blank columns produced by table detectors. Keeping them hurts row alignment.
+    """
+    if len(rows) < 2:
+        return rows
+
+    header = list(rows[0])
+    norm_header = [_normalize_keyword(str(cell or "")).upper() for cell in header]
+    header_set = {token for token in norm_header if token}
+    drop_idx: set[int] = set()
+
+    # If split columns exist, drop composite duplicates.
+    if {"REFERENCIA", "IMPORTE"}.issubset(header_set):
+        for idx, token in enumerate(norm_header):
+            if token in {"REFERENCIAIMPORTE", "IMPORTEREFERENCIA"}:
+                drop_idx.add(idx)
+
+    # Remove near-empty ghost columns with no meaningful header.
+    sparse_threshold = max(2, len(rows) // 25)
+    for idx, token in enumerate(norm_header):
+        if token:
+            continue
+        non_empty = 0
+        amount_like = 0
+        for row in rows[1:]:
+            if idx >= len(row):
+                continue
+            cell_text = _normalize_text(str(row[idx] or ""))
+            if not cell_text:
+                continue
+            non_empty += 1
+            if re.search(r"\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})", cell_text):
+                amount_like += 1
+        if non_empty <= sparse_threshold:
+            drop_idx.add(idx)
+            continue
+        # Empty header columns that are mostly amount duplicates are redundant
+        # when a real IMPORTE column already exists.
+        if "IMPORTE" in header_set and non_empty > 0 and (amount_like / non_empty) >= 0.75:
+            drop_idx.add(idx)
+
+    if not drop_idx:
+        return rows
+
+    cleaned_rows: list[list[str]] = []
+    for row in rows:
+        cleaned_rows.append([str(cell or "") for i, cell in enumerate(row) if i not in drop_idx])
+    return cleaned_rows
 
 
 def _extract_payment_table_rows_from_pdf_tables(pdf_tables: list[list[list[str]]] | None) -> tuple[list[list[str]], list[list[list[str]]]]:
@@ -2833,27 +2887,6 @@ def _extract_payment_table_payload_impl(base_text_raw: str, ocr_boxes, pdf_table
 
     rows = _append_scotia_summary_rows_to_table(rows, base_text_raw)
     rows = _normalize_payment_table_rows(rows)
-    # Refuerzo: si banco detectado, forzar en cada fila dict
-    _text_upper = (base_text_raw or "").upper()
-    bancos_prioridad = ["BBVA", "SANTANDER", "SCOTIA", "BANORTE", "HSBC", "INBURSA", "BANAMEX", "STP"]
-    banco_detectado = None
-    primeras_lineas = [line.strip().upper() for line in (base_text_raw or "").splitlines()[:10] if line.strip()]
-    for banco in bancos_prioridad:
-        if any(banco in linea for linea in primeras_lineas):
-            banco_detectado = banco
-            break
-    if not banco_detectado:
-        for banco in bancos_prioridad:
-            if banco in _text_upper:
-                banco_detectado = banco
-                break
-    # BBVA receipt rows override any bank found in text (destination bank ≠ source bank)
-    if _is_bbva_receipt_rows:
-        banco_detectado = "BBVA"
-    if banco_detectado:
-        for row in rows:
-            if isinstance(row, dict):
-                row["bank"] = banco_detectado
 
     # ── Filter metadata/noise rows from raw data ────────────────────────
     # Keep the header (row 0) and only data rows that are not metadata noise.
@@ -4951,6 +4984,28 @@ def _payment_to_canonical_rows(bank: str, rows: list[dict]) -> tuple[list[str], 
                 if "apellido_combo_estatus" in canonical_keys:
                     canonical_keys.remove("apellido_combo_estatus")
 
+            # Composite headers in some Santander/BBVA exports can produce a
+            # synthetic "referenciaimporte" column. Keep it only if it adds
+            # unique information not already captured by split columns.
+            referencia_importe = _normalize_text(str(canonical_row.get("referenciaimporte") or ""))
+            if referencia_importe:
+                has_referencia = bool(_normalize_text(str(canonical_row.get("referencia") or "")))
+                has_importe = bool(_normalize_text(str(canonical_row.get("importe") or "")))
+                if has_referencia and has_importe:
+                    canonical_row.pop("referenciaimporte", None)
+                    if "referenciaimporte" in canonical_keys:
+                        canonical_keys.remove("referenciaimporte")
+                elif not has_referencia:
+                    ref_digits = _normalize_numeric_field(referencia_importe)
+                    if len(ref_digits) >= 10:
+                        canonical_row["referencia"] = ref_digits
+                        if "referencia" not in canonical_keys:
+                            canonical_keys.append("referencia")
+
+            concepto = _normalize_text(str(canonical_row.get("concepto_pago") or "")).upper()
+            if concepto and (concepto.startswith("PAGO DE N") or concepto.startswith("PAGO NOM")):
+                canonical_row["concepto_pago"] = "PAGO DE NOMINA"
+
             full_name = _normalize_text(str(canonical_row.get("nombre_beneficiario") or ""))
             if full_name:
                 # Only split into nombre/apellido parts if the document already
@@ -4999,6 +5054,30 @@ def _payment_to_canonical_rows(bank: str, rows: list[dict]) -> tuple[list[str], 
         except Exception:
             logger.debug("_payment_to_canonical_rows: skipping row due to error", exc_info=True)
             continue
+
+    # If the table has a dominant status (e.g. "Procesado"), propagate it to
+    # rows where OCR missed only that specific cell.
+    if canonical_rows and "estatus" in canonical_keys:
+        status_pairs: list[tuple[str, str]] = []
+        for row in canonical_rows:
+            raw_status = _normalize_text(str(row.get("estatus") or ""))
+            if not raw_status:
+                continue
+            status_pairs.append((_normalize_keyword(raw_status), raw_status))
+        if status_pairs:
+            from collections import Counter
+
+            counts = Counter(norm for norm, _ in status_pairs if norm)
+            if counts:
+                dominant_norm, dominant_count = counts.most_common(1)[0]
+                dominant_status = next(
+                    (raw for norm, raw in status_pairs if norm == dominant_norm),
+                    "",
+                )
+                if dominant_status and dominant_count >= 8 and (dominant_count / max(1, len(status_pairs))) >= 0.75:
+                    for row in canonical_rows:
+                        if not _normalize_text(str(row.get("estatus") or "")):
+                            row["estatus"] = dominant_status
     return canonical_keys, canonical_rows
 
 
@@ -5019,9 +5098,9 @@ def _extract_payment_detail_payload_impl(base_text_raw: str, table_payload: dict
     if isinstance(table_payload, dict) and table_payload.get("rows"):
         bank_header = _payment_detect_bank(text)
         table_bank = table_payload.get("bank")
-        bank = bank_header or table_bank
+        bank = _normalize_text(str(bank_header or table_bank or "")).upper()
         # Extraer metadata aunque solo haya tabla
-        metadata: dict = {}
+        metadata: dict[str, Any] = {}
         # Siempre poblar primero los campos genéricos por label_map
         label_map = {
             "fecha_archivo": ["FECHA", "FECHA DE ARCHIVO"],
@@ -5098,24 +5177,25 @@ def _extract_payment_detail_payload_impl(base_text_raw: str, table_payload: dict
         }
         table_out["bank"] = bank
 
+        quality_report_early: dict[str, Any] | None = None
         try:
             from app.pipelines.table_postprocess import compute_table_quality_report as _compute_qr
-            quality_report = _compute_qr(canonical_columns, canonical_rows)
+            quality_report_early = _compute_qr(canonical_columns, canonical_rows)
         except Exception:
-            quality_report = None
+            logger.debug("compute_table_quality_report failed for table_only payload", exc_info=True)
 
-        result: dict = {
+        result: dict[str, Any] = {
             "source": "table_only",
             "bank": bank,
             "metadata": metadata,
             "table": table_out,
         }
-        if quality_report:
-            result["quality_report"] = quality_report
+        if quality_report_early:
+            result["quality_report"] = quality_report_early
         return result
 
-    metadata: dict[str, str] = {}
-    bank = _payment_detect_bank(text)
+    metadata: dict[str, Any] = {}
+    bank = _normalize_text(str(_payment_detect_bank(text) or "")).upper()
     label_map = {
         "fecha_archivo": ["FECHA", "FECHA DE ARCHIVO"],
         "hora_archivo": ["HORA"],
@@ -5295,7 +5375,7 @@ def _extract_payment_detail_payload_impl(base_text_raw: str, table_payload: dict
     except Exception:
         pass
 
-    result: dict = {
+    result: dict[str, Any] = {
         "source": "table_and_text" if row_objects else "text_only",
         "bank": bank,
         "metadata": metadata,
@@ -5399,5 +5479,5 @@ def _build_replica_layout_payload(ocr_boxes, raw_text: str) -> dict | None:
     }
 
 
-__all__ = _export_all()
+__all__ = _export_all()  # pyright: ignore[reportUnsupportedDunderAll]
 

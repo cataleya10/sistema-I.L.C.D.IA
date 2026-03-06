@@ -1430,23 +1430,30 @@ def _extract_cfe_address_from_lines(lines: list[str]) -> str | None:
     )
     # 1. Buscar línea con el key y extraer fragmento después del key
     # 2. Si no hay match, buscar la mejor línea con marcador de dirección
-    key = "domicilio de suministro"
+    key_regex = re.compile(r"\bDOMICILIO\s+DE(?:L)?\s+SUMINISTR[O0]\b", re.IGNORECASE)
+    compact_key_regex = re.compile(r"DOMICILIODE(?:L)?SUMINISTR[O0]", re.IGNORECASE)
     for i, orig_line in enumerate(lines):
-        lower_line = orig_line.lower()
-        found_idx = lower_line.find(key)
-        if found_idx != -1:
-            dom = orig_line[found_idx + len(key):].strip()
-            # Si es muy corto, unir con la siguiente línea
-            if len(dom) < 8 and i + 1 < len(lines):
-                dom += " " + lines[i + 1].strip()
-            dom = re.sub(r"\([^)]{0,200}\)", " ", dom)
-            dom = re.sub(r"\bDESCARGA\s+NUESTRA\b.*$", " ", dom)
-            dom = re.sub(r"\$\s*\d+[.,]?\d*", " ", dom)
-            dom = re.sub(r"TOTAL\s*A\s*PAGAR.*", " ", dom, flags=re.IGNORECASE)
-            dom = re.sub(r"\s+", " ", dom).strip(" .,-")
-            cleaned = _clean_address_value(dom)
-            if cleaned and len(cleaned) >= 8:
-                return cleaned
+        normalized_line = _normalize_text(orig_line)
+        key_match = key_regex.search(normalized_line)
+        if key_match:
+            dom = normalized_line[key_match.end():].strip(" :.-")
+        else:
+            compact_line = _normalize_alnum(orig_line)
+            compact_match = compact_key_regex.search(compact_line)
+            if not compact_match:
+                continue
+            dom = compact_line[compact_match.end():].strip()
+        # Si es muy corto, unir con la siguiente línea
+        if len(dom) < 8 and i + 1 < len(lines):
+            dom += " " + lines[i + 1].strip()
+        dom = re.sub(r"\([^)]{0,200}\)", " ", dom)
+        dom = re.sub(r"\bDESCARGA\s+NUESTRA\b.*$", " ", dom)
+        dom = re.sub(r"\$\s*\d+[.,]?\d*", " ", dom)
+        dom = re.sub(r"TOTAL\s*A\s*PAGAR.*", " ", dom, flags=re.IGNORECASE)
+        dom = re.sub(r"\s+", " ", dom).strip(" .,-")
+        cleaned = _clean_address_value(dom)
+        if cleaned and len(cleaned) >= 8:
+            return cleaned
     # Buscar la mejor línea con marcador de dirección
     address_markers = ("DN.", "DEPTO", "CALLE", "CLL", "AV", "BENITO", "COL", "SSL", "CP", "C.P.")
     best = None
@@ -1865,5 +1872,5 @@ def _extract_generic_all_tables(
     return accepted
 
 
-__all__ = _export_all()
+__all__ = _export_all()  # pyright: ignore[reportUnsupportedDunderAll]
 
