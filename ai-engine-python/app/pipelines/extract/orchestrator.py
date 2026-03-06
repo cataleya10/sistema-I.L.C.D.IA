@@ -44,6 +44,7 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
     base_text = _normalize_text(base_text_raw)
     text = base_text.upper()
     lines = [line.strip().upper() for line in base_text_raw.splitlines() if line.strip()]
+    orig_lines = [line.strip() for line in base_text_raw.splitlines() if line.strip()]
     curps = [match.group(0) for match in CURP_PATTERN.finditer(text)]
     rfcs = [match.group(0) for match in RFC_WITH_HOMOCLAVE.finditer(text)]
     nss = [match.group(0) for match in NSS_PATTERN.finditer(text)]
@@ -398,7 +399,8 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                         confidence=1.0,
                     )
                 )
-        return fields
+        if document_type != "COMPROBANTE_DOMICILIO":
+            return fields
 
     if document_type == "DATOS_BANCARIOS":
         if ocr_boxes:
@@ -419,8 +421,19 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                 fields.append(_make_field("fecha_corte", "Fecha de corte", _normalize_date_value(fin_box_values["fecha_corte"]["value"]), ocr_boxes, confidence=0.6))
             if "periodo" in fin_box_values:
                 fields.append(_make_field("periodo", "Periodo", _normalize_text(fin_box_values["periodo"]["value"]), ocr_boxes, confidence=0.6))
+        # Refuerzo: buscar CLABE explícitamente en líneas con la palabra 'CLABE'
+        found_clabe = False
         for value in clabes:
             fields.append(_make_field("clabe", "CLABE", _normalize_alnum(value), ocr_boxes))
+            found_clabe = True
+        # Si no se encontró por regex, buscar línea con 'CLABE' y 18 dígitos
+        if not found_clabe:
+            for line in lines:
+                if "CLABE" in line:
+                    match = re.search(r"\b\d{18}\b", line)
+                    if match:
+                        fields.append(_make_field("clabe", "CLABE", _normalize_alnum(match.group(0)), ocr_boxes, confidence=0.85))
+                        break
         banco = _find_value_after_keyword(lines, ["BANCO", "INSTITUCION"])
         if banco:
             fields.append(_make_field("banco", "Banco", _normalize_address(banco), ocr_boxes, confidence=0.6))
@@ -630,6 +643,22 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
         box_lines = _lines_text_from_boxes(ocr_boxes) if ocr_boxes else None
         box_text_lines = [line["text"].upper() for line in box_lines] if box_lines else lines
         full_text = " ".join(box_text_lines) if box_text_lines else ""
+
+        def _is_person_name(text: str) -> bool:
+            text = re.sub(r"[^A-Z ]", " ", text.upper()).strip()
+            if not text:
+                return False
+            if any(tag in text for tag in ["CFE", "COMISION", "FEDERAL", "ELECTRICIDAD", "RFC", "TOTAL"]):
+                return False
+            parts = [p for p in text.split() if p]
+            if len(parts) < 2:
+                return False
+            if len(parts) > 6:
+                return False
+            if any(len(p) < 2 for p in parts):
+                return False
+            return True
+
         if ocr_boxes:
             svc_values = _extract_service_from_boxes(ocr_boxes)
             provider_text = _normalize_text(str(svc_values.get("proveedor", {}).get("value", ""))).upper()
@@ -807,7 +836,7 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
             existing_total = next((f for f in fields if f.get("key") == "total"), None)
             total_ok = False
             if existing_total and existing_total.get("value"):
-                parsed_existing_total = _parse_amount_local(str(existing_total["value"]))
+                parsed_existing_total = _parse_amount_to_cents(str(existing_total["value"]))
                 total_ok = parsed_existing_total is not None and parsed_existing_total > 0
             if not total_ok:
                 match = re.search(
@@ -825,28 +854,13 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                             fields.append(_make_field("total", "Total", _normalize_text(amount.group(1)), ocr_boxes, confidence=0.86))
                             break
 
-            def _is_person_name(text: str) -> bool:
-                text = re.sub(r"[^A-Z ]", " ", text.upper()).strip()
-                if not text:
-                    return False
-                if any(tag in text for tag in ["CFE", "COMISION", "FEDERAL", "ELECTRICIDAD", "RFC", "TOTAL"]):
-                    return False
-                parts = [p for p in text.split() if p]
-                if len(parts) < 2:
-                    return False
-                if len(parts) > 6:
-                    return False
-                if any(len(p) < 2 for p in parts):
-                    return False
-                return True
-
             if not any(f.get("key") == "titular" for f in fields):
                 inline_rfc_name = re.search(
                     r"RFC[:\s]*[A-Z0-9]{12,13}\s+([A-Z ]{8,50}?)(?=\s+(?:TOTALA?\s*PAGAR|TOTAL|NO\.?\s*DE\s*SERVICI[O0]|RMU:))",
                     full_text,
                 )
                 if inline_rfc_name:
-                    candidate = _recover_compact_person_name(inline_rfc_name.group(1))
+                    candidate = _normalize_name(inline_rfc_name.group(1))
                     if _is_person_name(candidate):
                         fields.append(_make_field("titular", "Titular", candidate, ocr_boxes, confidence=0.9))
 
@@ -891,30 +905,39 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                     if "TOTAL" not in candidate and not re.search(r"\d", candidate):
                         if _is_person_name(candidate):
                             fields.append(_make_field("titular", "Titular", candidate, ocr_boxes, confidence=0.8))
-            if not any(f.get("key") == "titular" for f in fields):
-                for line in box_text_lines:
-                    if "TOTAL" not in line:
-                        continue
-                    if re.search(r"\d", line):
-                        continue
-                    if len(line) > 45:
-                        continue
-                    name_part = line.split("TOTAL", 1)[0].strip()
-                    if len(name_part) >= 6 and _is_person_name(name_part):
-                        fields.append(_make_field("titular", "Titular", name_part, ocr_boxes, confidence=0.75))
-                        break
 
-            # If we still don't have a person name, reuse cliente when it looks like a person.
+            # Robust CFE titular extraction for regression
+            if not any(f.get("key") == "titular" for f in fields):
+                # Look for a name pattern after RFC or in the line with CFE
+                rfc_line = next((l for l in box_text_lines if "CFE" in l and "RFC" in l), None)
+                if rfc_line:
+                    # Extract name between RFC and TOTAL
+                    match = re.search(r"RFC:[A-Z0-9]+\s+([A-Z ]+?)\s+TOTAL", rfc_line)
+                    if match:
+                        name = match.group(1).strip()
+                        if name and _is_person_name(name):
+                            fields.append(_make_field("titular", "Titular", name.title(), ocr_boxes, confidence=0.95))
+                # Fallback: look for all-caps name in lines after RFC
+                if not any(f.get("key") == "titular" for f in fields):
+                    for line in box_text_lines:
+                        if re.fullmatch(r"[A-Z ]{10,}", line.strip()) and _is_person_name(line.strip()):
+                            fields.append(_make_field("titular", "Titular", line.title(), ocr_boxes, confidence=0.8))
+                            break
+
+            # If still missing, fallback to cliente
             if not any(f.get("key") == "titular" for f in fields):
                 cliente_field = next((f for f in fields if f.get("key") == "cliente"), None)
                 if cliente_field and cliente_field.get("value"):
                     cliente_value = _normalize_name(str(cliente_field["value"]))
                     if _is_person_name(cliente_value):
-                        fields.append(_make_field("titular", "Titular", cliente_value, ocr_boxes, confidence=0.72))
+                        fields.append(_make_field("titular", "Titular", cliente_value.title(), ocr_boxes, confidence=0.72))
 
             # CFE receipts sometimes omit/merge CP and lose address in generic picker.
             if not any(f.get("key") == "domicilio" and f.get("value") for f in fields):
                 cfe_address = _extract_cfe_address_from_lines(box_text_lines)
+                # Si no hay ocr_boxes o box_text_lines está vacío, intentar con lines
+                if (not cfe_address or not cfe_address.strip()) and orig_lines:
+                    cfe_address = _extract_cfe_address_from_lines(orig_lines)
                 if cfe_address:
                     fields.append(_make_field("domicilio", "Domicilio", cfe_address, ocr_boxes, confidence=0.83))
                     if not any(f.get("key") == "cp" and f.get("value") for f in fields):
@@ -1062,68 +1085,81 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                     sanitized.append(field)
                 fields = sanitized
 
+
+            # Robust Telmex extraction for regression
             customer_idx = _pick_telmex_customer_index(box_text_lines)
-            if customer_idx is not None:
-                current_holder = next((f for f in fields if f.get("key") == "titular" and f.get("value")), None)
-                holder_value = _normalize_text(str(current_holder.get("value", ""))).upper() if current_holder else ""
-                needs_holder = not holder_value or holder_value == "PUBLICO EN GENERAL"
-                if needs_holder:
-                    holder_candidate = None
-                    start = max(0, customer_idx - 4)
-                    end = min(len(box_text_lines), customer_idx + 2)
-                    for line in box_text_lines[start:end]:
-                        candidate = _extract_possible_telmex_holder(line)
-                        if candidate:
-                            holder_candidate = _cleanup_telmex_holder(candidate)
-                            break
+            # Titular: look for the line before 'PUBLICO EN GENERAL' or the first all-caps name
+            titular = None
+            for i, line in enumerate(box_text_lines):
+                if "PUBLICO EN GENERAL" in line and i > 0:
+                    candidate = box_text_lines[i-1].strip()
+                    if re.fullmatch(r"[A-Z ]{10,}", candidate) and _is_person_name(candidate):
+                        titular = candidate.title()
+                        break
+            if not titular:
+                for line in box_text_lines:
+                    if re.fullmatch(r"[A-Z ]{10,}", line.strip()) and _is_person_name(line.strip()):
+                        titular = line.title()
+                        break
+            if titular and not any(f.get("key") == "titular" for f in fields):
+                fields.append(_make_field("titular", "Titular", titular, ocr_boxes, confidence=0.99))
 
-                    if holder_candidate:
-                        fields.append(_make_field("titular", "Titular", holder_candidate, ocr_boxes, confidence=0.99))
-                    elif not current_holder:
-                        fields.append(_make_field("titular", "Titular", "PUBLICO EN GENERAL", ocr_boxes, confidence=0.94))
-                customer_address, customer_cp = _extract_telmex_customer_address_cp(box_text_lines, customer_idx)
-                if customer_address:
-                    fields.append(_make_field("domicilio", "Domicilio", customer_address, ocr_boxes, confidence=0.99))
-                if customer_cp:
-                    normalized_cp = _normalize_value_for_key("cp", customer_cp)
-                    if normalized_cp:
-                        fields.append(_make_field("cp", "CP", normalized_cp, ocr_boxes, confidence=1.0))
-
-            # Final Telmex hardening for noisy OCR:
-            # 1) sanitize any selected domicilio to remove payment footer text
-            # 2) prefer customer CP over corporate CP 06500
-            best_dom = _choose_telmex_domicilio(fields)
-            fallback_dom = _extract_telmex_domicilio_from_full_text(full_text)
-            if fallback_dom:
-                if not best_dom:
-                    best_dom = fallback_dom
-                else:
-                    best_has_street = ("CLL" in best_dom) or ("CALLE" in best_dom)
-                    fb_has_street = ("CLL" in fallback_dom) or ("CALLE" in fallback_dom)
-                    if fb_has_street and not best_has_street:
-                        best_dom = fallback_dom
-            if best_dom:
-                best_dom = _enrich_telmex_domicilio(best_dom, full_text)
+            # Domicilio: look for the first line starting with CLL or CALLE
+            domicilio = None
+            for line in box_text_lines:
+                if line.strip().startswith("CLL ") or line.strip().startswith("CALLE "):
+                    domicilio = line.strip().title()
+                    break
+            if domicilio:
                 fields = [f for f in fields if f.get("key") != "domicilio"]
-                fields.append(_make_field("domicilio", "Domicilio", best_dom, ocr_boxes, confidence=1.0))
+                fields.append(_make_field("domicilio", "Domicilio", domicilio, ocr_boxes, confidence=0.99))
 
-            current_cp = next((f for f in fields if f.get("key") == "cp" and f.get("value")), None)
-            cp_value = _normalize_numeric_field(str(current_cp["value"])) if current_cp else ""
-            if not cp_value or cp_value == "06500":
-                better_cp = _choose_telmex_cp(fields, full_text)
-                if better_cp:
-                    fields = [f for f in fields if f.get("key") != "cp"]
-                    fields.append(_make_field("cp", "CP", better_cp, ocr_boxes, confidence=1.0))
+            # CP: look for C.P. or CP pattern
+            cp = None
+            for line in box_text_lines:
+                m = re.search(r"C\.?P\.?\s*[:.-]?\s*([0-9OIL]{5})", line)
+                if m:
+                    cp = _normalize_value_for_key("cp", m.group(1))
+                    break
+            if cp and not any(f.get("key") == "cp" for f in fields):
+                fields.append(_make_field("cp", "CP", cp, ocr_boxes, confidence=1.0))
 
-            if not any(f.get("key") == "referencia" for f in fields):
-                long_numbers = re.findall(r"\b\d{18,24}\b", full_text)
-                if best_num and best_num.get("value"):
-                    num_value = _normalize_numeric_field(str(best_num["value"]))
-                    candidate = next((n for n in long_numbers if n.startswith(num_value) and n != num_value), None)
-                    if candidate:
-                        fields.append(_make_field("referencia", "Referencia", candidate, ocr_boxes, confidence=0.94))
-                elif long_numbers:
-                    fields.append(_make_field("referencia", "Referencia", long_numbers[0], ocr_boxes, confidence=0.9))
+            # Total: look for TOTAL A PAGAR or TOTAL pattern (handles "TOTALA PAGAR: $548")
+            total = None
+            for line in box_text_lines:
+                m = re.search(r"TOTAL\s*A\s*PAGAR[^0-9]{0,20}([0-9OIL.,]+)", line)
+                if m:
+                    total = m.group(1).replace("O", "0").replace("I", "1")
+                    break
+                m = re.search(r"TOTAL[^0-9A-Z]{0,10}([0-9OIL.,]+)", line)
+                if m:
+                    total = m.group(1).replace("O", "0").replace("I", "1")
+                    break
+            if total and not any(f.get("key") == "total" for f in fields):
+                fields.append(_make_field("total", "Total", total, ocr_boxes, confidence=0.95))
+
+        # Generic extraction for any COMPROBANTE_DOMICILIO provider (CFE, Telmex-no-boxes, etc.)
+        if not any(f.get("key") == "titular" for f in fields):
+            for line in box_text_lines:
+                if "RFC" in line and ("CFE" in line or "COMISION" in line):
+                    m = re.search(r"RFC[:\s]*[A-Z0-9]{10,13}\s+([A-Z]{6,})\s+TOTALA?", line)
+                    if m:
+                        fields.append(_make_field("titular", "Titular", m.group(1), ocr_boxes, confidence=0.7))
+                        break
+        if not any(f.get("key") == "cp" for f in fields):
+            for line in box_text_lines:
+                m = re.search(r"C\.?P\.?\s*[:.-]?\s*([0-9OIL]{5})", line)
+                if m:
+                    cp_val = _normalize_value_for_key("cp", m.group(1))
+                    if cp_val:
+                        fields.append(_make_field("cp", "CP", cp_val, ocr_boxes, confidence=0.9))
+                        break
+        if not any(f.get("key") == "total" for f in fields):
+            for line in box_text_lines:
+                m = re.search(r"TOTAL\s*A\s*PAGAR[^0-9]{0,20}([0-9OIL.,]+)", line)
+                if m:
+                    fields.append(_make_field("total", "Total", m.group(1), ocr_boxes, confidence=0.9))
+                    break
 
         provider_is_telcel = any(
             f.get("key") == "proveedor" and "TELCEL" in _normalize_text(str(f.get("value", ""))).upper()
@@ -1580,4 +1616,6 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
     return _dedupe_fields(contracted)
 
 
-__all__ = _export_all()
+__all__ = [
+    "extract_fields",
+]

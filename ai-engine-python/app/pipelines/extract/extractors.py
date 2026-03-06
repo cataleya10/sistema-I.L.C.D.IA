@@ -1428,42 +1428,45 @@ def _extract_cfe_address_from_lines(lines: list[str]) -> str | None:
         "PESOS M.N.",
         "DESCARGA NUESTRA",
     )
-    start_tokens = ("DN.", "DEPTO", "CALLE", "CLL", "AV", "BENITO")
-
-    start_idx = None
-    prepared = [_normalize_text(line).upper() for line in lines if _normalize_text(line)]
-    for idx, line in enumerate(prepared):
-        if any(token in line for token in start_tokens) and "NO.DESERVICIO" not in line:
-            start_idx = idx
-            break
-    if start_idx is None:
-        return None
-
-    parts: list[str] = []
-    for idx in range(start_idx, min(len(prepared), start_idx + 6)):
-        line = prepared[idx]
-        if any(token in line for token in stop_tokens):
-            break
-        if any(token in line for token in skip_tokens):
-            continue
-        parts.append(line)
-        if re.search(r"\b(?:C\.?\s*P\.?\s*)?\d{5}\b", line):
-            if idx + 1 < len(prepared):
-                nxt = prepared[idx + 1]
-                if "CIUDAD" in nxt or "CARMEN" in nxt or "CAMP" in nxt:
-                    parts.append(nxt)
-            break
-
-    if not parts:
-        return None
-    raw = " ".join(parts)
-    raw = re.sub(r"\([^)]{0,200}\)", " ", raw)
-    raw = re.sub(r"\bDESCARGA\s+NUESTRA\b.*$", " ", raw)
-    raw = re.sub(r"\s+", " ", raw).strip(" .,-")
-    if len(raw) < 12:
-        return None
-    cleaned = _clean_address_value(raw)
-    return cleaned if len(cleaned) >= 12 else None
+    # 1. Buscar línea con el key y extraer fragmento después del key
+    # 2. Si no hay match, buscar la mejor línea con marcador de dirección
+    key = "domicilio de suministro"
+    for i, orig_line in enumerate(lines):
+        lower_line = orig_line.lower()
+        found_idx = lower_line.find(key)
+        if found_idx != -1:
+            dom = orig_line[found_idx + len(key):].strip()
+            # Si es muy corto, unir con la siguiente línea
+            if len(dom) < 8 and i + 1 < len(lines):
+                dom += " " + lines[i + 1].strip()
+            dom = re.sub(r"\([^)]{0,200}\)", " ", dom)
+            dom = re.sub(r"\bDESCARGA\s+NUESTRA\b.*$", " ", dom)
+            dom = re.sub(r"\$\s*\d+[.,]?\d*", " ", dom)
+            dom = re.sub(r"TOTAL\s*A\s*PAGAR.*", " ", dom, flags=re.IGNORECASE)
+            dom = re.sub(r"\s+", " ", dom).strip(" .,-")
+            cleaned = _clean_address_value(dom)
+            if cleaned and len(cleaned) >= 8:
+                return cleaned
+    # Buscar la mejor línea con marcador de dirección
+    address_markers = ("DN.", "DEPTO", "CALLE", "CLL", "AV", "BENITO", "COL", "SSL", "CP", "C.P.")
+    best = None
+    best_score = 0
+    for line in lines:
+        norm = _normalize_text(line).upper()
+        if any(tok in norm for tok in address_markers):
+            cleaned = _clean_address_value(norm)
+            score = sum(tok in cleaned for tok in address_markers) + len(cleaned)
+            if cleaned and len(cleaned) >= 8 and score > best_score:
+                best = cleaned
+                best_score = score
+    if best:
+        return best
+    # Como último recurso, unir todas las líneas y extraer tokens de dirección
+    joined = " ".join(_normalize_text(l).upper() for l in lines)
+    cleaned = _clean_address_value(joined)
+    if cleaned and len(cleaned) >= 8:
+        return cleaned
+    return None
 
 
 def _pick_telmex_customer_index(lines: list[str]) -> int | None:

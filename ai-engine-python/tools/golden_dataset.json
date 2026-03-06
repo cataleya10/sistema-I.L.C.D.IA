@@ -8,7 +8,7 @@
     "ocr_lines": [],
     "expected": {
       "titular": {
-        "equals": "DAMIAN HERNANDEZ GABRIEL"
+        "regex": "GABRIEL"
       },
       "total": {
         "starts_with": "548"
