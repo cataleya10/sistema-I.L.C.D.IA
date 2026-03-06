@@ -319,6 +319,8 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
     if document_type == "FACTURA" or document_type == "DATOS_BANCARIOS" or document_type == "COMPROBANTE_DOMICILIO":
         payment_table = _extract_payment_table_payload(base_text_raw, ocr_boxes, pdf_tables)
         payment_detail = _extract_payment_detail_payload(base_text_raw, payment_table)
+        # Enriquecer tabla con metadata y mapped_fields de payment_detail
+        payment_table = _enrich_payment_table_payload(payment_table, payment_detail)
         # Siempre asegurar que tabla_celdas tenga al menos header+data
         if payment_table and payment_table.get("rows"):
             rows = payment_table["rows"]
@@ -399,7 +401,7 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                         confidence=1.0,
                     )
                 )
-        if document_type != "COMPROBANTE_DOMICILIO":
+        if document_type == "FACTURA":
             return fields
 
     if document_type == "DATOS_BANCARIOS":

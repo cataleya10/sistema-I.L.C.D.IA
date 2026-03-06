@@ -2530,8 +2530,7 @@ def _normalize_payment_table_rows_impl(rows: list[list[str]]) -> list[list[str]]
         col_injected = True
 
     if is_advanced:
-        result: list[dict] = []
-        result.append({k: v for k, v in zip(canon_header, header)})  # header dict: canónica→original
+        norm_rows: list[dict] = []
         for orig_row in rows[1:]:
             if col_injected:
                 ins = estatus_idx
@@ -2547,8 +2546,8 @@ def _normalize_payment_table_rows_impl(rows: list[list[str]]) -> list[list[str]]
 
             # Fix 3: extraer/limpiar estatus embebido en concepto (aplica a cualquier source).
             if (
-                0 <= concepto_idx < len(row)
-                and 0 <= estatus_idx < len(row)
+                0 <= concepto_idx < len(canon_header)
+                and 0 <= estatus_idx < len(canon_header)
                 and concepto_idx != estatus_idx
             ):
                 concepto_val = row.get(canon_header[concepto_idx], "").strip()
@@ -2559,7 +2558,7 @@ def _normalize_payment_table_rows_impl(rows: list[list[str]]) -> list[list[str]]
                     row[canon_header[concepto_idx]] = concepto_val[sm.end():].strip() or "PAGO DE NOMINA"
 
             # Fix 3b: fallback — si estatus sigue vacío, buscar palabra de estatus en la fila
-            if 0 <= estatus_idx < len(row) and not row.get(canon_header[estatus_idx], "").strip() and _has_apellido:
+            if 0 <= estatus_idx < len(canon_header) and not row.get(canon_header[estatus_idx], "").strip() and _has_apellido:
                 row_joined = " ".join(str(row.get(k, "")) for k in canon_header)
                 m_st = _STATUS_SEARCH_PAT.search(row_joined)
                 if m_st:
@@ -2576,7 +2575,12 @@ def _normalize_payment_table_rows_impl(rows: list[list[str]]) -> list[list[str]]
                 if k not in row:
                     row[k] = ""
 
-            result.append(row)
+            norm_rows.append(row)
+
+        # Siempre devolver lista de listas: [header_list, data_row_list, ...]
+        result: list[list[str]] = [header]
+        for row_dict in norm_rows:
+            result.append([row_dict.get(k, "") for k in canon_header])
         return result
     else:
         # Tabla simple: mantener como listas
@@ -2846,6 +2850,9 @@ def _extract_payment_table_payload_impl(base_text_raw: str, ocr_boxes, pdf_table
             if banco in _text_upper:
                 banco_detectado = banco
                 break
+    # BBVA receipt rows override any bank found in text (destination bank ≠ source bank)
+    if _is_bbva_receipt_rows:
+        banco_detectado = "BBVA"
     if banco_detectado:
         for row in rows:
             if isinstance(row, dict):
@@ -2890,6 +2897,9 @@ def _extract_payment_table_payload_impl(base_text_raw: str, ocr_boxes, pdf_table
             if banco in _text_upper:
                 banco_detectado = banco
                 break
+    # BBVA receipt rows: the source bank is always BBVA regardless of destination bank in text
+    if _is_bbva_receipt_rows:
+        banco_detectado = "BBVA"
     if banco_detectado:
         payload["bank"] = banco_detectado
         # Si hay filas, forzar el campo 'bank' en cada fila dict
@@ -2948,6 +2958,9 @@ def _extract_payment_table_payload_impl(base_text_raw: str, ocr_boxes, pdf_table
             if banco in _text_upper:
                 banco_detectado = banco
                 break
+    # BBVA receipt rows: source bank is always BBVA regardless of destination bank in text
+    if _is_bbva_receipt_rows:
+        banco_detectado = "BBVA"
     if banco_detectado:
         payload["bank"] = banco_detectado
         # Refuerzo: fuerza el banco en cada fila si es dict
@@ -5060,25 +5073,49 @@ def _extract_payment_detail_payload_impl(base_text_raw: str, table_payload: dict
                 rows.append([str(cell or "") for cell in raw_row])
         row_objects = _payment_rows_to_objects(rows) if rows else []
         canonical_columns, canonical_rows = _payment_to_canonical_rows(bank, row_objects)
+        # Uppercase name columns in canonical rows
+        _name_cols = {"nombre", "nombre_beneficiario", "apellido_paterno", "apellido_materno", "titular"}
+        for crow in canonical_rows:
+            for col in _name_cols:
+                if crow.get(col):
+                    crow[col] = crow[col].upper()
         display_columns = _build_display_columns_map(rows, bank)
 
+        # Use canonical keys for rows in table_out (matches what callers expect)
+        _header_keys = _payment_header_keys_from_cells(rows[0]) if rows else []
+        table_rows_with_canonical_keys = (
+            [dict(zip(_header_keys, row)) for row in rows[1:]] if len(rows) > 1 else []
+        )
+
+        summary_tables_early = _extract_scotia_summary_tables(text) if bank == "SCOTIABANK" else []
+
         table_out = {
-            "columns": table_payload["rows"][0] if len(table_payload["rows"]) >= 1 else [],
-            "row_count": len(table_payload["rows"]) - 1 if len(table_payload["rows"]) > 1 else 0,
-            "rows": [dict(zip(table_payload["rows"][0], row)) for row in table_payload["rows"][1:]] if len(table_payload["rows"]) > 1 else [],
+            "columns": rows[0] if rows else [],
+            "row_count": len(rows) - 1 if len(rows) > 1 else 0,
+            "rows": table_rows_with_canonical_keys,
             "canonical_columns": canonical_columns,
             "canonical_row_count": len(canonical_rows),
             "canonical_rows": canonical_rows,
             "display_columns": display_columns,
-            "summary_tables": [],
+            "summary_tables": summary_tables_early,
         }
         table_out["bank"] = bank
-        return {
+
+        try:
+            from app.pipelines.table_postprocess import compute_table_quality_report as _compute_qr
+            quality_report = _compute_qr(canonical_columns, canonical_rows)
+        except Exception:
+            quality_report = None
+
+        result: dict = {
             "source": "table_only",
             "bank": bank,
             "metadata": metadata,
             "table": table_out,
         }
+        if quality_report:
+            result["quality_report"] = quality_report
+        return result
 
     metadata: dict[str, str] = {}
     bank = _payment_detect_bank(text)
