@@ -45,7 +45,7 @@ public sealed class DocumentExportService : IDocumentExportService
             }
         }
 
-        var structuredTables = BuildStructuredTablesForExport(detail.Fields);
+        var structuredTables = BuildStructuredTablesForExport(detail.Fields, detail.DocumentType);
         if (structuredTables.Count > 0)
         {
             sb.Append("\\par\\b Tablas extraidas \\b0\\par\n");
@@ -66,7 +66,7 @@ public sealed class DocumentExportService : IDocumentExportService
     public byte[] BuildXlsx(DocumentDetailDto detail)
     {
         var (exportFields, fieldMap, derivedValues) = PrepareExportFields(detail, useAccentedLabels: false);
-        var structuredTables = BuildStructuredTablesForExport(detail.Fields);
+        var structuredTables = BuildStructuredTablesForExport(detail.Fields, detail.DocumentType);
 
         var rowNumber = 7u;
         var sheetData = new SheetData();
@@ -206,18 +206,27 @@ public sealed class DocumentExportService : IDocumentExportService
         var fieldMap = detail.Fields
             .GroupBy(field => field.Key, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
-        var derivedValues = BuildDerivedExportValues(detail.Fields);
+        var allowStructuredTables = AllowsStructuredTableExports(detail.DocumentType);
+        var derivedValues = BuildDerivedExportValues(detail.Fields, detail.DocumentType);
         var excludedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "texto_detectado" };
         var orderedTemplate = template
-            .Where(item => !excludedKeys.Contains(item.Key))
+            .Where(item =>
+                !excludedKeys.Contains(item.Key)
+                && (allowStructuredTables || !IsStructuredFieldKey(item.Key)))
             .ToList();
         var templateKeys = new HashSet<string>(orderedTemplate.Select(item => item.Key), StringComparer.OrdinalIgnoreCase);
         var extraFields = detail.Fields
-            .Where(field => !excludedKeys.Contains(field.Key) && !templateKeys.Contains(field.Key))
+            .Where(field =>
+                !excludedKeys.Contains(field.Key)
+                && !templateKeys.Contains(field.Key)
+                && (allowStructuredTables || !IsStructuredFieldKey(field.Key)))
             .Select(field => (Key: field.Key, Label: string.IsNullOrWhiteSpace(field.Label) ? field.Key : field.Label))
             .ToList();
         var derivedExtraFields = derivedValues.Keys
-            .Where(key => !excludedKeys.Contains(key) && !templateKeys.Contains(key))
+            .Where(key =>
+                !excludedKeys.Contains(key)
+                && !templateKeys.Contains(key)
+                && (allowStructuredTables || !IsStructuredFieldKey(key)))
             .Select(key => (Key: key, Label: ResolveExportLabel(key)))
             .ToList();
         List<(string Key, string Label)> exportFields = orderedTemplate
@@ -290,8 +299,7 @@ public sealed class DocumentExportService : IDocumentExportService
                 ("titular", "Titular"),
                 ("rfc", "RFC"),
                 ("fecha_corte", "Fecha de corte"),
-                ("periodo", "Periodo"),
-                ("tabla_celdas", "Tabla celdas")
+                ("periodo", "Periodo")
             },
             DocumentType.Factura => new List<(string, string)>
             {
@@ -467,8 +475,15 @@ public sealed class DocumentExportService : IDocumentExportService
 
     // ── Structured table parsing ──────────────────────────────────────
 
-    internal static IReadOnlyList<StructuredExportTable> BuildStructuredTablesForExport(IReadOnlyList<DocumentFieldDto> fields)
+    internal static IReadOnlyList<StructuredExportTable> BuildStructuredTablesForExport(
+        IReadOnlyList<DocumentFieldDto> fields,
+        DocumentType documentType)
     {
+        if (!AllowsStructuredTableExports(documentType))
+        {
+            return Array.Empty<StructuredExportTable>();
+        }
+
         var tableField = fields.FirstOrDefault(field =>
             string.Equals(field.Key, "tabla_celdas", StringComparison.OrdinalIgnoreCase));
         if (tableField is null)
@@ -1218,9 +1233,16 @@ public sealed class DocumentExportService : IDocumentExportService
         }
     }
 
-    private static IReadOnlyDictionary<string, string> BuildDerivedExportValues(IReadOnlyList<DocumentFieldDto> fields)
+    private static IReadOnlyDictionary<string, string> BuildDerivedExportValues(
+        IReadOnlyList<DocumentFieldDto> fields,
+        DocumentType documentType)
     {
         var derived = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!AllowsStructuredTableExports(documentType))
+        {
+            return derived;
+        }
+
         var tableField = fields.FirstOrDefault(field =>
             string.Equals(field.Key, "tabla_celdas", StringComparison.OrdinalIgnoreCase));
         if (tableField is null)
@@ -1378,5 +1400,24 @@ public sealed class DocumentExportService : IDocumentExportService
         {
             target[key] = normalized;
         }
+    }
+
+    private static bool AllowsStructuredTableExports(DocumentType documentType)
+    {
+        return documentType is DocumentType.Factura or DocumentType.Generico;
+    }
+
+    private static bool IsStructuredFieldKey(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return false;
+        }
+
+        return key.StartsWith("tabla_celdas", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(key, "pago_detalle", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(key, "replica_pdf_layout", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(key, "replica_pdf_texto", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(key, "mapped_fields", StringComparison.OrdinalIgnoreCase);
     }
 }

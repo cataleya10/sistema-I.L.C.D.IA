@@ -315,8 +315,8 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
             fields.append(_make_field("nombre", "Nombre", _normalize_name(nss_name), ocr_boxes, confidence=0.82))
 
 
-    # --- REGLA: Para FACTURA solo tabla; para DATOS_BANCARIOS tabla + campos clave ---
-    if document_type == "FACTURA" or document_type == "DATOS_BANCARIOS" or document_type == "COMPROBANTE_DOMICILIO":
+    # --- REGLA ESTRICTA: solo FACTURA/PAGO incluye tabla estructurada ---
+    if document_type == "FACTURA":
         payment_table = _extract_payment_table_payload(base_text_raw, ocr_boxes, pdf_tables)
         payment_detail = _extract_payment_detail_payload(base_text_raw, payment_table)
         # Enriquecer tabla con metadata y mapped_fields de payment_detail
@@ -442,29 +442,14 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
         labeled_clabe = _find_labeled_value(lines, "CLABE")
         if labeled_clabe:
             fields.append(_make_field("clabe", "CLABE", _normalize_numeric_field(labeled_clabe), ocr_boxes, confidence=0.8))
-        payment_table = _extract_payment_table_payload(base_text_raw, ocr_boxes, pdf_tables)
-        if payment_table and payment_table.get("rows"):
-            rows = payment_table["rows"]
-            if rows and isinstance(rows[0], list):
-                if len(rows) == 1 and payment_table.get("header"):
-                    rows = [payment_table["header"], rows[0]]
-                elif len(rows) == 1:
-                    rows = [rows[0], rows[0]]
-                payment_table["rows"] = [list(r) for r in rows]
-            fields.append(
-                _make_field(
-                    "tabla_celdas",
-                    "Tabla celdas",
-                    json.dumps(payment_table, ensure_ascii=False),
-                    ocr_boxes,
-                    confidence=0.92,
-                )
-            )
         return fields
 
-    # Skip payment-table fallback for GENERICO — the dedicated GENERICO
-    # block below handles comprehensive table extraction and would duplicate.
-    if not any(str(field.get("key", "") or "") == "tabla_celdas" for field in fields) and document_type != "GENERICO":
+    # Strict separation: never append payment tables to personal document types.
+    # Any fallback table extraction is reserved for FACTURA/PAGO only.
+    if (
+        document_type == "FACTURA"
+        and not any(str(field.get("key", "") or "") == "tabla_celdas" for field in fields)
+    ):
         payment_table = _extract_payment_table_payload(base_text_raw, ocr_boxes, pdf_tables)
         payment_detail = _extract_payment_detail_payload(base_text_raw, payment_table)
         payment_table = _enrich_payment_table_payload(payment_table, payment_detail)
@@ -1481,7 +1466,10 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
             logger.info("[GENERICO] Tables: %d", len(all_tables))
 
     # ── Universal tabla_celdas fallback ────────────────────────────────────────
-    if not any(str(f.get("key", "")) == "tabla_celdas" for f in fields):
+    if (
+        document_type in {"FACTURA", "GENERICO", "UNKNOWN"}
+        and not any(str(f.get("key", "")) == "tabla_celdas" for f in fields)
+    ):
         _uni_tables: list[dict] = []
         logger.info("[DIAG-UNI] pdf_tables=%d ocr_boxes=%d base_text_len=%d",
                     len(pdf_tables or []), len(ocr_boxes or []), len(base_text_raw or ""))
@@ -1580,6 +1568,8 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
     contracted = _apply_field_contracts(document_type, cleaned)
     # --- REFUERZO FINAL: Forzar bank detectado en header en todos los niveles posibles ---
     try:
+        if document_type != "FACTURA":
+            return _dedupe_fields(contracted)
         bank_header = None
         # Detectar bank desde el header (primeras 10 líneas del texto base)
         base_text_lines = [line.strip() for line in (base_text_raw or '').splitlines() if line.strip()][:10]

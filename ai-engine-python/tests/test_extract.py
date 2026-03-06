@@ -138,11 +138,8 @@ class ExtractPipelineTests(unittest.TestCase):
         fields = _run_sync(extract_fields("DATOS_BANCARIOS", ocr_text, ocr_boxes))
         data = _field_map(fields)
 
-        self.assertIn("tabla_celdas", data)
-        payload = json.loads(data["tabla_celdas"])
-        self.assertEqual(payload.get("source"), "ocr_boxes")
-        self.assertGreaterEqual(len(payload.get("rows", [])), 2)
-        self.assertEqual(payload["rows"][0][0], "CUENTA")
+        self.assertNotIn("tabla_celdas", data)
+        self.assertEqual(data.get("cuenta"), "56551346133")
 
     def test_extract_factura_payment_table_from_fragmented_boxes(self):
         ocr_text = "COMPROBANTE DE LA OPERACION"
@@ -298,10 +295,7 @@ class ExtractPipelineTests(unittest.TestCase):
         fields = _run_sync(extract_fields("DATOS_BANCARIOS", ocr_text, None))
         data = _field_map(fields)
 
-        self.assertIn("tabla_celdas", data)
-        payload = json.loads(data["tabla_celdas"])
-        self.assertEqual(payload.get("source"), "text_lines")
-        self.assertEqual(payload["rows"][0][0], "CUENTA")
+        self.assertNotIn("tabla_celdas", data)
 
     def test_extract_unknown_payment_table_from_text_lines(self):
         ocr_text = "\n".join(
@@ -316,7 +310,7 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertIn("tabla_celdas", data)
         payload = json.loads(data["tabla_celdas"])
         self.assertEqual(payload.get("source"), "text_lines")
-        self.assertEqual(payload["rows"][0][0], "CUENTA")
+        self.assertEqual(str(payload["rows"][0][0]).upper(), "CUENTA")
 
     def test_extract_comprobante_payment_table_from_text_lines(self):
         ocr_text = "\n".join(
@@ -328,10 +322,7 @@ class ExtractPipelineTests(unittest.TestCase):
         fields = _run_sync(extract_fields("COMPROBANTE_DOMICILIO", ocr_text, None))
         data = _field_map(fields)
 
-        self.assertIn("tabla_celdas", data)
-        payload = json.loads(data["tabla_celdas"])
-        self.assertEqual(payload.get("source"), "text_lines")
-        self.assertEqual(payload["rows"][0][0], "CUENTA")
+        self.assertNotIn("tabla_celdas", data)
 
     def test_extract_factura_payment_table_from_text_lines(self):
         ocr_text = "\n".join(
