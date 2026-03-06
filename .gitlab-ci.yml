@@ -55,6 +55,7 @@ ai-engine:
   image: python:3.11-slim
   variables:
     PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    PAYROLL_STRICT_MODE: "1"
   before_script:
     - apt-get update
     - apt-get install -y libgl1 libglib2.0-0

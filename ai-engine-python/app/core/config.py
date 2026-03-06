@@ -14,6 +14,16 @@ def _env_csv_upper(name: str, default: str) -> list[str]:
     return [item.strip().upper() for item in value.split(",") if item.strip()]
 
 
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None:
+        return float(default)
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
 class Settings(BaseModel):
     pipeline_version: str = os.getenv("PIPELINE_VERSION", "1.0.0")
     model_version: str = os.getenv("MODEL_VERSION", "clf-v1.0.0")
@@ -34,5 +44,11 @@ class Settings(BaseModel):
     cors_origins: str = os.getenv("CORS_ORIGINS", "")
     rate_limit_max: int = int(os.getenv("RATE_LIMIT_MAX", "120"))
     rate_limit_window_seconds: int = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
+    payroll_strict_mode: bool = _env_bool("PAYROLL_STRICT_MODE", True)
+    payroll_strict_min_rows: int = int(os.getenv("PAYROLL_STRICT_MIN_ROWS", "5"))
+    payroll_strict_min_fill_rate: float = _env_float("PAYROLL_STRICT_MIN_FILL_RATE", 0.90)
+    payroll_strict_max_dominant_surname_ratio: float = _env_float(
+        "PAYROLL_STRICT_MAX_DOMINANT_SURNAME_RATIO", 0.55
+    )
 
 settings = Settings()

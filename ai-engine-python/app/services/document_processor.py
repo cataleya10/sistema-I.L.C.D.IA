@@ -1,5 +1,6 @@
 import json
 import pandas as pd
+from collections import Counter
 def export_table_to_csv_excel(columns, rows, csv_path=None, excel_path=None):
     """
     Exporta una tabla (columnas, filas) a CSV y/o Excel usando pandas.
@@ -314,6 +315,161 @@ def _field_value(field: dict):
     if isinstance(value, str):
         return value.strip()
     return value
+
+
+_PAYROLL_REQUIRED_COLUMNS = (
+    "cuenta",
+    "referencia",
+    "importe",
+    "nombre",
+    "apellido_paterno",
+    "apellido_materno",
+    "estatus",
+    "concepto_pago",
+)
+
+_PAYROLL_STRICT_FILL_COLUMNS = (
+    "cuenta",
+    "referencia",
+    "importe",
+    "nombre",
+    "apellido_paterno",
+    "apellido_materno",
+)
+
+
+def _json_to_dict(raw_value) -> dict | None:
+    if isinstance(raw_value, dict):
+        return raw_value
+    if not isinstance(raw_value, str):
+        return None
+    text = raw_value.strip()
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _extract_payroll_canonical_table(fields: list[dict]) -> tuple[list[str], list[dict[str, str]]] | None:
+    table_payload: dict | None = None
+    for field in fields:
+        normalized_key = _normalize_key_name(str(field.get("key", "") or ""))
+        if normalized_key not in {"tabla_celdas", "pago_detalle"}:
+            continue
+        value = _field_value(field)
+        payload = _json_to_dict(value)
+        if not payload:
+            continue
+        if normalized_key == "tabla_celdas":
+            table_payload = payload
+            break
+        table = payload.get("table")
+        if isinstance(table, dict):
+            table_payload = table
+
+    if not isinstance(table_payload, dict):
+        return None
+
+    canonical_columns_raw = table_payload.get("canonical_columns")
+    canonical_rows_raw = table_payload.get("canonical_rows")
+    if not isinstance(canonical_columns_raw, list) or not isinstance(canonical_rows_raw, list):
+        return None
+
+    canonical_columns = [str(col or "").strip() for col in canonical_columns_raw if str(col or "").strip()]
+    canonical_rows: list[dict[str, str]] = []
+    for row in canonical_rows_raw:
+        if not isinstance(row, dict):
+            continue
+        clean_row: dict[str, str] = {}
+        for key, value in row.items():
+            key_text = str(key or "").strip()
+            if not key_text:
+                continue
+            value_text = str(value or "").strip()
+            if value_text:
+                clean_row[key_text] = value_text
+        if clean_row:
+            canonical_rows.append(clean_row)
+
+    if not canonical_columns or not canonical_rows:
+        return None
+    return canonical_columns, canonical_rows
+
+
+def _evaluate_payroll_strict(fields: list[dict], doc_type: str) -> tuple[list[str], bool]:
+    if doc_type != "FACTURA" or not settings.payroll_strict_mode:
+        return [], False
+
+    extracted = _extract_payroll_canonical_table(fields)
+    if not extracted:
+        return [], False
+    canonical_columns, canonical_rows = extracted
+    canonical_set = set(canonical_columns)
+    required_set = set(_PAYROLL_REQUIRED_COLUMNS)
+
+    # Only enforce strict rules for advanced payroll tables.
+    if not required_set.issubset(canonical_set):
+        return [], False
+
+    warnings: list[str] = []
+    hard_fail = False
+    total_rows = len(canonical_rows)
+    if total_rows == 0:
+        return ["[NOMINA_STRICT] tabla de nomina sin filas de datos."], True
+
+    if "apellido_combo_estatus" in canonical_set:
+        warnings.append("[NOMINA_STRICT] columna combinada 'apellido_combo_estatus' detectada en salida final.")
+        hard_fail = True
+
+    min_fill_rate = max(0.0, min(1.0, float(settings.payroll_strict_min_fill_rate)))
+    for col in _PAYROLL_STRICT_FILL_COLUMNS:
+        filled = sum(1 for row in canonical_rows if str(row.get(col, "") or "").strip())
+        fill_rate = filled / max(1, total_rows)
+        if fill_rate < min_fill_rate:
+            warnings.append(
+                f"[NOMINA_STRICT] columna '{col}' con llenado bajo: {fill_rate:.1%} (< {min_fill_rate:.0%})."
+            )
+            hard_fail = True
+
+    max_ratio = max(0.0, min(1.0, float(settings.payroll_strict_max_dominant_surname_ratio)))
+    min_rows_for_ratio = max(10, int(settings.payroll_strict_min_rows))
+    for surname_col in ("apellido_paterno", "apellido_materno"):
+        values = [str(row.get(surname_col, "") or "").strip().upper() for row in canonical_rows]
+        values = [value for value in values if value]
+        if len(values) < min_rows_for_ratio:
+            continue
+        counts = Counter(values)
+        dominant_value, dominant_count = counts.most_common(1)[0]
+        dominant_ratio = dominant_count / len(values)
+        if dominant_ratio > max_ratio:
+            warnings.append(
+                f"[NOMINA_STRICT] posible sobre-relleno en '{surname_col}': "
+                f"'{dominant_value}' aparece en {dominant_ratio:.1%} de filas."
+            )
+            hard_fail = True
+
+    dedupe_keys: list[tuple[str, str, str]] = []
+    for row in canonical_rows:
+        cuenta = str(row.get("cuenta", "") or "").strip()
+        referencia = str(row.get("referencia", "") or "").strip()
+        importe = str(row.get("importe", "") or "").strip()
+        if cuenta and referencia and importe:
+            dedupe_keys.append((cuenta, referencia, importe))
+    if dedupe_keys:
+        duplicate_count = len(dedupe_keys) - len(set(dedupe_keys))
+        if duplicate_count > 0:
+            duplicate_ratio = duplicate_count / len(dedupe_keys)
+            warnings.append(
+                f"[NOMINA_STRICT] filas duplicadas por (cuenta,referencia,importe): "
+                f"{duplicate_count} ({duplicate_ratio:.1%})."
+            )
+            if duplicate_ratio > 0.10:
+                hard_fail = True
+
+    return warnings, hard_fail
 
 
 def _is_effectively_valid(doc_type: str, required_key: str, field: dict) -> bool:
@@ -648,6 +804,23 @@ async def process_document(file, document_id: str, source: str, options: str | N
     if len(fields) == 0:
         status = "NEEDS_REVIEW"
         warnings.append("No se detectaron campos extraídos.")
+
+    strict_warnings, strict_hard_fail = _evaluate_payroll_strict(fields, doc_type)
+    if strict_warnings:
+        warnings.extend(strict_warnings)
+    if strict_hard_fail:
+        status = "NEEDS_REVIEW"
+
+    if warnings:
+        deduped_warnings: list[str] = []
+        seen: set[str] = set()
+        for warning in warnings:
+            key = str(warning or "").strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            deduped_warnings.append(key)
+        warnings = deduped_warnings
 
     try:
         learn_from_processed_document(

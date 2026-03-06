@@ -1,4 +1,5 @@
 ﻿import asyncio
+import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -15,6 +16,10 @@ def _field(key: str, value: str, valid: bool = True, confidence: float = 0.95) -
         "valid": valid,
         "validation_errors": [],
     }
+
+
+def _tabla_celdas_field(payload: dict, confidence: float = 0.95) -> dict:
+    return _field("tabla_celdas", json.dumps(payload), confidence=confidence)
 
 
 class DocumentProcessorTests(unittest.TestCase):
@@ -139,6 +144,153 @@ class DocumentProcessorTests(unittest.TestCase):
         self.assertEqual(learn_mock.call_count, 1)
         self.assertIn("Tipo forzado manualmente: FACTURA.", response.warnings)
 
+    def test_process_document_nomina_strict_passes_clean_payload(self):
+        payload = {
+            "canonical_columns": [
+                "cuenta",
+                "referencia",
+                "importe",
+                "nombre",
+                "apellido_paterno",
+                "apellido_materno",
+                "estatus",
+                "concepto_pago",
+            ],
+            "canonical_rows": [
+                {
+                    "cuenta": "56775171706",
+                    "referencia": "1620260115134903934215",
+                    "importe": "$3,000.00",
+                    "nombre": "PATRICIA",
+                    "apellido_paterno": "CRUZ",
+                    "apellido_materno": "TEJERO",
+                    "estatus": "PROCESADO",
+                    "concepto_pago": "PAGO DE NOMINA",
+                },
+                {
+                    "cuenta": "56936419478",
+                    "referencia": "1620260115134918564969",
+                    "importe": "$3,000.00",
+                    "nombre": "MARIA DEL ROSARIO",
+                    "apellido_paterno": "PEREZ",
+                    "apellido_materno": "JIMENEZ",
+                    "estatus": "PROCESADO",
+                    "concepto_pago": "PAGO DE NOMINA",
+                },
+                {
+                    "cuenta": "56936399792",
+                    "referencia": "1620260115134918364964",
+                    "importe": "$3,000.00",
+                    "nombre": "ROGER DE JESUS",
+                    "apellido_paterno": "SANCHEZ",
+                    "apellido_materno": "PENATE",
+                    "estatus": "PROCESADO",
+                    "concepto_pago": "PAGO DE NOMINA",
+                },
+                {
+                    "cuenta": "56936400441",
+                    "referencia": "1620260115134918544968",
+                    "importe": "$3,000.00",
+                    "nombre": "MARIBEL",
+                    "apellido_paterno": "MORALES",
+                    "apellido_materno": "HERNANDEZ",
+                    "estatus": "PROCESADO",
+                    "concepto_pago": "PAGO DE NOMINA",
+                },
+                {
+                    "cuenta": "56926976884",
+                    "referencia": "1620260115134912774864",
+                    "importe": "$3,000.00",
+                    "nombre": "CINDY SUSANA",
+                    "apellido_paterno": "ALEJANDRO",
+                    "apellido_materno": "JUNCO",
+                    "estatus": "PROCESADO",
+                    "concepto_pago": "PAGO DE NOMINA",
+                },
+            ],
+        }
+        response, learn_mock = self._run_case(
+            [_tabla_celdas_field(payload)],
+            doc_type="FACTURA",
+            critical_fields={"FACTURA": ["tabla_celdas"]},
+        )
+        self.assertEqual(response.status, "READY")
+        self.assertEqual(learn_mock.call_count, 1)
+        self.assertFalse(any("[NOMINA_STRICT]" in warning for warning in response.warnings))
+
+    def test_process_document_nomina_strict_flags_surname_overfill(self):
+        payload = {
+            "canonical_columns": [
+                "cuenta",
+                "referencia",
+                "importe",
+                "nombre",
+                "apellido_paterno",
+                "apellido_materno",
+                "estatus",
+                "concepto_pago",
+            ],
+            "canonical_rows": [
+                {
+                    "cuenta": f"5677517170{i}",
+                    "referencia": f"16202601151349039342{i}",
+                    "importe": "$3,000.00",
+                    "nombre": f"NOMBRE {i}",
+                    "apellido_paterno": "HERNANDEZ",
+                    "apellido_materno": "HERNANDEZ",
+                    "estatus": "PROCESADO",
+                    "concepto_pago": "PAGO DE NOMINA",
+                }
+                for i in range(12)
+            ],
+        }
+        response, learn_mock = self._run_case(
+            [_tabla_celdas_field(payload)],
+            doc_type="FACTURA",
+            critical_fields={"FACTURA": ["tabla_celdas"]},
+        )
+        self.assertEqual(response.status, "NEEDS_REVIEW")
+        self.assertEqual(learn_mock.call_count, 1)
+        self.assertTrue(any("[NOMINA_STRICT]" in warning for warning in response.warnings))
+
+    def test_process_document_nomina_strict_can_be_disabled(self):
+        payload = {
+            "canonical_columns": [
+                "cuenta",
+                "referencia",
+                "importe",
+                "nombre",
+                "apellido_paterno",
+                "apellido_materno",
+                "estatus",
+                "concepto_pago",
+            ],
+            "canonical_rows": [
+                {
+                    "cuenta": f"5677517170{i}",
+                    "referencia": f"16202601151349039342{i}",
+                    "importe": "$3,000.00",
+                    "nombre": f"NOMBRE {i}",
+                    "apellido_paterno": "HERNANDEZ",
+                    "apellido_materno": "HERNANDEZ",
+                    "estatus": "PROCESADO",
+                    "concepto_pago": "PAGO DE NOMINA",
+                }
+                for i in range(12)
+            ],
+        }
+        with patch.object(dp.settings, "payroll_strict_mode", False):
+            response, learn_mock = self._run_case(
+                [_tabla_celdas_field(payload)],
+                doc_type="FACTURA",
+                critical_fields={"FACTURA": ["tabla_celdas"]},
+            )
+
+        self.assertEqual(response.status, "READY")
+        self.assertEqual(learn_mock.call_count, 1)
+        self.assertFalse(any("[NOMINA_STRICT]" in warning for warning in response.warnings))
+
 
 if __name__ == "__main__":
     unittest.main()
+
