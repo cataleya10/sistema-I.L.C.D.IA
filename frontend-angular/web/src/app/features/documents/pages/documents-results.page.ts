@@ -641,6 +641,7 @@ import { ReplicaCalibrationPanelComponent } from '../../../shared/components/rep
 export class DocumentsResultsPage implements OnInit {
   private static readonly REPLICA_TUNING_STORAGE_KEY = 'documents.replicaPresetTuning.v1';
   private static readonly HIDDEN_FIELD_KEYS = new Set(['pago_detalle', 'texto_detectado']);
+  private static readonly TABLE_VISIBLE_TYPES = new Set(['GENERICO', 'FACTURA', 'PAGO']);
   document: DocumentDetail | null = null;
   displayFields: DocumentField[] = [];
   search = '';
@@ -741,11 +742,15 @@ export class DocumentsResultsPage implements OnInit {
     const onlyTableMode = this.isAdvancedNominaTableOnlyMode(document);
     const template = DOCUMENT_FIELD_TEMPLATES[document.document_type];
     if (!template) {
-      const visibleFields = document.fields.filter((field) => !this.isHiddenField(field.key));
+      const visibleFields = document.fields.filter(
+        (field) => !this.isHiddenField(field.key, document.document_type)
+      );
       return onlyTableMode ? this.keepOnlyTableField(visibleFields) : visibleFields;
     }
     const fieldMap = new Map(document.fields.map((field) => [field.key.toLowerCase(), field]));
-    const mappedFromTemplate = template.map((field) => {
+    const mappedFromTemplate = template
+      .filter((field) => !this.isHiddenField(field.key, document.document_type))
+      .map((field) => {
       const resolved = fieldMap.get(field.key.toLowerCase());
       return {
         key: field.key,
@@ -764,7 +769,9 @@ export class DocumentsResultsPage implements OnInit {
     }
     const templateKeys = new Set(template.map((field) => field.key.toLowerCase()));
     const extras = document.fields.filter(
-      (field) => !templateKeys.has(field.key.toLowerCase()) && !this.isHiddenField(field.key)
+      (field) =>
+        !templateKeys.has(field.key.toLowerCase()) &&
+        !this.isHiddenField(field.key, document.document_type)
     );
     const merged = [...mappedFromTemplate, ...extras];
     return onlyTableMode ? this.keepOnlyTableField(merged) : merged;
@@ -795,8 +802,16 @@ export class DocumentsResultsPage implements OnInit {
     return tableFields.length ? tableFields : fields;
   }
 
-  private isHiddenField(key: string | null | undefined): boolean {
-    return DocumentsResultsPage.HIDDEN_FIELD_KEYS.has(String(key ?? '').toLowerCase());
+  private isHiddenField(key: string | null | undefined, documentType?: string | null): boolean {
+    const normalizedKey = String(key ?? '').toLowerCase();
+    if (DocumentsResultsPage.HIDDEN_FIELD_KEYS.has(normalizedKey)) {
+      return true;
+    }
+    if (normalizedKey.startsWith('tabla_celdas')) {
+      const normalizedType = String(documentType ?? '').toUpperCase();
+      return !DocumentsResultsPage.TABLE_VISIBLE_TYPES.has(normalizedType);
+    }
+    return false;
   }
 
   get textoDetectadoField(): DocumentField | undefined {

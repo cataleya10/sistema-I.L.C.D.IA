@@ -58,4 +58,25 @@ describe('DocumentsResultsPage', () => {
   it('should initialise with empty displayFields', () => {
     expect(component.displayFields).toEqual([]);
   });
+
+  it('should hide tabla_celdas for personal documents', () => {
+    const mapped = (component as any).mapDisplayFields({
+      document_type: 'INE',
+      fields: [
+        { key: 'nombre', label: 'Nombre', value: 'JUAN', corrected_value: null, confidence: 0.9, valid: true, validation_errors: [] },
+        { key: 'tabla_celdas', label: 'Tabla celdas', value: '{"rows":[["A","B"]]}', corrected_value: null, confidence: 0.9, valid: true, validation_errors: [] },
+      ],
+    });
+    expect(mapped.some((field: any) => String(field.key).toLowerCase().startsWith('tabla_celdas'))).toBeFalse();
+  });
+
+  it('should keep tabla_celdas for factura documents', () => {
+    const mapped = (component as any).mapDisplayFields({
+      document_type: 'FACTURA',
+      fields: [
+        { key: 'tabla_celdas', label: 'Tabla celdas', value: '{"rows":[["A","B"]]}', corrected_value: null, confidence: 0.9, valid: true, validation_errors: [] },
+      ],
+    });
+    expect(mapped.some((field: any) => String(field.key).toLowerCase() === 'tabla_celdas')).toBeTrue();
+  });
 });

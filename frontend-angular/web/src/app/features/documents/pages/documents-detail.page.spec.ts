@@ -53,4 +53,25 @@ describe('DocumentsDetailPage', () => {
     expect(component.editMode).toBeFalse();
     expect(component.message).toBeNull();
   });
+
+  it('should hide tabla_celdas for personal documents', () => {
+    const mapped = (component as any).mapDisplayFields({
+      document_type: 'CONSTANCIA_SITUACION_FISCAL',
+      fields: [
+        { key: 'rfc', label: 'RFC', value: 'GACE010425NW6', corrected_value: null, confidence: 0.9, valid: true, validation_errors: [] },
+        { key: 'tabla_celdas_2', label: 'Tabla detectada #2', value: '{"rows":[["A","B"]]}', corrected_value: null, confidence: 0.9, valid: true, validation_errors: [] },
+      ],
+    });
+    expect(mapped.some((field: any) => String(field.key).toLowerCase().startsWith('tabla_celdas'))).toBeFalse();
+  });
+
+  it('should keep tabla_celdas for factura documents', () => {
+    const mapped = (component as any).mapDisplayFields({
+      document_type: 'FACTURA',
+      fields: [
+        { key: 'tabla_celdas', label: 'Tabla celdas', value: '{"rows":[["A","B"]]}', corrected_value: null, confidence: 0.9, valid: true, validation_errors: [] },
+      ],
+    });
+    expect(mapped.some((field: any) => String(field.key).toLowerCase() === 'tabla_celdas')).toBeTrue();
+  });
 });
