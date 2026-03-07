@@ -1,4 +1,5 @@
 .venv/
+.dotnet/
 ai-engine-python/.venv312/
 ai-engine-python/logs/
 ai-engine-python/app/**/__pycache__/
