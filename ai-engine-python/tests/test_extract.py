@@ -1155,6 +1155,34 @@ class ExtractPipelineTests(unittest.TestCase):
         data = _field_map(fields)
         self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
 
+    def test_extract_acta_nombre_ignores_sexo_noise_when_labels_are_merged(self):
+        ocr_text = "\n".join(
+            [
+                "ACTA DE NACIMIENTO",
+                "Nombre(s):ERWIN GUSTAVO",
+                "Primer Apellido GARCIA",
+                "SegundoApellida CAMPOS",
+                "SexaHOMBRE",
+                "FechadeNacimienta25/04/2001",
+                "Lugar de Nacimiento: JONUTA TABASCO",
+            ]
+        )
+        ocr_boxes = [
+            _box("ACTA DE NACIMIENTO", 10),
+            _box("Nombre(s):ERWIN GUSTAVO", 40),
+            _box("Primer Apellido GARCIA", 70),
+            _box("SegundoApellida CAMPOS", 100),
+            _box("SexaHOMBRE", 130),
+            _box("FechadeNacimienta25/04/2001", 160),
+            _box("Lugar de Nacimiento: JONUTA TABASCO", 190),
+        ]
+        fields = _run_sync(extract_fields("ACTA_NACIMIENTO", ocr_text, ocr_boxes))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
+        self.assertEqual(data.get("sexo"), "H")
+        self.assertEqual(data.get("fecha_nacimiento"), "25/04/2001")
+
     def test_extract_acta_nombre_when_label_and_value_are_split_lines(self):
         ocr_text = "\n".join(
             [

@@ -62,15 +62,30 @@ function Stop-PortListeners {
     }
 }
 
+function Resolve-AiPython {
+    param([string]$rootPath)
+
+    $candidates = @(
+        (Join-Path $rootPath "ai-engine-python\.venv312\Scripts\python.exe"),
+        (Join-Path $rootPath "ai-engine-python\.venv\Scripts\python.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\Python\Python312\python.exe")
+    )
+
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path $candidate)) {
+            return $candidate
+        }
+    }
+
+    return "python"
+}
+
 function Invoke-AiPreflight {
     param([string]$rootPath)
     Write-Host "Running AI preflight checks..." -ForegroundColor Cyan
     Push-Location (Join-Path $rootPath "ai-engine-python")
     try {
-        $venvPython = Join-Path $rootPath "ai-engine-python\.venv\Scripts\python.exe"
-        if (-not (Test-Path $venvPython)) {
-            $venvPython = "py -3"
-        }
+        $venvPython = Resolve-AiPython -rootPath $rootPath
         & $venvPython -c "import ast, pathlib; [ast.parse(p.read_text(encoding='utf-8-sig')) for p in pathlib.Path('app/pipelines/extract').glob('*.py')]; print('extract package syntax ok')"
         if ($LASTEXITCODE -ne 0) {
             throw "Python compile check failed."
@@ -117,10 +132,7 @@ Invoke-ApiPreflight -rootPath $root
 Write-Host "Starting IA Engine..." -ForegroundColor Cyan
 $aiLog = Join-Path $logs "ai-engine.log"
 $aiErr = Join-Path $logs "ai-engine.err.log"
-$venvPython = Join-Path $root "ai-engine-python\.venv\Scripts\python.exe"
-if (-not (Test-Path $venvPython)) {
-    $venvPython = "python"
-}
+$venvPython = Resolve-AiPython -rootPath $root
 $ai = Start-Process powershell -PassThru -ArgumentList @(
     '-NoProfile',
     '-ExecutionPolicy',

@@ -660,7 +660,12 @@ async def process_document(file, document_id: str, source: str, options: str | N
         t1 = time.time()
         ocr_text, ocr_boxes = await run_ocr(images)
         logger.info("[PERF] OCR (%d pages): %.1fms", len(images), (time.time() - t1) * 1000)
-        ocr_engine = "paddleocr" if ocr_text else "none"
+        if ocr_boxes:
+            ocr_engine = str(ocr_boxes[0].get("engine") or "paddleocr")
+        elif ocr_text:
+            ocr_engine = "ocr"
+        else:
+            ocr_engine = "none"
         if extracted_text:
             if not ocr_text:
                 ocr_text = extracted_text

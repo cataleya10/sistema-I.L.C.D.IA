@@ -55,8 +55,16 @@ def _get_rapid() -> Any | None:
 def warm_up() -> None:
     """Pre-load OCR models so the first request doesn't pay the startup cost."""
     logger.info("OCR warm-up: pre-loading models...")
-    _get_ocr()
-    _get_rapid()
+    paddle = _get_ocr()
+    rapid = _get_rapid()
+    if paddle is None and rapid is None:
+        logger.warning("OCR warm-up: no OCR backend available (PaddleOCR/RapidOCR unavailable)")
+    elif paddle is None:
+        logger.info("OCR warm-up: using RapidOCR backend")
+    elif rapid is None:
+        logger.info("OCR warm-up: using PaddleOCR backend")
+    else:
+        logger.info("OCR warm-up: using PaddleOCR + RapidOCR backends")
     logger.info("OCR warm-up: done")
 
 
@@ -87,7 +95,15 @@ def _ocr_single_page(ocr: Any, rapid: Any, image_array: Any, page_index: int) ->
             confidence = item[2]
             text_str = str(text)
             texts.append(text_str.upper())
-            boxes.append({"text": text_str, "confidence": confidence, "bbox": box, "page": page_index})
+            boxes.append(
+                {
+                    "text": text_str,
+                    "confidence": confidence,
+                    "bbox": box,
+                    "page": page_index,
+                    "engine": "rapidocr",
+                }
+            )
         return texts, boxes
 
     for line in result:
@@ -105,7 +121,15 @@ def _ocr_single_page(ocr: Any, rapid: Any, image_array: Any, page_index: int) ->
             if not text:
                 continue
             texts.append(text.upper())
-            boxes.append({"text": text, "confidence": confidence, "bbox": box, "page": page_index})
+            boxes.append(
+                {
+                    "text": text,
+                    "confidence": confidence,
+                    "bbox": box,
+                    "page": page_index,
+                    "engine": "paddleocr",
+                }
+            )
     return texts, boxes
 
 

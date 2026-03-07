@@ -123,25 +123,65 @@ def _extract_acta_from_boxes(ocr_boxes):
             return None
         return cleaned
 
-    nombre = _extract_label_value(lines, "NOMBRE", stop_labels=["FECHA", "FOLIO", "LIBRO", "TOMO"])
-    if nombre:
-        upper_nombre = nombre.upper()
-        # Reject column-header noise: single words that are Acta table labels
-        _acta_label_single_words = {"PRIMER", "SEGUNDO", "DATOS", "PERSONA", "REGISTRADA", "APELLIDOS"}
-        if (
-            "APELLIDO" not in upper_nombre
-            and not upper_nombre.endswith(":")
-            and upper_nombre.strip() not in _acta_label_single_words
-        ):
-            result["nombre"] = {"value": nombre}
-    else:
+    def _is_valid_acta_name(value: str | None) -> bool:
+        if not value:
+            return False
+        upper = _normalize_name(value).upper()
+        if not upper or re.search(r"\d", upper):
+            return False
+        # Reject common header/label noise that OCR merges into "nombre".
+        banned_fragments = {
+            "SEXO",
+            "FECHA",
+            "NACIMIENTO",
+            "LUGAR",
+            "REGISTRO",
+            "PERSONA REGISTRADA",
+            "DATOS DE LA",
+        }
+        if any(fragment in upper for fragment in banned_fragments):
+            return False
+        compact = _label_key(upper)
+        return len(compact) >= 4
+
+    # Strong path: recover all 3 pieces even when OCR merges labels
+    # (e.g. SEGUNDOAPELLIDA, SEXAHOMBRE).
+    if "nombre" not in result:
+        structured = re.search(
+            r"N[O0]MBRE(?:\(S\))?\s*[:\-]?\s*([A-Z ]+?)\s+PRIMER\s*APELLID[OA]\s*[:\-]?\s*([A-Z ]+?)\s+SEGUND[OA]\s*APELLID[OA]\s*[:\-]?\s*([A-Z ]+?)(?:\s+SEX[OA0]|\s+FECH|\s+LUGAR|$)",
+            full_text,
+        )
+        if structured:
+            parts = [
+                _clean_name_piece(structured.group(1)),
+                _clean_name_piece(structured.group(2)),
+                _clean_name_piece(structured.group(3)),
+            ]
+            parts = [part for part in parts if part]
+            if parts:
+                candidate = " ".join(dict.fromkeys(parts))
+                if _is_valid_acta_name(candidate):
+                    result["nombre"] = {"value": candidate}
+
+    nombre = _extract_label_value(lines, "NOMBRE(S)", stop_labels=["PRIMER", "SEGUNDO", "SEXO", "FECHA"])
+    if not nombre:
+        nombre = _extract_label_value(lines, "NOMBRE", stop_labels=["FECHA", "FOLIO", "LIBRO", "TOMO"])
+    if nombre and "nombre" not in result:
+        cleaned_nombre = _clean_name_piece(nombre)
+        if cleaned_nombre and _is_valid_acta_name(cleaned_nombre):
+            result["nombre"] = {"value": cleaned_nombre}
+    elif "nombre" not in result:
         match = re.search(r"DATOS DE LA PERSONA REGISTRADA\s+(.+?)\s+NOMBRE", full_text)
         if match:
-            result["nombre"] = {"value": match.group(1).strip()}
+            candidate = _clean_name_piece(match.group(1).strip())
+            if _is_valid_acta_name(candidate):
+                result["nombre"] = {"value": candidate}
         else:
             match = re.search(r"PERSONA REGISTRADA\s+(.+?)\s+SEXO", full_text)
             if match:
-                result["nombre"] = {"value": match.group(1).strip()}
+                candidate = _clean_name_piece(match.group(1).strip())
+                if _is_valid_acta_name(candidate):
+                    result["nombre"] = {"value": candidate}
     if "nombre" not in result:
         section_idx = next((i for i, line in enumerate(lines) if "DATOS DE LA PERSONA REGISTRADA" in line.get("text", "").upper()), None)
         if section_idx is not None:
@@ -157,36 +197,68 @@ def _extract_acta_from_boxes(ocr_boxes):
                 if len(name_lines) >= 3:
                     break
             if name_lines:
-                result["nombre"] = {"value": " ".join(name_lines)}
+                candidate = " ".join(name_lines)
+                if _is_valid_acta_name(candidate):
+                    result["nombre"] = {"value": candidate}
         if "nombre" not in result:
             nombre_part = _clean_name_piece(_extract_label_value(lines, "NOMBRE(S)", stop_labels=["PRIMER", "SEGUNDO", "SEXO", "FECHA"]))
             primer_apellido = _clean_name_piece(_extract_label_value(lines, "PRIMER APELLIDO", stop_labels=["SEGUNDO", "SEXO", "FECHA"]))
             segundo_apellido = _clean_name_piece(_extract_label_value(lines, "SEGUNDO APELLIDO", stop_labels=["SEXO", "FECHA"]))
+            if not primer_apellido:
+                primer_match = re.search(
+                    r"\bPRIMER\s*APELLID[OA]\s*[:\-]?\s*([A-Z ]{2,})",
+                    full_text,
+                )
+                if primer_match:
+                    primer_apellido = _clean_name_piece(primer_match.group(1))
+            if not segundo_apellido:
+                segundo_match = re.search(
+                    r"\bSEGUND[OA]\s*APELLID[OA]\s*[:\-]?\s*([A-Z ]{2,})",
+                    full_text,
+                )
+                if segundo_match:
+                    segundo_apellido = _clean_name_piece(segundo_match.group(1))
             parts = [p for p in [nombre_part, primer_apellido, segundo_apellido] if p]
             # Keep order but remove duplicate chunks to avoid
             # "NOMBRE APELLIDO NOMBRE APELLIDO" artifacts.
             parts = list(dict.fromkeys(parts))
             if parts:
-                result["nombre"] = {"value": " ".join(parts)}
+                candidate = " ".join(parts)
+                if _is_valid_acta_name(candidate):
+                    result["nombre"] = {"value": candidate}
             else:
                 label_line = _find_label_line(lines, "NOMBRE")
                 if label_line:
                     below = _collect_below(lines, label_line, stop_labels=["SEXO", "FECHA", "LUGAR", "MUNICIPIO"], max_lines=2)
                     if below:
                         candidate = " ".join(line.get("text", "").strip() for line in below if line.get("text"))
-                        candidate = candidate.strip()
-                        if candidate:
+                        candidate = _clean_name_piece(candidate.strip())
+                        if _is_valid_acta_name(candidate):
                             result["nombre"] = {"value": candidate}
 
-    sexo = _extract_label_value(lines, "SEXO", stop_labels=["FECHA", "LUGAR", "MUNICIPIO"])
-    if sexo:
-        normalized = _normalize_sex(sexo)
+    sexo_inline = re.search(r"\bSEX[OA0]\s*[:\-]?\s*(HOMBRE|MUJER|H|M)\b", full_text)
+    if sexo_inline:
+        normalized = _normalize_sex(sexo_inline.group(1))
         if normalized in {"H", "M"}:
             result["sexo"] = {"value": normalized}
+    if "sexo" not in result:
+        sexo = _extract_label_value(lines, "SEXO", stop_labels=["FECHA", "LUGAR", "MUNICIPIO"])
+        if sexo:
+            normalized = _normalize_sex(sexo)
+            if normalized in {"H", "M"}:
+                result["sexo"] = {"value": normalized}
 
-    fecha_nacimiento = _extract_label_value(
-        lines, "FECHA DE NACIMIENTO", stop_labels=["SEXO", "LUGAR", "MUNICIPIO"], value_regex=DATE_PATTERN
+    fecha_nacimiento = None
+    fecha_inline = re.search(
+        r"\bFECH[A-Z]{0,10}NACIMI[A-Z]{0,12}\s*[:\-]?\s*(\d{2}[/-]\d{2}[/-]\d{4})",
+        full_text,
     )
+    if fecha_inline:
+        fecha_nacimiento = fecha_inline.group(1)
+    if not fecha_nacimiento:
+        fecha_nacimiento = _extract_label_value(
+            lines, "FECHA DE NACIMIENTO", stop_labels=["SEXO", "LUGAR", "MUNICIPIO"], value_regex=DATE_PATTERN
+        )
     if fecha_nacimiento:
         result["fecha_nacimiento"] = {"value": fecha_nacimiento}
     else:
@@ -457,6 +529,13 @@ def _extract_acta_from_boxes(ocr_boxes):
             normalized_numero_acta = _normalize_value_for_key("numero_acta", match.group(1))
             if normalized_numero_acta:
                 result["numero_acta"] = {"value": normalized_numero_acta}
+
+    if "nombre" in result:
+        candidate = _normalize_name(str(result["nombre"].get("value", "")))
+        if _is_valid_acta_name(candidate):
+            result["nombre"] = {"value": candidate}
+        else:
+            result.pop("nombre", None)
 
     return result
 

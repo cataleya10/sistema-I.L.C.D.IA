@@ -2,7 +2,8 @@
   "curp": [
     "CURP",
     "CLAVE UNICA DE REGISTRO DE POBLACION",
-    "CLAVE"
+    "CLAVE",
+    "CUNR"
   ],
   "nombre": [
     "NOMBRE",
@@ -105,11 +106,13 @@
     "VIGENCIA",
     "VIGENTE HASTA",
     "VENCE",
-    "EMISON2019MGENCA"
+    "EMISON2019MGENCA",
+    "EMISION2019MGENCA"
   ],
   "seccion": [
     "SECCION",
-    "SECC"
+    "SECC",
+    "MEX1934045026"
   ],
   "regimen": [
     "REGIMEN FISCAL",
