@@ -86,6 +86,10 @@ function Invoke-AiPreflight {
     Push-Location (Join-Path $rootPath "ai-engine-python")
     try {
         $venvPython = Resolve-AiPython -rootPath $rootPath
+        & $venvPython "tools/check_runtime.py"
+        if ($LASTEXITCODE -ne 0) {
+            throw "Python runtime/OCR backend check failed."
+        }
         & $venvPython -c "import ast, pathlib; [ast.parse(p.read_text(encoding='utf-8-sig')) for p in pathlib.Path('app/pipelines/extract').glob('*.py')]; print('extract package syntax ok')"
         if ($LASTEXITCODE -ne 0) {
             throw "Python compile check failed."

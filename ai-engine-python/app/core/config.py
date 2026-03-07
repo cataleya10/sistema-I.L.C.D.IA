@@ -50,5 +50,10 @@ class Settings(BaseModel):
     payroll_strict_max_dominant_surname_ratio: float = _env_float(
         "PAYROLL_STRICT_MAX_DOMINANT_SURNAME_RATIO", 0.55
     )
+    enforce_python_runtime: bool = _env_bool("ENFORCE_PYTHON_RUNTIME", True)
+    required_python_min: str = os.getenv("REQUIRED_PYTHON_MIN", "3.12")
+    required_python_max_exclusive: str = os.getenv("REQUIRED_PYTHON_MAX_EXCLUSIVE", "3.13")
+    require_ocr_backend: bool = _env_bool("REQUIRE_OCR_BACKEND", True)
+    acta_sanity_guards_enabled: bool = _env_bool("ACTA_SANITY_GUARDS_ENABLED", True)
 
 settings = Settings()

@@ -589,6 +589,119 @@ def _postprocess_fields(doc_type: str, fields: list[dict]) -> list[dict]:
     return cleaned
 
 
+_ACTA_NAME_NOISE_TOKENS = {
+    "SEXO",
+    "FECHA",
+    "NACIMIENTO",
+    "LUGAR",
+    "REGISTRO",
+    "ACTA",
+    "PERSONA REGISTRADA",
+    "DATOS DE LA",
+}
+
+_ACTA_LOCATION_NOISE_TOKENS = {
+    "SEXO",
+    "FECHA",
+    "ACTA DE NACIMIENTO",
+    "DATOS DE LA PERSONA",
+    "PERSONA REGISTRADA",
+}
+
+
+def _mark_field_invalid(field: dict, error: str, confidence_cap: float = 0.55) -> None:
+    field["valid"] = False
+    current_conf = float(field.get("confidence", 0.0) or 0.0)
+    field["confidence"] = min(current_conf, confidence_cap) if current_conf else confidence_cap
+    errors = field.get("validation_errors")
+    if not isinstance(errors, list):
+        errors = []
+    if error not in errors:
+        errors.append(error)
+    field["validation_errors"] = errors
+
+
+def _is_plausible_ddmmyyyy(value: str) -> bool:
+    match = re.fullmatch(r"(\d{2})/(\d{2})/(\d{4})", value)
+    if not match:
+        return False
+    day = int(match.group(1))
+    month = int(match.group(2))
+    year = int(match.group(3))
+    if not (1 <= day <= 31 and 1 <= month <= 12):
+        return False
+    current_year = time.localtime().tm_year
+    return 1900 <= year <= current_year + 1
+
+
+def _apply_acta_sanity_guards(fields: list[dict]) -> tuple[list[dict], list[str]]:
+    if not settings.acta_sanity_guards_enabled:
+        return fields, []
+
+    warnings: list[str] = []
+    for field in fields:
+        key = str(field.get("key", "") or "")
+        value_raw = field.get("value")
+        if value_raw in {None, ""}:
+            continue
+        value = str(value_raw).strip()
+        upper = value.upper()
+
+        if key == "nombre":
+            cleaned = re.sub(r"\s+", " ", re.sub(r"[^A-Z ]", " ", upper)).strip()
+            has_noise = any(token in cleaned for token in _ACTA_NAME_NOISE_TOKENS)
+            has_digits = bool(re.search(r"\d", cleaned))
+            if has_noise or has_digits or len(re.sub(r"[^A-Z]", "", cleaned)) < 4:
+                _mark_field_invalid(field, "Nombre con ruido OCR de etiquetas (ACTA).", confidence_cap=0.45)
+                warnings.append("Guardia ACTA: nombre invalido por ruido OCR.")
+            else:
+                field["value"] = cleaned
+
+        elif key == "sexo":
+            normalized = upper.replace("0", "O")
+            if normalized in {"HOMBRE", "H"}:
+                field["value"] = "H"
+            elif normalized in {"MUJER", "M"}:
+                field["value"] = "M"
+            else:
+                _mark_field_invalid(field, "Sexo invalido en ACTA (esperado H/M).", confidence_cap=0.45)
+                warnings.append("Guardia ACTA: sexo invalido.")
+
+        elif key in {"fecha_nacimiento", "fecha_registro"}:
+            normalized = value.replace("-", "/")
+            if not _is_plausible_ddmmyyyy(normalized):
+                _mark_field_invalid(field, f"{key} invalida en ACTA.", confidence_cap=0.45)
+                warnings.append(f"Guardia ACTA: {key} invalida.")
+            else:
+                field["value"] = normalized
+
+        elif key in {"lugar_nacimiento", "municipio_registro", "entidad_registro"}:
+            cleaned = re.sub(r"\s+", " ", upper).strip()
+            if any(token in cleaned for token in _ACTA_LOCATION_NOISE_TOKENS):
+                _mark_field_invalid(field, f"{key} contiene ruido de encabezados en ACTA.", confidence_cap=0.45)
+                warnings.append(f"Guardia ACTA: {key} invalido por ruido OCR.")
+            else:
+                field["value"] = cleaned
+
+        elif key in {"folio", "numero_acta"}:
+            if not re.fullmatch(r"[A-Z0-9-]{1,12}", upper):
+                _mark_field_invalid(field, f"{key} invalido en ACTA.", confidence_cap=0.45)
+                warnings.append(f"Guardia ACTA: {key} invalido.")
+            else:
+                field["value"] = upper
+
+    if warnings:
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for warning in warnings:
+            if warning in seen:
+                continue
+            seen.add(warning)
+            deduped.append(warning)
+        warnings = deduped
+    return fields, warnings
+
+
 async def process_document(file, document_id: str, source: str, options: str | None):
     start = time.time()
     options_data = {}
@@ -619,6 +732,7 @@ async def process_document(file, document_id: str, source: str, options: str | N
     ocr_engine = "none"
     doc_type_warning = None
     fields: list[dict] = []
+    acta_guard_warnings: list[str] = []
 
     use_fastpath = bool(
         extracted_text
@@ -755,6 +869,9 @@ async def process_document(file, document_id: str, source: str, options: str | N
                 doc_type, document_id,
             )
 
+    if doc_type == "ACTA_NACIMIENTO":
+        fields, acta_guard_warnings = _apply_acta_sanity_guards(fields)
+
     critical_keys = set(CRITICAL_FIELDS.get(doc_type, []))
     for field in fields:
         if field.get("key") in critical_keys and field.get("valid") and field.get("confidence", 0) < 0.8:
@@ -774,6 +891,8 @@ async def process_document(file, document_id: str, source: str, options: str | N
         warnings.append(f"Tipo forzado manualmente: {forced_doc_type}.")
     if doc_type_warning:
         warnings.append(doc_type_warning)
+    if acta_guard_warnings:
+        warnings.extend(acta_guard_warnings)
     include_ocr_text = bool(options_data.get("return_ocr_text"))
     include_boxes = bool(options_data.get("return_boxes"))
     if not ocr_text:
@@ -815,6 +934,20 @@ async def process_document(file, document_id: str, source: str, options: str | N
         warnings.extend(strict_warnings)
     if strict_hard_fail:
         status = "NEEDS_REVIEW"
+
+    populated_fields = sum(1 for field in fields if _has_field_value(field))
+    invalid_fields = sum(1 for field in fields if field.get("valid") is False)
+    logger.info(
+        "Extraction summary doc_id=%s type=%s status=%s populated=%d invalid=%d required=%d missing=%d ocr=%s",
+        document_id,
+        doc_type,
+        status,
+        populated_fields,
+        invalid_fields,
+        len(required),
+        len(missing),
+        ocr_engine,
+    )
 
     if warnings:
         deduped_warnings: list[str] = []

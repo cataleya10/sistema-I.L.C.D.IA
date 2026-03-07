@@ -1,6 +1,7 @@
 import logging
 import time
 import uuid
+import sys
 from contextvars import ContextVar
 
 from fastapi import FastAPI, Request, Response
@@ -134,6 +135,21 @@ async def _global_exception_handler(request: Request, exc: Exception):
 
 @app.on_event("startup")
 async def validate_runtime_security():
+    if settings.enforce_python_runtime:
+        min_major, min_minor = (int(part) for part in settings.required_python_min.split(".", 1))
+        max_major, max_minor = (int(part) for part in settings.required_python_max_exclusive.split(".", 1))
+        current = (sys.version_info.major, sys.version_info.minor)
+        if not ((min_major, min_minor) <= current < (max_major, max_minor)):
+            raise RuntimeError(
+                f"Python runtime {current[0]}.{current[1]} not supported. "
+                f"Expected >= {settings.required_python_min} and < {settings.required_python_max_exclusive}."
+            )
+
+    if settings.require_ocr_backend:
+        from app.pipelines.ocr import PaddleOCR, RapidOCR
+        if PaddleOCR is None and RapidOCR is None:
+            raise RuntimeError("No OCR backend available. Install PaddleOCR or RapidOCR dependencies.")
+
     if settings.app_env in {"production", "prod"}:
         api_key = (settings.api_key or "").strip()
         weak = (not api_key) or ("CHANGE_ME" in api_key.upper()) or (len(api_key) < 24)

@@ -131,6 +131,40 @@ class DocumentProcessorTests(unittest.TestCase):
         self.assertEqual(learn_mock.call_count, 1)
         self.assertNotIn("Campos críticos inválidos", " ".join(response.warnings))
 
+    def test_process_document_needs_review_when_acta_nombre_has_header_noise(self):
+        response, learn_mock = self._run_case(
+            [
+                _field("nombre", "SEXOHOMBRE"),
+                _field("fecha_nacimiento", "01/01/2000"),
+                _field("folio", "1234"),
+                _field("numero_acta", "5678"),
+            ],
+            doc_type="ACTA_NACIMIENTO",
+            critical_fields={"ACTA_NACIMIENTO": ["nombre", "fecha_nacimiento", "folio", "numero_acta"]},
+        )
+
+        self.assertEqual(response.status, "NEEDS_REVIEW")
+        self.assertEqual(learn_mock.call_count, 1)
+        self.assertIn("Campos críticos inválidos: nombre", " ".join(response.warnings))
+        self.assertTrue(any("Guardia ACTA" in warning for warning in response.warnings))
+
+    def test_process_document_allows_disabling_acta_sanity_guards(self):
+        with patch.object(dp.settings, "acta_sanity_guards_enabled", False):
+            response, learn_mock = self._run_case(
+                [
+                    _field("nombre", "SEXOHOMBRE"),
+                    _field("fecha_nacimiento", "01/01/2000"),
+                    _field("folio", "1234"),
+                    _field("numero_acta", "5678"),
+                ],
+                doc_type="ACTA_NACIMIENTO",
+                critical_fields={"ACTA_NACIMIENTO": ["nombre", "fecha_nacimiento", "folio", "numero_acta"]},
+            )
+
+        self.assertEqual(response.status, "READY")
+        self.assertEqual(learn_mock.call_count, 1)
+        self.assertFalse(any("Guardia ACTA" in warning for warning in response.warnings))
+
     def test_process_document_uses_forced_document_type(self):
         response, learn_mock = self._run_case(
             [_field("tabla_celdas", '{"rows":[["cuenta","importe"],["123","100.00"]]}')],
