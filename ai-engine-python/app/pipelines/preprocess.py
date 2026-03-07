@@ -442,10 +442,21 @@ def _has_sufficient_text_layer(text: str) -> bool:
 
 # Keywords that indicate a document likely contains structured tables
 # (FACTURA, nómina, PAGO). If absent, we skip pdfplumber in the fast path.
+# Cover both SAT/CFDI facturas and nómina/payroll documents.
 _TABLE_CONTENT_KEYWORDS: frozenset[str] = frozenset({
-    "IMPORTE", "CONCEPTO", "RFC RECEPTOR", "RFC EMISOR", "FOLIO FISCAL",
-    "CLAVE SAT", "UNIDAD SAT", "SUBTOTAL", "TOTAL IMPUESTOS", "CFDI",
-    "NOMBRE\tIMPORTE", "PERCEPCIONES", "DEDUCCIONES", "NOMINA", "NÓMINA",
+    # CFDI / SAT factura
+    "IMPORTE", "CONCEPTO", "DESCRIPCION", "DESCRIPCIÓN",
+    "RFC RECEPTOR", "RFC EMISOR", "RFC DEL RECEPTOR", "RFC DEL EMISOR",
+    "FOLIO FISCAL", "CLAVE SAT", "UNIDAD SAT", "VALOR UNITARIO",
+    "SUBTOTAL", "TOTAL IMPUESTOS", "CFDI", "COMPROBANTE FISCAL",
+    "CANTIDAD", "PRECIO UNITARIO", "IVA", "RETENCIÓN", "RETENCION",
+    "CLAVE PROD", "TRASLADO",
+    # Nómina / payroll
+    "PERCEPCIONES", "DEDUCCIONES", "NOMINA", "NÓMINA",
+    "NOMBRE IMPORTE", "SUELDO", "SALARIO", "QUINCENA",
+    "RFC TRABAJADOR", "NETO A PAGAR", "TOTAL PERCEPCIONES",
+    # Tabla genérica
+    "TOTAL", "BANCO", "CLABE",
 })
 
 
@@ -584,10 +595,9 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
     image = image.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3)).convert("RGB")
 
     # ── Multi-source table extraction for images ────────────────────
-    # Use img2table image-mode (OpenCV-based structural detection).
-    # _extract_tables_from_image_via_pdf is intentionally skipped: converting
-    # the image to PDF and running 3 more extractors adds 2-4 s of overhead
-    # while img2table image-mode already covers the same structures.
+    # Run img2table image-mode (OpenCV structural) + img2table PDF mode
+    # (converts image to PDF wrapper and re-runs structural detection).
+    # PDF mode can catch tables that image-mode misses with faint grid lines.
     img_tables: list[list[list[str]]] = []
 
     # img2table image-mode: OpenCV-based structural detection
@@ -595,6 +605,16 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
     if img2t_image_tables:
         logger.debug("img2table image found %d table(s)", len(img2t_image_tables))
         img_tables.extend(img2t_image_tables)
+
+    # img2table PDF mode: convert image → PDF bytes and re-run structural detection
+    try:
+        pdf_bytes_from_img = _image_to_pdf_bytes(image)
+        img2t_pdf_tables = _extract_tables_img2table_pdf(pdf_bytes_from_img, max_pages=1)
+        if img2t_pdf_tables:
+            logger.debug("img2table PDF mode found %d table(s) from image", len(img2t_pdf_tables))
+            img_tables.extend(img2t_pdf_tables)
+    except Exception:
+        logger.debug("img2table PDF mode skipped (image-to-PDF conversion failed)")
 
     img_tables = _deduplicate_tables(img_tables)
     logger.debug("Total unique tables from image: %d", len(img_tables))

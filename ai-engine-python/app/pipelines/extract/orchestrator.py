@@ -401,6 +401,37 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                         confidence=1.0,
                     )
                 )
+        # ── Fallback: si aún no hay tabla_celdas, usar pdf_tables directo ──
+        if not any(f.get("key") == "tabla_celdas" for f in fields) and pdf_tables:
+            _generic = _pdf_tables_to_generic_payloads(pdf_tables)
+            _existing_tabla = False
+            _fb_idx = 2
+            for _tbl in sorted(_generic, key=lambda t: t.get("row_count", 0), reverse=True):
+                if _tbl.get("row_count", 0) < 2:
+                    continue
+                if not _existing_tabla:
+                    fields.append(
+                        _make_field(
+                            "tabla_celdas",
+                            "Tabla detectada",
+                            json.dumps(_tbl, ensure_ascii=False),
+                            ocr_boxes,
+                            confidence=0.8,
+                        )
+                    )
+                    _existing_tabla = True
+                else:
+                    fields.append(
+                        _make_field(
+                            f"tabla_celdas_{_fb_idx}",
+                            f"Tabla detectada #{_fb_idx}",
+                            json.dumps(_tbl, ensure_ascii=False),
+                            ocr_boxes,
+                            confidence=0.75,
+                        )
+                    )
+                    _fb_idx += 1
+
         if document_type == "FACTURA":
             return fields
 

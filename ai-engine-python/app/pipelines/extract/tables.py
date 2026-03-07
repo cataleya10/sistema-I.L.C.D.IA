@@ -2934,10 +2934,18 @@ def _extract_payment_table_payload_impl(base_text_raw: str, ocr_boxes, pdf_table
         elif source == "text_lines":
             rows = _merge_payment_rows_with_backup(rows, rows_ocr)
         elif source == "pdf_structure":
-            # PDF structural tables are authoritative; use OCR as secondary
+            # PDF structural tables are authoritative; only merge backup when
+            # column count matches to avoid corrupting table structure.
             backup = rows_ocr if len(rows_ocr) >= 2 else rows_text
-            if len(backup) >= 2:
+            pdf_cols = len(rows[0]) if rows else 0
+            backup_cols = len(backup[0]) if backup else 0
+            if len(backup) >= 2 and pdf_cols > 0 and backup_cols == pdf_cols:
                 rows = _merge_payment_rows_with_backup(rows, backup)
+            elif len(backup) >= 2 and pdf_cols > 0 and backup_cols != pdf_cols:
+                logger.debug(
+                    "Skipping backup merge: pdf_cols=%d backup_cols=%d (incompatible)",
+                    pdf_cols, backup_cols,
+                )
         else:
             rows = _merge_payment_rows_with_backup(rows, rows_ocr)
 

@@ -947,7 +947,7 @@ def _extract_ine_from_boxes(ocr_boxes):
 
     sexo_line = _find_label_line(lines, "SEXO")
     if sexo_line:
-        inline = re.search(r"SEXO\\s*[:\\-]?\\s*([HM])", sexo_line.get("text", "").upper())
+        inline = re.search(r"SEXO\s*[:\-]?\s*([HM])", sexo_line.get("text", "").upper())
         if not inline:
             inline = re.search(r"SEX[O0]([HM])", sexo_line.get("text", "").upper())
         if inline:
