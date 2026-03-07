@@ -1268,6 +1268,10 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
     const fieldMap = new Map(
       document.fields.map((field) => [field.key.toLowerCase(), field])
     );
+    // Show only the fields defined in the template — no extras.
+    // This gives every document type the same clean campo/valor display
+    // as CONSTANCIA_SITUACION_FISCAL regardless of which extra fields
+    // the extractor may have produced internally.
     const mappedFromTemplate = template
       .filter((field) => !this.isHiddenField(field.key, document.document_type))
       .map((field) => {
@@ -1284,18 +1288,7 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
           corrected: resolved?.corrected ?? false
         };
       });
-    if (document.document_type === 'FACTURA') {
-      return onlyTableMode ? this.keepOnlyTableField(mappedFromTemplate) : mappedFromTemplate;
-    }
-
-    const templateKeys = new Set(template.map((field) => field.key.toLowerCase()));
-    const extras = document.fields.filter(
-      (field) =>
-        !templateKeys.has(field.key.toLowerCase()) &&
-        !this.isHiddenField(field.key, document.document_type)
-    );
-    const merged = [...mappedFromTemplate, ...extras];
-    return onlyTableMode ? this.keepOnlyTableField(merged) : merged;
+    return onlyTableMode ? this.keepOnlyTableField(mappedFromTemplate) : mappedFromTemplate;
   }
 
   private isAdvancedNominaTableOnlyMode(document: DocumentDetail): boolean {

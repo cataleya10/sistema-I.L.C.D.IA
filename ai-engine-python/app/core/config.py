@@ -30,7 +30,7 @@ class Settings(BaseModel):
     api_key: str | None = os.getenv("API_KEY")
     app_env: str = os.getenv("APP_ENV", "development").strip().lower()
     max_pages: int = int(os.getenv("MAX_PAGES", "100"))
-    pdf_render_dpi: int = int(os.getenv("PDF_RENDER_DPI", "300"))
+    pdf_render_dpi: int = int(os.getenv("PDF_RENDER_DPI", "200"))
     min_text_layer_chars: int = int(os.getenv("MIN_TEXT_LAYER_CHARS", "180"))
     min_text_layer_words: int = int(os.getenv("MIN_TEXT_LAYER_WORDS", "25"))
     enable_text_layer_short_circuit: bool = _env_bool("ENABLE_TEXT_LAYER_SHORT_CIRCUIT", True)

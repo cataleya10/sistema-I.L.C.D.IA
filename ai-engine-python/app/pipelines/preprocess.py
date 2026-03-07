@@ -440,6 +440,21 @@ def _has_sufficient_text_layer(text: str) -> bool:
     )
 
 
+# Keywords that indicate a document likely contains structured tables
+# (FACTURA, nómina, PAGO). If absent, we skip pdfplumber in the fast path.
+_TABLE_CONTENT_KEYWORDS: frozenset[str] = frozenset({
+    "IMPORTE", "CONCEPTO", "RFC RECEPTOR", "RFC EMISOR", "FOLIO FISCAL",
+    "CLAVE SAT", "UNIDAD SAT", "SUBTOTAL", "TOTAL IMPUESTOS", "CFDI",
+    "NOMBRE\tIMPORTE", "PERCEPCIONES", "DEDUCCIONES", "NOMINA", "NÓMINA",
+})
+
+
+def _text_likely_has_tables(text: str) -> bool:
+    """Return True if the text suggests the document contains structured tables."""
+    upper = (text or "").upper()
+    return any(kw in upper for kw in _TABLE_CONTENT_KEYWORDS)
+
+
 async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dict[str, Any]], list[list[list[str]]], list]:
     """Preprocess an uploaded document file.
 
@@ -504,16 +519,21 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
 
         if has_text:
             # Text layer is good — skip image rendering AND heavy parallel extractors.
-            # PyMuPDF find_tables() already ran per-page; only run pdfplumber on
-            # a limited page range as a complement.
-            table_pages = min(max_pages, 10)
-            loop = asyncio.get_event_loop()
-            plumber_tables = await loop.run_in_executor(
-                None, _extract_tables_pdfplumber, content, table_pages,
-            )
-            if plumber_tables:
-                logger.debug("pdfplumber found %d table(s) [text-fastpath, %d pages]", len(plumber_tables), table_pages)
-                pdf_tables.extend(plumber_tables)
+            # PyMuPDF find_tables() already ran per-page; only run pdfplumber when
+            # the text suggests the document contains structured tables (FACTURA/nómina).
+            # Personal docs (CURP, ACTA, INE, NSS, COMPROBANTE, CONSTANCIA) skip this
+            # for a significant speed boost.
+            if _text_likely_has_tables(extracted_text):
+                table_pages = min(max_pages, 10)
+                loop = asyncio.get_event_loop()
+                plumber_tables = await loop.run_in_executor(
+                    None, _extract_tables_pdfplumber, content, table_pages,
+                )
+                if plumber_tables:
+                    logger.debug("pdfplumber found %d table(s) [text-fastpath, %d pages]", len(plumber_tables), table_pages)
+                    pdf_tables.extend(plumber_tables)
+            else:
+                logger.debug("[PERF] text-fastpath: skipped pdfplumber (no table keywords detected)")
             pdf_tables = _deduplicate_tables(pdf_tables)
             logger.info("[PERF] text-layer shortcut: skipped image rendering for %d pages", max_pages)
             return [], extracted_text, text_layer_boxes, pdf_tables, []
@@ -564,25 +584,20 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
     image = image.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3)).convert("RGB")
 
     # ── Multi-source table extraction for images ────────────────────
-    # Apply the same multi-extractor strategy that PDFs receive so that
-    # images with tables get identical extraction quality.
+    # Use img2table image-mode (OpenCV-based structural detection).
+    # _extract_tables_from_image_via_pdf is intentionally skipped: converting
+    # the image to PDF and running 3 more extractors adds 2-4 s of overhead
+    # while img2table image-mode already covers the same structures.
     img_tables: list[list[list[str]]] = []
 
-    # 1) img2table image-mode: OpenCV-based structural detection
+    # img2table image-mode: OpenCV-based structural detection
     img2t_image_tables = _extract_tables_img2table_image(image)
     if img2t_image_tables:
         logger.debug("img2table image found %d table(s)", len(img2t_image_tables))
         img_tables.extend(img2t_image_tables)
 
-    # 2) Convert image → PDF, then run PyMuPDF + pdfplumber + img2table PDF
-    pdf_based_tables = _extract_tables_from_image_via_pdf(image)
-    if pdf_based_tables:
-        logger.debug("PDF-based extractors found %d table(s) from image", len(pdf_based_tables))
-        img_tables.extend(pdf_based_tables)
-
-    # Remove duplicates across extractors (same logic as PDF path)
     img_tables = _deduplicate_tables(img_tables)
-    logger.debug("Total unique tables from image after multi-source merge: %d", len(img_tables))
+    logger.debug("Total unique tables from image: %d", len(img_tables))
 
     # 3) Extract img2table grid structure (cell bounding boxes)
     #    This is used later to fill cell text from OCR boxes when img2table
