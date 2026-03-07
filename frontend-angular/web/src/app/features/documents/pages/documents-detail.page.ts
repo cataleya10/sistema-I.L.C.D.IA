@@ -1282,7 +1282,7 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
           value: resolved?.value ?? null,
           confidence: resolved?.confidence ?? 0,
           corrected_value: resolved?.corrected_value ?? null,
-          valid: resolved?.valid ?? true,
+          valid: resolved?.valid ?? false,
           validation_errors: resolved?.validation_errors ?? [],
           source: resolved?.source,
           corrected: resolved?.corrected ?? false

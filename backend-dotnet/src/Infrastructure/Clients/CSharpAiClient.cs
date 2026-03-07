@@ -400,6 +400,27 @@ public sealed class CSharpAiClient : IPythonAiClient
 
     private static IReadOnlyList<DocumentFieldResultDto> ExtractActaFields(string text)
     {
+        static string? NormalizeActaNumeric(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return null;
+            }
+
+            var digits = raw
+                .Trim()
+                .ToUpperInvariant()
+                .Replace("O", "0", StringComparison.Ordinal)
+                .Replace("I", "1", StringComparison.Ordinal)
+                .Replace("L", "1", StringComparison.Ordinal);
+            digits = Regex.Replace(digits, @"\D", string.Empty);
+            if (string.IsNullOrWhiteSpace(digits))
+            {
+                return null;
+            }
+            return digits;
+        }
+
         static string? CleanActaName(string? raw)
         {
             if (string.IsNullOrWhiteSpace(raw))
@@ -422,23 +443,213 @@ public sealed class CSharpAiClient : IPythonAiClient
             return value;
         }
 
-        var folio = FirstRegex(
+        static string? CleanActaPlace(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return null;
+            }
+
+            var value = Regex.Replace(raw.Trim(), @"\s+", " ");
+            value = Regex.Replace(value, @"[^A-Z ]", " ").Trim();
+            value = Regex.Replace(value, @"\s+", " ");
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+            if (value.Contains("LUGAR DE NACIMIENTO", StringComparison.OrdinalIgnoreCase)
+                || value.Contains("DATOS DE LA PERSONA REGISTRADA", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+            return value;
+        }
+
+        static string? FirstDateIn(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return null;
+            }
+
+            var match = DateRegex.Match(raw);
+            return match.Success ? match.Value : null;
+        }
+
+        static string? NormalizeSexo(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return null;
+            }
+
+            var value = raw.Trim().ToUpperInvariant();
+            if (value is "H" or "HOMBRE" or "MASCULINO")
+            {
+                return "HOMBRE";
+            }
+            if (value is "M" or "MUJER" or "FEMENINO")
+            {
+                return "MUJER";
+            }
+            return null;
+        }
+
+        var nombre = CleanActaName(AfterAnyLabel(text, "NOMBRE", "NOMBRE(S)"));
+        if (string.IsNullOrWhiteSpace(nombre))
+        {
+            var namesRowMatch = Regex.Match(
+                text,
+                @"(?:^|\n)\s*([A-Z]{2,}(?:\s+[A-Z]{2,}){0,3})\s+([A-Z]{2,})\s+([A-Z]{2,})\s*\r?\n\s*NOMBRE(?:\(S\))?\s+PRIMER\s+APELLIDO\s+SEGUNDO\s+APELLIDO",
+                RegexOptions.IgnoreCase | RegexOptions.Compiled);
+            if (namesRowMatch.Success)
+            {
+                nombre = CleanActaName(
+                    $"{namesRowMatch.Groups[1].Value} {namesRowMatch.Groups[2].Value} {namesRowMatch.Groups[3].Value}");
+            }
+        }
+        if (string.IsNullOrWhiteSpace(nombre))
+        {
+            var sectionMatch = Regex.Match(
+                text,
+                @"DATOS\s+DE\s+LA\s+PERSONA\s+REGISTRADA(?<chunk>[\s\S]{0,260}?)(?:SEXO|FECHA\s+DE\s+NACIMIENTO|LUGAR\s+DE\s+NACIMIENTO)",
+                RegexOptions.IgnoreCase | RegexOptions.Compiled);
+            if (sectionMatch.Success)
+            {
+                var chunk = sectionMatch.Groups["chunk"].Value;
+                var stopAt = Regex.Match(chunk, @"\b(?:HOMBRE|MUJER|MASCULINO|FEMENINO)\b|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}", RegexOptions.IgnoreCase);
+                if (stopAt.Success && stopAt.Index > 0)
+                {
+                    chunk = chunk[..stopAt.Index];
+                }
+                chunk = Regex.Replace(chunk, @"\b(?:NOMBRE(?:\(S\))?|PRIMER\s+APELLIDO|SEGUNDO\s+APELLIDO)\b", " ", RegexOptions.IgnoreCase);
+                chunk = Regex.Replace(chunk, @"[^A-Z ]", " ", RegexOptions.IgnoreCase);
+                chunk = Regex.Replace(chunk, @"\s+", " ").Trim();
+                if (!string.IsNullOrWhiteSpace(chunk))
+                {
+                    var tokens = chunk
+                        .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        .Where(t => t.Length >= 2)
+                        .Take(8)
+                        .ToArray();
+                    if (tokens.Length >= 2)
+                    {
+                        nombre = CleanActaName(string.Join(' ', tokens));
+                    }
+                }
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(nombre))
+        {
+            nombre = Regex.Replace(
+                nombre,
+                @"\b(?:HOMBRE|MUJER|MASCULINO|FEMENINO)\b[\s\S]*$|\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b[\s\S]*$",
+                string.Empty,
+                RegexOptions.IgnoreCase).Trim();
+            nombre = CleanActaName(nombre);
+        }
+
+        var folio = NormalizeActaNumeric(FirstRegex(
             text,
-            new Regex(@"\bFOLIO\s*[:\-]?\s*([0-9]{1,8})\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
-            1);
-        var numeroActa = FirstRegex(
+            new Regex(@"\bFOLIO\s*[:\-]?\s*([0-9OIL]{1,8})\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+            1));
+        var numeroActa = NormalizeActaNumeric(FirstRegex(
             text,
-            new Regex(@"\bNUMERO\s+DE\s+ACTA\s*[:\-]?\s*([0-9]{1,8})\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
-            1);
+            new Regex(@"\bNUMERO\s+DE\s+ACTA\s*[:\-]?\s*([0-9OIL]{1,8})\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+            1));
+        var sexoFilaMatch = Regex.Match(
+            text,
+            @"\b(?:HOMBRE|MUJER|MASCULINO|FEMENINO)\b\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+([A-Z ]{3,}?)\s+SEXO\s+FECHA\s+DE\s+NACIMIENTO\s+LUGAR\s+DE\s+NACIMIENTO",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        var fechaNacimiento = FirstDateIn(AfterAnyLabel(text, "FECHA DE NACIMIENTO", "FECHA NACIMIENTO"));
+        var lugarNacimiento = CleanActaPlace(AfterAnyLabel(text, "LUGAR DE NACIMIENTO", "LUGAR NACIMIENTO"));
+        var fechaRegistro = FirstDateIn(AfterAnyLabel(text, "FECHA DE REGISTRO", "FECHA REGISTRO"));
+        var municipioRegistro = CleanActaPlace(AfterAnyLabel(text, "MUNICIPIO DE REGISTRO", "MUNICIPIO REGISTRO"));
+        var entidadRegistro = CleanActaPlace(AfterAnyLabel(text, "ENTIDAD DE REGISTRO", "ENTIDAD REGISTRO"));
+        if (sexoFilaMatch.Success)
+        {
+            fechaNacimiento ??= sexoFilaMatch.Groups[1].Value;
+            lugarNacimiento ??= CleanActaPlace(sexoFilaMatch.Groups[2].Value);
+        }
+        if (string.IsNullOrWhiteSpace(fechaNacimiento) || string.IsNullOrWhiteSpace(lugarNacimiento))
+        {
+            var simpleSexoRowMatch = Regex.Match(
+                text,
+                @"\b(?:HOMBRE|MUJER|MASCULINO|FEMENINO)\b\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+([A-Z ]{3,}?)(?:\r?\n|\s+)SEXO\b",
+                RegexOptions.IgnoreCase | RegexOptions.Compiled);
+            if (simpleSexoRowMatch.Success)
+            {
+                fechaNacimiento ??= simpleSexoRowMatch.Groups[1].Value;
+                lugarNacimiento ??= CleanActaPlace(simpleSexoRowMatch.Groups[2].Value);
+            }
+        }
+
+        // Table fallback: "OFICIALIA FECHA DE REGISTRO LIBRO NUMERO [DE ACTA] 0001 20/08/2001 3 45"
+        var tableMatch = Regex.Match(
+            text,
+            @"OFICIALIA\s+FECHA\s+DE\s+REGISTRO\s+LIBRO\s+NUMERO(?:\s+DE\s+ACTA)?\s+([0-9OIL]{1,6})\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+([0-9OIL]{1,6})\s+([0-9OIL]{1,6})",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        if (tableMatch.Success)
+        {
+            folio ??= NormalizeActaNumeric(tableMatch.Groups[1].Value);
+            fechaRegistro ??= tableMatch.Groups[2].Value;
+            numeroActa ??= NormalizeActaNumeric(tableMatch.Groups[4].Value);
+        }
+
+        // Registrar variant: "OFICIALIA NUMERO ANO 0001 45 2001"
+        if (string.IsNullOrWhiteSpace(folio) || string.IsNullOrWhiteSpace(numeroActa))
+        {
+            var regMatch = Regex.Match(
+                text,
+                @"OFICIALIA\s+NUMERO\s+ANO\s+([0-9OIL]{1,6})\s+([0-9OIL]{1,6})\s+[0-9OIL]{2,4}",
+                RegexOptions.IgnoreCase | RegexOptions.Compiled);
+            if (regMatch.Success)
+            {
+                folio ??= NormalizeActaNumeric(regMatch.Groups[1].Value);
+                numeroActa ??= NormalizeActaNumeric(regMatch.Groups[2].Value);
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(fechaNacimiento))
+        {
+            var allDates = DateRegex.Matches(text)
+                .Select(match => match.Value)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (allDates.Count > 0)
+            {
+                var candidate = allDates.FirstOrDefault(date =>
+                    string.IsNullOrWhiteSpace(fechaRegistro)
+                    || !string.Equals(date, fechaRegistro, StringComparison.OrdinalIgnoreCase));
+                fechaNacimiento = candidate ?? allDates[0];
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(fechaRegistro)
+            && string.Equals(fechaNacimiento, fechaRegistro, StringComparison.OrdinalIgnoreCase))
+        {
+            var allDates = DateRegex.Matches(text)
+                .Select(match => match.Value)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var alternative = allDates.FirstOrDefault(date =>
+                !string.Equals(date, fechaRegistro, StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrWhiteSpace(alternative))
+            {
+                fechaNacimiento = alternative;
+            }
+        }
 
         return
         [
-            Build("nombre", "Nombre completo", CleanActaName(AfterAnyLabel(text, "NOMBRE", "NOMBRE(S)"))),
-            Build("sexo", "Sexo", FirstAny(text, "HOMBRE", "MUJER", "MASCULINO", "FEMENINO")),
-            Build("fecha_nacimiento", "Fecha de nacimiento", FirstRegex(text, DateRegex), DateRegex),
-            Build("lugar_nacimiento", "Lugar de nacimiento", AfterAnyLabel(text, "LUGAR DE NACIMIENTO", "LUGAR NACIMIENTO")),
+            Build("nombre", "Nombre completo", nombre),
+            Build("sexo", "Sexo", NormalizeSexo(FirstAny(text, "HOMBRE", "MUJER", "MASCULINO", "FEMENINO"))),
+            Build("fecha_nacimiento", "Fecha de nacimiento", fechaNacimiento, DateRegex),
+            Build("lugar_nacimiento", "Lugar de nacimiento", lugarNacimiento),
             Build("folio", "Folio", folio, new Regex(@"^\d{1,8}$", RegexOptions.Compiled)),
-            Build("numero_acta", "Numero de acta", numeroActa, new Regex(@"^\d{1,8}$", RegexOptions.Compiled))
+            Build("numero_acta", "Numero de acta", numeroActa, new Regex(@"^\d{1,8}$", RegexOptions.Compiled)),
+            Build("fecha_registro", "Fecha de registro", fechaRegistro, DateRegex),
+            Build("municipio_registro", "Municipio de registro", municipioRegistro),
+            Build("entidad_registro", "Entidad de registro", entidadRegistro)
         ];
     }
 

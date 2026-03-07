@@ -181,4 +181,42 @@ public class CSharpAiClientTests
         Assert.True(folio is null || string.IsNullOrWhiteSpace(folio.Value));
         Assert.True(numeroActa is null || string.IsNullOrWhiteSpace(numeroActa.Value));
     }
+
+    [Fact]
+    public async Task ProcessTextAsync_Acta_ExtractsStructuredTableAndPersonFields()
+    {
+        var client = new CSharpAiClient();
+        var response = await client.ProcessTextAsync(
+            Guid.NewGuid(),
+            """
+            ESTADOS UNIDOS MEXICANOS
+            ACTA DE NACIMIENTO
+            ENTIDAD DE REGISTRO TABASCO
+            MUNICIPIO DE REGISTRO JONUTA
+            OFICIALIA FECHA DE REGISTRO LIBRO NUMERO
+            0001 20/08/2001 3 45
+            DATOS DE LA PERSONA REGISTRADA
+            ERWIN GUSTAVO GARCIA CAMPOS
+            NOMBRE(S) PRIMER APELLIDO SEGUNDO APELLIDO
+            HOMBRE 25/04/2001 JONUTA TABASCO
+            SEXO FECHA DE NACIMIENTO LUGAR DE NACIMIENTO
+            """,
+            "acta-nacimiento.pdf",
+            "python-ocr",
+            1,
+            0,
+            null,
+            CancellationToken.None);
+
+        Assert.Equal(DocumentType.ActaNacimiento, response.DocumentType);
+        Assert.Contains(response.Fields, f => f.Key == "nombre" && f.Value == "ERWIN GUSTAVO GARCIA CAMPOS");
+        Assert.Contains(response.Fields, f => f.Key == "sexo" && f.Value == "HOMBRE");
+        Assert.Contains(response.Fields, f => f.Key == "fecha_nacimiento" && f.Value == "25/04/2001");
+        Assert.Contains(response.Fields, f => f.Key == "lugar_nacimiento" && f.Value == "JONUTA TABASCO");
+        Assert.Contains(response.Fields, f => f.Key == "folio" && f.Value == "0001");
+        Assert.Contains(response.Fields, f => f.Key == "numero_acta" && f.Value == "45");
+        Assert.Contains(response.Fields, f => f.Key == "fecha_registro" && f.Value == "20/08/2001");
+        Assert.Contains(response.Fields, f => f.Key == "municipio_registro" && f.Value == "JONUTA");
+        Assert.Contains(response.Fields, f => f.Key == "entidad_registro" && f.Value == "TABASCO");
+    }
 }
