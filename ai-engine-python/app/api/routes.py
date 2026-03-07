@@ -25,7 +25,12 @@ async def process_document_endpoint(
     document_id: str = Form(...),
     source: str = Form("web"),
     options: str | None = Form(None),
+    original_filename: str | None = Form(None),
 ) -> ProcessResponse:
+    # Use original filename from .NET so filename-based classification works
+    # (file.filename arrives as a temp path like a GUID otherwise)
+    if original_filename:
+        file.filename = original_filename
     payload = await process_document(file, document_id=document_id, source=source, options=options)
     return payload
 
