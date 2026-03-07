@@ -67,6 +67,46 @@ def _predict_nb(model, text: str):
 
 
 def _keyword_override(text: str, compact_text: str, filename: str | None):
+    # ── Filename check FIRST: high-precision, no text needed ──────────────
+    _name = _normalize_text(filename or "")
+    if "INE" in _name or "ELECTOR" in _name:
+        return "INE", 0.9
+    if "ACTA" in _name or "NACIMIENTO" in _name:
+        return "ACTA_NACIMIENTO", 0.88
+    if "CURP" in _name:
+        return "CURP", 0.9
+    if "NSS" in _name or "IMSS" in _name or "SEGURIDAD SOCIAL" in _name:
+        return "NSS", 0.88
+    if (
+        "DOMICILIO" in _name
+        or "COMPROBANTE" in _name
+        or "RECIBO" in _name
+        or "CFE" in _name
+        or "TELMEX" in _name
+        or "TELCEL" in _name
+        or "TOTALPLAY" in _name
+        or "IZZI" in _name
+        or "MEGACABLE" in _name
+    ):
+        return "COMPROBANTE_DOMICILIO", 0.9
+    if (
+        "ESTADO DE CUENTA" in _name
+        or "ESTADO CUENTA" in _name
+        or "ESTADODECUENTA" in _name
+        or "CLABE" in _name
+        or "BBVA" in _name
+        or "BANAMEX" in _name
+        or "BANCOMER" in _name
+        or "SANTANDER" in _name
+        or "SCOTIABANK" in _name
+        or "HSBC" in _name
+        or "BANORTE" in _name
+    ):
+        return "DATOS_BANCARIOS", 0.88
+    if "RFC" in _name or "SITUACION FISCAL" in _name or "CONSTANCIA" in _name:
+        return "CONSTANCIA_SITUACION_FISCAL", 0.88
+    # ─────────────────────────────────────────────────────────────────────
+
     service_markers = (
         "RECIBO",
         "COMISION FEDERAL DE ELECTRICIDAD",
@@ -81,6 +121,17 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         "AGUA",
         "PREDIAL",
         "GAS",
+        # CFE data-section keywords (appear in billing body, not just logo)
+        "NO DE SERVICIO",
+        "NUMERO DE SERVICIO",
+        "TARIFA DOMESTICA",
+        "LECTURA ANTERIOR",
+        "LECTURA ACTUAL",
+        "CONSUMO KWH",
+        "KWH",
+        "BIMESTRE",
+        "PERIODO DE FACTURACION",
+        "LIMITE DE PAGO",
         "LINEA DE CAPTURA",
         "REFERENCIA UNICA",
         "PAGAR ANTES DE",
@@ -244,38 +295,12 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         or "AZTECA" in text
     ):
         return "DATOS_BANCARIOS", 0.8
-    name = _normalize_text(filename or "")
-    if "INE" in name or "ELECTOR" in name:
-        return "INE", 0.9
-    if "ACTA" in name or "NACIMIENTO" in name:
-        return "ACTA_NACIMIENTO", 0.85
-    if "CURP" in name:
-        return "CURP", 0.9
-    if "NSS" in name or "IMSS" in name:
-        return "NSS", 0.85
-    if "CLABE" in name or "BANCO" in name:
-        return "DATOS_BANCARIOS", 0.85
+    # Filename-based PAGO/FACTURA check (pago nómina only — kept at end since less precise)
     if (
-        "PAGO" in name
-        and any(token in name for token in ("NOMINA", "DISPERSION", "BMPEI", "SBK", "BNT", "SPEI", "BENEFICIARIO"))
+        "PAGO" in _name
+        and any(token in _name for token in ("NOMINA", "DISPERSION", "BMPEI", "SBK", "BNT", "SPEI", "BENEFICIARIO"))
     ):
         return "FACTURA", 0.9
-    if "ESTADO DE CUENTA" in name or "ESTADO CUENTA" in name or "CUENTA" in name:
-        return "DATOS_BANCARIOS", 0.8
-    if "RFC" in name or "SITUACION" in name:
-        return "CONSTANCIA_SITUACION_FISCAL", 0.85
-    if (
-        "DOMICILIO" in name
-        or "COMPROBANTE" in name
-        or "RECIBO" in name
-        or "TELMEX" in name
-        or "TELCEL" in name
-        or "CFE" in name
-        or "TOTALPLAY" in name
-        or "IZZI" in name
-        or "MEGACABLE" in name
-    ):
-        return "COMPROBANTE_DOMICILIO", 0.9
     return None, 0.0
 
 
@@ -352,6 +377,13 @@ def _has_hard_markers(doc_type: str, text: str, compact_text: str) -> bool:
             "LINEA DE CAPTURA",
             "TOTAL A PAGAR",
             "NUMERO DE SERVICIO",
+            "NO DE SERVICIO",
+            "TARIFA DOMESTICA",
+            "LECTURA ANTERIOR",
+            "CONSUMO KWH",
+            "KWH",
+            "BIMESTRE",
+            "LIMITE DE PAGO",
         ],
         "CONSTANCIA_SITUACION_FISCAL": [
             "CONSTANCIA DE SITUACION FISCAL",
