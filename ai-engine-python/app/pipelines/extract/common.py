@@ -176,6 +176,11 @@ def _merge_legacy_fields(fields: list[dict], legacy_values: dict[str, str], ocr_
             continue
         if key not in LEGACY_OVERRIDE_KEYS and key in existing:
             continue
+        # Reject lugar_nacimiento values that contain section-header noise from ACTA
+        if key == "lugar_nacimiento":
+            upper_norm = normalized.upper()
+            if any(noise in upper_norm for noise in ("PERSONA REGISTRADA", "DATOS DE LA", "REGISTRADA")):
+                continue
         confidence = 0.9 if key in LEGACY_OVERRIDE_KEYS else 0.65
         fields.append(_make_field(key, label, normalized, ocr_boxes, confidence=confidence))
 
@@ -2270,6 +2275,7 @@ def _extract_nss_name_from_text(lines: list[str], full_text: str) -> str | None:
 
 def _extract_acta_folio_numero_from_text(full_text: str) -> tuple[str | None, str | None]:
     text = _normalize_text(full_text).upper()
+    ascii_text = _ascii_fold(text).upper()
 
     # Common compact table layout:
     # "FECHA DE REGISTRO LIBRO NUMERO DE ACTA 0001 20/08/2001 3 437"
@@ -2309,6 +2315,38 @@ def _extract_acta_folio_numero_from_text(full_text: str) -> tuple[str | None, st
         normalized = _normalize_value_for_key("folio", folio_match.group(1))
         if normalized:
             folio = normalized
+
+    # Fallback: compact registrar header "OFICIALIA NUMERO ANO <folio> <numero> <anio>"
+    if not folio or not numero_acta:
+        header_match = re.search(
+            r"OFICIALIA\s+NUMERO\s+ANO\s+([0-9OIL]{1,6})\s+([0-9OIL]{1,6})\s+[0-9OIL]{2,4}",
+            ascii_text,
+        )
+        if header_match:
+            if not folio:
+                normalized = _normalize_value_for_key("folio", header_match.group(1))
+                if normalized:
+                    folio = normalized
+            if not numero_acta:
+                normalized = _normalize_value_for_key("numero_acta", header_match.group(2))
+                if normalized:
+                    numero_acta = normalized
+
+    # Fallback: "OFICIALÍA <N>" style (some state registrar formats use this instead of FOLIO)
+    if not folio:
+        ofic_match = re.search(r"OFICIALIA\s+([0-9OIL]{1,6})", ascii_text)
+        if ofic_match:
+            normalized = _normalize_value_for_key("folio", ofic_match.group(1))
+            if normalized:
+                folio = normalized
+
+    # Fallback: bare "NÚMERO <N>" as numero_acta (when no "NUMERO DE ACTA" keyword)
+    if not numero_acta:
+        num_match = re.search(r"\bNUMERO\s+([0-9OIL]{1,6})\b", ascii_text)
+        if num_match:
+            normalized = _normalize_value_for_key("numero_acta", num_match.group(1))
+            if normalized:
+                numero_acta = normalized
 
     return folio, numero_acta
 

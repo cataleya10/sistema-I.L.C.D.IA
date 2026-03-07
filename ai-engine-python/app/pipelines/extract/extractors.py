@@ -116,6 +116,9 @@ def _extract_acta_from_boxes(ocr_boxes):
         cleaned = re.sub(r"\s+", " ", cleaned)
         if not cleaned:
             return None
+        # Ignore Acta table header words often captured as values.
+        if cleaned in {"PRIMER", "SEGUNDO", "APELLIDO", "APELLIDOS", "NOMBRE", "NOMBRES"}:
+            return None
         if "APELLIDO" in cleaned or cleaned.endswith(":"):
             return None
         return cleaned
@@ -123,7 +126,13 @@ def _extract_acta_from_boxes(ocr_boxes):
     nombre = _extract_label_value(lines, "NOMBRE", stop_labels=["FECHA", "FOLIO", "LIBRO", "TOMO"])
     if nombre:
         upper_nombre = nombre.upper()
-        if "APELLIDO" not in upper_nombre and not upper_nombre.endswith(":"):
+        # Reject column-header noise: single words that are Acta table labels
+        _acta_label_single_words = {"PRIMER", "SEGUNDO", "DATOS", "PERSONA", "REGISTRADA", "APELLIDOS"}
+        if (
+            "APELLIDO" not in upper_nombre
+            and not upper_nombre.endswith(":")
+            and upper_nombre.strip() not in _acta_label_single_words
+        ):
             result["nombre"] = {"value": nombre}
     else:
         match = re.search(r"DATOS DE LA PERSONA REGISTRADA\s+(.+?)\s+NOMBRE", full_text)
@@ -154,6 +163,9 @@ def _extract_acta_from_boxes(ocr_boxes):
             primer_apellido = _clean_name_piece(_extract_label_value(lines, "PRIMER APELLIDO", stop_labels=["SEGUNDO", "SEXO", "FECHA"]))
             segundo_apellido = _clean_name_piece(_extract_label_value(lines, "SEGUNDO APELLIDO", stop_labels=["SEXO", "FECHA"]))
             parts = [p for p in [nombre_part, primer_apellido, segundo_apellido] if p]
+            # Keep order but remove duplicate chunks to avoid
+            # "NOMBRE APELLIDO NOMBRE APELLIDO" artifacts.
+            parts = list(dict.fromkeys(parts))
             if parts:
                 result["nombre"] = {"value": " ".join(parts)}
             else:

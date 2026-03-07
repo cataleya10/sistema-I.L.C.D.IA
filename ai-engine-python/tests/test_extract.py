@@ -1457,6 +1457,78 @@ class ExtractPipelineTests(unittest.TestCase):
 
         self.assertEqual(data.get("lugar_nacimiento"), "JONUTA")
 
+    def test_extract_acta_nombre_rejects_column_header_word(self):
+        """When the right-hand box next to 'Nombre(s):' is 'Primer' (column header),
+        nombre must NOT be set to 'PRIMER' — the fallback should find the real name."""
+        def _bx(text: str, y: int, x0: int = 10) -> dict:
+            """Box with controllable x position."""
+            return {
+                "text": text,
+                "page": 1,
+                "confidence": 0.99,
+                "bbox": [[x0, y], [x0 + 80, y], [x0 + 80, y + 20], [x0, y + 20]],
+            }
+
+        ocr_boxes = [
+            _bx("ACTA DE NACIMIENTO", 10),
+            # Table header row with separate boxes at different x positions
+            _bx("Nombre(s):", 40, x0=10),
+            _bx("Primer", 40, x0=100),
+            _bx("Apellido:", 40, x0=150),
+            _bx("Segundo", 40, x0=210),
+            _bx("Apellido:", 40, x0=270),
+            # Value row
+            _bx("ERWIN GUSTAVO", 70, x0=10),
+            _bx("GARCIA", 70, x0=100),
+            _bx("CAMPOS", 70, x0=150),
+            _bx("SEXO: HOMBRE", 100),
+        ]
+        ocr_text = "\n".join([
+            "ACTA DE NACIMIENTO",
+            "Nombre(s): Primer Apellido: Segundo Apellido:",
+            "ERWIN GUSTAVO GARCIA CAMPOS",
+            "SEXO: HOMBRE",
+        ])
+        fields = _run_sync(extract_fields("ACTA_NACIMIENTO", ocr_text, ocr_boxes))
+        data = _field_map(fields)
+
+        self.assertNotEqual(data.get("nombre"), "PRIMER")
+        self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
+
+    def test_extract_acta_folio_numero_from_oficialia_style(self):
+        """Actas that use 'Oficialía <N> Número <N>' instead of 'FOLIO / NUMERO DE ACTA'."""
+        ocr_text = "\n".join([
+            "ACTA DE NACIMIENTO",
+            "DATOS DE LA INSCRIPCION",
+            "OFICIALÍA NÚMERO AÑO",
+            "0001 45 2001",
+        ])
+        fields = _run_sync(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("folio"), "0001")
+        self.assertEqual(data.get("numero_acta"), "45")
+
+    def test_extract_acta_lugar_nacimiento_rejects_persona_registrada_noise_from_legacy(self):
+        """lugar_nacimiento coming from legacy extractor must be rejected if it contains
+        'DATOS DE LA PERSONA REGISTRADA' header noise."""
+        from unittest.mock import patch
+        noisy_legacy = {"lugar_nacimiento": "DATOS DE LA PERSONA REGISTRADA ERWIN GUSTAVO GARCIA CAMPOS TABASCO"}
+        ocr_text = "\n".join([
+            "ACTA DE NACIMIENTO",
+            "DATOS DE LA PERSONA REGISTRADA",
+            "ERWIN GUSTAVO GARCIA CAMPOS",
+            "SEXO HOMBRE",
+            "FECHA DE NACIMIENTO 25/04/2001",
+        ])
+        with patch("app.pipelines.extract.legacy_extract_fields", return_value=noisy_legacy):
+            fields = _run_sync(extract_fields("ACTA_NACIMIENTO", ocr_text, None))
+        data = _field_map(fields)
+
+        lugar = data.get("lugar_nacimiento", "")
+        self.assertNotIn("PERSONA REGISTRADA", str(lugar).upper())
+        self.assertNotIn("DATOS DE LA", str(lugar).upper())
+
     def test_extract_nss_nombre_beneficiario_from_text(self):
         ocr_text = "\n".join(
             [
