@@ -2089,7 +2089,9 @@ def _clean_nss_name(value: str) -> str | None:
     cleaned = _normalize_text(value).upper()
     cleaned = re.sub(
         r"^(?:NOMBRE(?:\s+DEL|\s+DE LA)?(?:\s+ASEGURADO|\s+BENEFICIARIO|\s+TRABAJADOR|\s+TITULAR)?|"
-        r"ASEGURADO|BENEFICIARIO|TITULAR|NOMBRE\s+O\s+RAZON\s+SOCIAL)\s*[:\-]?\s*",
+        r"ASEGURADO|BENEFICIARIO|TITULAR|NOMBRE\s+O\s+RAZON\s+SOCIAL|"
+        # OCR garbles "RAZÓN SOCIAL" as "0RAZ0NSOCIAL" or "RAZ0N SOCIAL" (0↔O confusion)
+        r"[O0]?RAZ[O0]N\s*SOCIAL|RAZON\s+SOCIAL)\s*[:\-]?\s*",
         "",
         cleaned,
     )
@@ -2126,6 +2128,8 @@ def _is_nss_person_name(value: str) -> bool:
         "BENEFICIARIOS",
         "TRABAJADORES",
         "ASEGURAMIENTO",
+        "SOCIAL",   # captura "NSOCIAL", "RAZONSOCIAL" y variantes OCR
+        "RAZON",    # captura "RAZ " suelto y variantes de RAZÓN SOCIAL mal limpiadas
     )
     particles = {"DE", "DEL", "LA", "LAS", "LOS", "Y", "MC", "VON", "DA", "DO", "DI"}
 

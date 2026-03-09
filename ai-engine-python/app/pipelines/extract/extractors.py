@@ -731,7 +731,7 @@ def _extract_nss_from_boxes(ocr_boxes):
     if not nombre:
         for idx, line in enumerate(lines):
             text = line.get("text", "").upper()
-            match = re.search(r"(NOMBRE0RAZ0NSOCIAL|NOMBREO?RAZ0NSOCIAL|RAZON SOCIAL|NOMBRE)[:\-]?\s*([A-Z ]{3,})", text)
+            match = re.search(r"(NOMBRE0RAZ0NSOCIAL|NOMBREO?RAZ0NSOCIAL|[O0]?RAZ[O0]NSOCIAL|RAZON SOCIAL|NOMBRE)[:\-]?\s*([A-Z ]{3,})", text)
             if match:
                 nombre = match.group(2).strip()
                 break
