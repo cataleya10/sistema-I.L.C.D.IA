@@ -1518,6 +1518,68 @@ class ExtractPipelineTests(unittest.TestCase):
 
         self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
 
+    def test_extract_curp_name_recovers_from_compact_single_token(self):
+        ocr_text = (
+            "ESTADOS UNIDOS MEXICANOS CONSTANCIA DE LA CLAVE UNICA DE REGISTRO DE POBLACION "
+            "CLAVE GACE010425HTCRMRA8 NOMBRE ERWINGUSTAVOGARCIACAMPOS"
+        )
+        fields = _run_sync(extract_fields("CURP", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
+
+    def test_extract_ine_name_recovers_from_curp_guided_fallback_when_label_missing(self):
+        ocr_text = "\n".join(
+            [
+                "INSTITUTO NACIONAL ELECTORAL",
+                "ERWINGUSTAVOGARCIACAMPOS",
+                "CURP GACE010425HTCRMRA8",
+                "CLAVE DE ELECTOR GRCMER01042527H100",
+                "SECCION 0860",
+                "VIGENCIA 2029",
+            ]
+        )
+        fields = _run_sync(extract_fields("INE", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
+
+    def test_extract_curp_recovers_name_even_if_guess_name_is_noisy(self):
+        ocr_text = "\n".join(
+            [
+                "ESTADOS UNIDOS MEXICANOS",
+                "CONSTANCIA DE LA CLAVE UNICA DE REGISTRO DE POBLACION",
+                "CLAVE GACE010425HTCRMRA8",
+                "NOMBRE ERWIN GUSTAVO GARCIA CAMPOS",
+            ]
+        )
+        with patch(
+            "app.pipelines.extract.orchestrator._guess_name",
+            return_value="ESTADOS UNIDOS MEXICANOS CONSTANCIA DE LA CLAVE UNICA",
+        ):
+            fields = _run_sync(extract_fields("CURP", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
+
+    def test_extract_ine_recovers_name_even_if_guess_name_is_noisy(self):
+        ocr_text = "\n".join(
+            [
+                "INSTITUTO NACIONAL ELECTORAL",
+                "ERWINGUSTAVOGARCIACAMPOS",
+                "CURP GACE010425HTCRMRA8",
+                "CLAVE DE ELECTOR GRCMER01042527H100",
+            ]
+        )
+        with patch(
+            "app.pipelines.extract.orchestrator._guess_name",
+            return_value="INSTITUTO NACIONAL ELECTORAL",
+        ):
+            fields = _run_sync(extract_fields("INE", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
+
     def test_extract_cfe_reference_keeps_customer_context_from_noisy_block(self):
         ocr_text = "\n".join(
             [

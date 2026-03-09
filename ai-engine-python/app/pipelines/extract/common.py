@@ -1797,7 +1797,65 @@ def _is_curp_header_noise_name(value: str) -> bool:
     return hits >= 4 and hits >= max(3, len(tokens) // 2)
 
 
-def _clean_curp_name(value: str) -> str | None:
+def _expand_compact_curp_name(value: str, curp: str | None = None) -> str | None:
+    compact = _normalize_alnum(value)
+    if len(compact) < 12:
+        return None
+
+    normalized_curp = _normalize_alnum(curp or "")
+    if len(normalized_curp) >= 4:
+        paterno_init = normalized_curp[0]
+        paterno_vowel = normalized_curp[1]
+        materno_init = normalized_curp[2]
+        nombre_init = normalized_curp[3]
+        if compact[0] == nombre_init:
+            best_candidate = None
+            best_score = None
+            vowels = set("AEIOU")
+            for paterno_pos in range(3, len(compact) - 5):
+                if compact[paterno_pos] != paterno_init:
+                    continue
+                given_raw = compact[:paterno_pos]
+                surnames_raw = compact[paterno_pos:]
+                if len(given_raw) < 4 or len(surnames_raw) < 6:
+                    continue
+                for materno_pos in range(3, len(surnames_raw) - 2):
+                    if surnames_raw[materno_pos] != materno_init:
+                        continue
+                    paterno = surnames_raw[:materno_pos]
+                    materno = surnames_raw[materno_pos:]
+                    if len(paterno) < 4 or len(materno) < 3:
+                        continue
+                    first_vowel = next((ch for ch in paterno[1:] if ch in vowels), "")
+                    if first_vowel != paterno_vowel:
+                        continue
+                    given = _split_compact_given_names(given_raw)
+                    parts = [part for part in [given, paterno, materno] if part]
+                    candidate = " ".join(parts).strip()
+                    if len(candidate.split()) < 3:
+                        continue
+                    if not _name_matches_curp(candidate, normalized_curp):
+                        continue
+                    score = len(parts[0]) + len(parts[1]) + len(parts[2])
+                    score -= abs(len(parts[1]) - len(parts[2]))
+                    if best_score is None or score > best_score:
+                        best_score = score
+                        best_candidate = candidate
+            if best_candidate:
+                return best_candidate
+
+    expanded = _split_compact_nss_token(compact)
+    parts = [tok for tok in expanded.split() if tok]
+    if len(parts) == 2:
+        left = _split_compact_given_names(parts[0])
+        right = _split_compact_surnames(parts[1])
+        expanded = " ".join([left, right]).strip()
+    if len(expanded.split()) >= 2:
+        return expanded
+    return None
+
+
+def _clean_curp_name(value: str, curp: str | None = None) -> str | None:
     if not value:
         return None
     cleaned = _normalize_text(value).upper()
@@ -1828,6 +1886,12 @@ def _clean_curp_name(value: str) -> str | None:
     if not cleaned:
         return None
     tokens = [tok for tok in cleaned.split() if tok]
+    if len(tokens) < 2:
+        expanded = _expand_compact_curp_name(cleaned, curp)
+        if not expanded:
+            return None
+        cleaned = expanded
+        tokens = [tok for tok in cleaned.split() if tok]
     while tokens and tokens[-1] in {"DE", "DEL", "LA", "LAS", "LOS", "Y"}:
         tokens.pop()
     if len(tokens) < 2:
@@ -1838,6 +1902,83 @@ def _clean_curp_name(value: str) -> str | None:
     if not _looks_like_person_name(cleaned):
         return None
     return cleaned
+
+
+def _extract_name_by_curp_guided_fallback(lines: list[str], curp: str | None = None) -> str | None:
+    normalized_curp = _normalize_alnum(curp or "")
+    if len(normalized_curp) < 4:
+        return None
+
+    noise_tokens = {
+        "INSTITUTO",
+        "NACIONAL",
+        "ELECTORAL",
+        "CREDENCIAL",
+        "VOTAR",
+        "CLAVE",
+        "ELECTOR",
+        "CURP",
+        "DOMICILIO",
+        "SECCION",
+        "VIGENCIA",
+        "FECHA",
+        "NACIMIENTO",
+        "SEXO",
+        "ESTADOS",
+        "UNIDOS",
+        "MEXICANOS",
+        "CONSTANCIA",
+        "REGISTRO",
+        "POBLACION",
+        "GOBIERNO",
+        "GOBERNACION",
+        "RENAPO",
+        "MEXICO",
+        "ENTIDAD",
+    }
+
+    best_name = None
+    best_score = -10_000
+    for raw_line in lines:
+        line = _normalize_text(str(raw_line or "")).upper()
+        if not line:
+            continue
+        if re.search(r"\d", line):
+            continue
+        line_key = _label_key(line)
+        if any(noise in line_key for noise in ("INSTITUTO", "NACIONALELECTORAL", "CONSTANCIA", "CLAVEUNICA", "RENAPO", "GOBIERNO", "POBLACION")):
+            continue
+
+        if "NOMBRE" in line:
+            tail = line.split("NOMBRE", 1)[-1].strip(" :.-")
+            line = tail if tail else line
+
+        compact = _normalize_alnum(line)
+        if not compact:
+            continue
+
+        expanded = _expand_compact_curp_name(compact, normalized_curp)
+        candidate = expanded or line
+        candidate = _normalize_name(candidate)
+        tokens = [tok for tok in re.findall(r"[A-ZÑÁÉÍÓÚÜ]+", candidate) if tok]
+        if len(tokens) < 2:
+            continue
+        if sum(1 for tok in tokens if tok in noise_tokens) >= max(2, len(tokens) // 2):
+            continue
+
+        if not _name_matches_curp(candidate, normalized_curp):
+            continue
+
+        score = _name_quality_score(candidate, normalized_curp)
+        if len(tokens) >= 3:
+            score += 8
+        if score > best_score:
+            best_score = score
+            best_name = candidate
+
+    if best_name and best_score >= 30:
+        return best_name
+    return None
 
 
 def _normalize_field_value_for_contract(document_type: str, key: str, value: str) -> str:
