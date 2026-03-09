@@ -2059,6 +2059,118 @@ def _guess_name(text: str) -> str | None:
     return None
 
 
+def _extract_ine_name_from_lines(lines: list[str], curp: str | None = None) -> str | None:
+    if not lines:
+        return None
+
+    norm_lines = [_normalize_text(str(line or "")).upper() for line in lines if _normalize_text(str(line or ""))]
+    if not norm_lines:
+        return None
+
+    stop_labels = ["DOMICILIO", "SEXO", "CLAVE", "CURP", "FECHA", "SECCION", "VIGENCIA", "EMISION", "REGISTRO"]
+    stop_keys = {_label_key(lbl) for lbl in stop_labels}
+    label_key = _label_key("NOMBRE")
+
+    start_idx = -1
+    for idx, line in enumerate(norm_lines):
+        if label_key in _label_key(line):
+            start_idx = idx
+            break
+
+    candidate_pieces: list[str] = []
+    if start_idx >= 0:
+        line = norm_lines[start_idx]
+        if "NOMBRE" in line:
+            tail = line.split("NOMBRE", 1)[-1].strip(" :.-")
+            if tail:
+                candidate_pieces.append(tail)
+        else:
+            compact = _label_key(line)
+            if label_key in compact:
+                compact_tail = compact.split(label_key, 1)[-1].strip(" :.-")
+                if compact_tail:
+                    candidate_pieces.append(compact_tail)
+
+        for idx in range(start_idx + 1, min(len(norm_lines), start_idx + 9)):
+            line = norm_lines[idx]
+            line_key = _label_key(line)
+            if any(stop in line_key for stop in stop_keys):
+                break
+            candidate_pieces.append(line)
+    else:
+        candidate_pieces = norm_lines[:8]
+
+    tokens: list[str] = []
+    particles = {"DE", "DEL", "LA", "LAS", "LOS", "Y"}
+    for piece in candidate_pieces:
+        for tok in re.findall(r"[A-ZÑÁÉÍÓÚÜ]+", piece):
+            if tok == "NOMBRE":
+                continue
+            if len(tok) <= 1:
+                continue
+            if (
+                tokens
+                and len(tok) <= 2
+                and tok not in particles
+                and len(tokens[-1]) >= 3
+            ):
+                tokens[-1] = f"{tokens[-1]}{tok}"
+                continue
+            if curp and len(tok) >= 10 and tok.startswith(curp[3].upper()):
+                split = _split_compact_given_names(tok)
+                parts = [p for p in split.split() if p]
+                if len(parts) > 1:
+                    tokens.extend(parts)
+                    continue
+            tokens.append(tok)
+
+    if not tokens:
+        return None
+
+    normalized_curp = _normalize_alnum(curp or "")
+    if len(normalized_curp) >= 4:
+        paterno_init = normalized_curp[0]
+        paterno_vowel = normalized_curp[1]
+        materno_init = normalized_curp[2]
+        nombre_init = normalized_curp[3]
+
+        given_idx = next((i for i, tok in enumerate(tokens) if tok and tok[0] == nombre_init), -1)
+        given_tokens = tokens[given_idx:] if given_idx >= 0 else []
+
+        def _matches_paterno(tok: str) -> bool:
+            if not tok or tok[0] != paterno_init:
+                return False
+            vowels = set("AEIOU")
+            first_vowel = next((c for c in tok[1:] if c in vowels), "")
+            return first_vowel == paterno_vowel
+
+        paterno = next((tok for tok in tokens if _matches_paterno(tok)), "")
+        materno = next((tok for tok in tokens if tok and tok[0] == materno_init and tok != paterno), "")
+
+        if given_tokens and paterno:
+            ordered = [*given_tokens, paterno]
+            if materno:
+                ordered.append(materno)
+            deduped: list[str] = []
+            for tok in ordered:
+                if tok not in deduped:
+                    deduped.append(tok)
+            candidate = " ".join(deduped).strip()
+            if candidate and _name_matches_curp(candidate, normalized_curp):
+                return candidate
+
+    fallback_tokens = list(tokens)
+    if len(normalized_curp) >= 4:
+        nombre_init = normalized_curp[3]
+        given_idx = next((i for i, tok in enumerate(fallback_tokens) if tok and tok[0] == nombre_init), -1)
+        if given_idx > 0:
+            fallback_tokens = [*fallback_tokens[given_idx:], *fallback_tokens[:given_idx]]
+    fallback = " ".join(fallback_tokens).strip()
+    if fallback and _looks_like_person_name(fallback):
+        return fallback
+    return None
+
+
 def _find_labeled_value(lines: list[str], label: str) -> str | None:
     labels = _expand_label_list(label)
     label_upper = label.upper()

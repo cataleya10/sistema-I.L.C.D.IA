@@ -87,6 +87,24 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
         mrz_name = _extract_mrz_name_from_text(base_text_raw)
         if mrz_name:
             fields.append(_make_field("nombre", "Nombre", _normalize_name(mrz_name), ocr_boxes, confidence=0.96))
+        if document_type == "INE":
+            ine_line_name = _extract_ine_name_from_lines(
+                lines,
+                curps[0] if curps else None,
+            )
+            if ine_line_name:
+                ine_name_conf = 0.92
+                if curps and not _name_matches_curp(ine_line_name, curps[0]):
+                    ine_name_conf = 0.75
+                fields.append(
+                    _make_field(
+                        "nombre",
+                        "Nombre",
+                        _normalize_name(ine_line_name),
+                        ocr_boxes,
+                        confidence=ine_name_conf,
+                    )
+                )
         birth_date = _find_value_after_keyword(lines, ["FECHA DE NACIMIENTO", "FECHA NACIMIENTO", "NACIMIENTO"])
         if birth_date:
             normalized_birth = _normalize_date_value(birth_date)

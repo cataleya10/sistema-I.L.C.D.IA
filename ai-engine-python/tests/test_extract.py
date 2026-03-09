@@ -1362,6 +1362,26 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
         self.assertIn("JONUTA", data.get("domicilio", ""))
 
+    def test_extract_ine_name_from_split_tokens_near_nombre_label(self):
+        ocr_text = "\n".join(
+            [
+                "INSTITUTO NACIONAL ELECTORAL",
+                "NOMBRE GARC",
+                "IA",
+                "CAMPOS",
+                "ERWIN GUSTAVO",
+                "DOMICILIO LOC ZAPOTAL 2DA SECCION S/N",
+                "CLAVE DE ELECTOR GRCMER01042527H100",
+                "CURP GACE010425HTCRMRA8",
+                "SECCION 0860",
+                "VIGENCIA 2029",
+            ]
+        )
+        fields = _run_sync(extract_fields("INE", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
+
     def test_extract_cfe_reference_keeps_customer_context_from_noisy_block(self):
         ocr_text = "\n".join(
             [
