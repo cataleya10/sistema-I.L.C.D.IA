@@ -1722,7 +1722,7 @@ def _normalize_value_for_key(key: str, value: str) -> str:
     return normalizer(str(value or ""))
 
 
-def _normalize_field_value_for_contract(key: str, value: str) -> str:
+def _normalize_field_value_for_contract(document_type: str, key: str, value: str) -> str:
     raw = str(value or "")
     if not raw:
         return ""
@@ -1750,6 +1750,13 @@ def _normalize_field_value_for_contract(key: str, value: str) -> str:
     if key in {"fecha", "fecha_nacimiento", "fecha_registro", "fecha_limite", "fecha_corte", "fecha_emision", "fecha_documento"}:
         return _normalize_date_value(raw)
     if key in {"nombre", "titular", "nombres", "apellido_paterno", "apellido_materno", "primer_apellido", "segundo_apellido"}:
+        if document_type == "NSS" and key == "nombre":
+            cleaned_nss = _clean_nss_name(raw)
+            if cleaned_nss:
+                return _normalize_name(cleaned_nss)
+            compact = _normalize_alnum(_normalize_text(raw))
+            if re.fullmatch(r"[A-Z]{10,40}", compact):
+                return _normalize_name(_split_compact_nss_token(compact))
         return _normalize_name(raw)
     if key == "sexo":
         return _normalize_sex(raw)
@@ -1940,6 +1947,9 @@ def _is_valid_by_contract(document_type: str, key: str, value: str) -> bool:
     if key in {"nombre", "titular"}:
         if key == "titular" and document_type == "COMPROBANTE_DOMICILIO" and upper == "PUBLICO EN GENERAL":
             return True
+        if document_type == "NSS" and key == "nombre":
+            cleaned_nss = _clean_nss_name(text)
+            return bool(cleaned_nss and _is_nss_person_name(cleaned_nss))
         return _looks_like_person_name(text)
     if key == "lugar_nacimiento":
         if any(token in upper for token in {"ACTA DE NACIMIENTO", "SEXO", "FECHA DE NACIMIENTO", "LUGAR DE NACIMIENTO"}):
@@ -1967,7 +1977,11 @@ def _apply_field_contracts(document_type: str, fields: list[dict]) -> list[dict]
             contracted.append(field)
             continue
 
-        normalized_value = _normalize_field_value_for_contract(key, str(field.get("value", "") or ""))
+        normalized_value = _normalize_field_value_for_contract(
+            document_type,
+            key,
+            str(field.get("value", "") or ""),
+        )
         if not normalized_value:
             continue
         if not _is_valid_by_contract(document_type, key, normalized_value):
@@ -2088,8 +2102,9 @@ def _clean_nss_name(value: str) -> str | None:
         return None
     cleaned = _normalize_text(value).upper()
     cleaned = re.sub(
-        r"^(?:NOMBRE(?:\s+DEL|\s+DE LA)?(?:\s+ASEGURADO|\s+BENEFICIARIO|\s+TRABAJADOR|\s+TITULAR)?|"
-        r"ASEGURADO|BENEFICIARIO|TITULAR|NOMBRE\s+O\s+RAZON\s+SOCIAL|"
+        r"^(?:(?:N[O0]MBRE\s*O?\s*RAZ[O0]N\s*SOCIAL|N[O0]MBRE[O0]?RAZ[O0]NSOCIAL)|"
+        r"N[O0]MBRE(?:\s+DEL|\s+DE LA)?(?:\s+ASEGURADO|\s+BENEFICIARIO|\s+TRABAJADOR|\s+TITULAR)?|"
+        r"ASEGURADO|BENEFICIARIO|TITULAR|"
         # OCR garbles "RAZÓN SOCIAL" as "0RAZ0NSOCIAL" or "RAZ0N SOCIAL" (0↔O confusion)
         r"[O0]?RAZ[O0]N\s*SOCIAL|RAZON\s+SOCIAL)\s*[:\-]?\s*",
         "",
@@ -2098,9 +2113,18 @@ def _clean_nss_name(value: str) -> str | None:
     cleaned = re.split(r"\b(?:CURP|RFC|NSS|IMSS|FOLIO|FECHA|VIGENCIA|UNIDAD|CLINICA)\b", cleaned)[0].strip(" :.-,")
     cleaned = re.sub(r"[^A-ZÑÁÉÍÓÚÜ ]", " ", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    tokens = [tok for tok in cleaned.split() if tok]
+    if len(tokens) <= 2 and any(len(tok) >= 12 for tok in tokens):
+        expanded: list[str] = []
+        for tok in tokens:
+            if len(tok) >= 12:
+                expanded.extend([part for part in _split_compact_nss_token(tok).split() if part])
+            else:
+                expanded.append(tok)
+        tokens = expanded
+        cleaned = " ".join(tokens).strip()
     if len(cleaned) < 5:
         return None
-    tokens = cleaned.split()
     if len(tokens) < 2:
         return None
     return cleaned
@@ -2225,6 +2249,49 @@ def _split_compact_nss_token(token: str) -> str:
     return f"{left_named} {right}".strip()
 
 
+def _append_nss_surname_hint(lines: list[str], start_idx: int, base_name: str) -> str:
+    candidate = _normalize_name(base_name)
+    compact_candidate = candidate.replace(" ", "")
+    stop_words = {
+        "IMSS",
+        "NSS",
+        "RFC",
+        "CURP",
+        "FOLIO",
+        "FECHA",
+        "VIGENCIA",
+        "UNIDAD",
+        "CLINICA",
+        "BENEFICIARIO",
+        "ASEGURADO",
+        "TITULAR",
+    }
+    for offset in (1, 2):
+        idx = start_idx + offset
+        if idx >= len(lines):
+            break
+        raw_line = _normalize_text(lines[idx]).upper()
+        if not raw_line:
+            continue
+        if re.search(r"\d", raw_line):
+            continue
+        if " " in raw_line.strip():
+            continue
+        token = _normalize_alnum(raw_line)
+        if not token:
+            continue
+        if token in stop_words:
+            continue
+        if len(token) < 4 or len(token) > 18:
+            continue
+        if token in compact_candidate:
+            continue
+        merged = _clean_nss_name(f"{candidate} {token}")
+        if merged and _is_nss_person_name(merged):
+            return merged
+    return candidate
+
+
 def _extract_nss_name_from_text(lines: list[str], full_text: str) -> str | None:
     strict_keywords = [
         "NOMBRE DEL ASEGURADO",
@@ -2244,16 +2311,20 @@ def _extract_nss_name_from_text(lines: list[str], full_text: str) -> str | None:
                 tail = upper_line.split(keyword, 1)[-1].strip(" :.-")
             else:
                 tail = ""
+                if compact_keyword in compact_line:
+                    compact_tail = compact_line.split(compact_keyword, 1)[-1].strip(" :.-")
+                    if compact_tail:
+                        tail = compact_tail
             if tail:
                 normalized = _clean_nss_name(tail)
                 if normalized and _is_nss_person_name(normalized):
-                    return normalized
+                    return _append_nss_surname_hint(lines, idx, normalized)
             for offset in (1, 2, 3):
                 if idx + offset >= len(lines):
                     break
                 normalized = _clean_nss_name(lines[idx + offset])
                 if normalized and _is_nss_person_name(normalized):
-                    return normalized
+                    return _append_nss_surname_hint(lines, idx + offset, normalized)
 
     for pattern in [
         r"(?:NOMBRE\s+DEL\s+ASEGURADO|NOMBRE\s+DEL\s+BENEFICIARIO|NOMBRE\s+DEL\s+TRABAJADOR|NOMBRE\s+DEL\s+TITULAR|NOMBRE\s+O\s+RAZON\s+SOCIAL)\s*[:\-]?\s*([A-ZÑÁÉÍÓÚÜ ]{8,70})",

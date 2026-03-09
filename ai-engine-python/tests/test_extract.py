@@ -1614,6 +1614,39 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertEqual(data.get("nss"), "60160194696")
         self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
 
+    def test_extract_nss_compact_nombre_o_razon_social_and_surname_below(self):
+        ocr_text = "\n".join(
+            [
+                "INSTITUTO MEXICANO DEL SEGURO SOCIAL",
+                "NUMERO DE SEGURIDAD SOCIAL ES: 60160194696",
+                "NOMBREORAZONSOCIAL:ERWINGUSTAVOGARCIA",
+                "CAMPOS",
+                "ASOCIADO A LA CURP: GACE010425HTCRMRA8",
+            ]
+        )
+        fields = _run_sync(extract_fields("NSS", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("nss"), "60160194696")
+        self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
+
+    def test_extract_nss_cleans_legacy_compact_name_label(self):
+        with patch(
+            "app.pipelines.extract.orchestrator.legacy_extract_fields",
+            return_value={"nombre": "0RAZONSOCIAL:ERWINGUSTAVOGARCIA"},
+        ):
+            fields = _run_sync(
+                extract_fields(
+                    "NSS",
+                    "NUMERO DE SEGURIDAD SOCIAL ES: 60160194696",
+                    None,
+                )
+            )
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("nss"), "60160194696")
+        self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA")
+
     def test_field_contract_drops_invalid_legacy_curp(self):
         with patch("app.pipelines.extract.legacy_extract_fields", return_value={"curp": "ABCD123"}):
             fields = _run_sync(extract_fields("INE", "CREDENCIAL PARA VOTAR", None))
