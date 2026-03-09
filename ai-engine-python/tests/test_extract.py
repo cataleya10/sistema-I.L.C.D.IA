@@ -1382,6 +1382,63 @@ class ExtractPipelineTests(unittest.TestCase):
 
         self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
 
+    def test_extract_ine_name_from_box_lines_when_legacy_name_is_partial(self):
+        ocr_text = "INSTITUTO NACIONAL ELECTORAL CURP GACE010425HTCRMRA8 CLAVE DE ELECTOR GRCMER01042527H100"
+        ocr_boxes = [
+            _box("NOMBRE", 10),
+            _box("GARC", 35),
+            _box("IA", 60),
+            _box("CAMPOS", 85),
+            _box("ERWIN GUSTAVO", 110),
+            _box("DOMICILIO", 135),
+            _box("CURP GACE010425HTCRMRA8", 160),
+            _box("CLAVE DE ELECTOR GRCMER01042527H100", 185),
+        ]
+        with patch(
+            "app.pipelines.extract.orchestrator.legacy_extract_fields",
+            return_value={"nombre": "IA CAMPOS"},
+        ):
+            fields = _run_sync(extract_fields("INE", ocr_text, ocr_boxes))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
+
+    def test_extract_ine_legacy_name_replaces_short_guess_with_curp_context(self):
+        ocr_text = "\n".join(
+            [
+                "INSTITUTO NACIONAL ELECTORAL",
+                "IA CAMPOS",
+                "CURP GACE010425HTCRMRA8",
+                "CLAVE DE ELECTOR GRCMER01042527H100",
+            ]
+        )
+        with patch(
+            "app.pipelines.extract.orchestrator.legacy_extract_fields",
+            return_value={"nombre": "ERWIN GUSTAVO GARCIA CAMPOS"},
+        ):
+            fields = _run_sync(extract_fields("INE", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
+
+    def test_extract_ine_does_not_keep_short_guess_name_when_curp_mismatch(self):
+        ocr_text = "\n".join(
+            [
+                "INSTITUTO NACIONAL ELECTORAL",
+                "IA CAMPOS",
+                "CURP GACE010425HTCRMRA8",
+                "CLAVE DE ELECTOR GRCMER01042527H100",
+            ]
+        )
+        with patch(
+            "app.pipelines.extract.orchestrator.legacy_extract_fields",
+            return_value={},
+        ):
+            fields = _run_sync(extract_fields("INE", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertIsNone(data.get("nombre"))
+
     def test_extract_cfe_reference_keeps_customer_context_from_noisy_block(self):
         ocr_text = "\n".join(
             [

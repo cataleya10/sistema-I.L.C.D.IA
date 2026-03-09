@@ -290,6 +290,66 @@ public class HybridAiClientTests
         }
     }
 
+    [Fact]
+    public async Task ProcessDocumentAsync_IneMerge_PrefersHigherQualityPythonName()
+    {
+        var tempFile = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}-ine.txt");
+        await File.WriteAllTextAsync(
+            tempFile,
+            """
+            INSTITUTO NACIONAL ELECTORAL
+            NOMBRE
+            IA CAMPOS
+            CURP GACE010425HTCRMRA8
+            FECHA DE NACIMIENTO 25/04/2001
+            CLAVE DE ELECTOR GRCMER01042527H100
+            """);
+
+        try
+        {
+            var config = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["PythonAi:BaseUrl"] = "http://unit-test.local",
+                    ["AiEngine:Hybrid:EnablePythonFallback"] = "true",
+                    ["AiEngine:Hybrid:FallbackMinConfidence"] = "0.8",
+                    ["AiEngine:Hybrid:AlwaysMergePythonFields"] = "true"
+                })
+                .Build();
+
+            using var httpClient = new HttpClient(new IneNameMergeHandler())
+            {
+                BaseAddress = new Uri("http://unit-test.local")
+            };
+
+            var pythonClient = new PythonAiClient(httpClient, config, new NullHttpContextAccessor());
+            var csharpClient = new CSharpAiClient();
+            var hybridClient = new HybridAiClient(
+                pythonClient,
+                csharpClient,
+                config,
+                NullLogger<HybridAiClient>.Instance);
+
+            var response = await hybridClient.ProcessDocumentAsync(
+                Guid.NewGuid(),
+                tempFile,
+                "ine.pdf",
+                null,
+                CancellationToken.None);
+
+            Assert.Equal(DocumentType.Ine, response.DocumentType);
+            Assert.Contains(response.Fields, f => f.Key == "nombre" && f.Value == "ERWIN GUSTAVO GARCIA CAMPOS");
+            Assert.DoesNotContain(response.Fields, f => f.Key == "nombre" && f.Value == "IA CAMPOS");
+        }
+        finally
+        {
+            if (File.Exists(tempFile))
+            {
+                File.Delete(tempFile);
+            }
+        }
+    }
+
     private sealed class StubPythonHandler : HttpMessageHandler
     {
         protected override async Task<HttpResponseMessage> SendAsync(
@@ -614,6 +674,90 @@ public class HybridAiClientTests
                   "label":"Tabla celdas",
                   "value":"{\"source\":\"text_lines\",\"rows\":[[\"CUENTA\",\"REFERENCIA\",\"IMPORTE\",\"NOMBRE\",\"APELLIDO PATERNO\",\"APELLIDO MATERNO\",\"ESTATUS\",\"CONCEPTO\"],[\"56783223195\",\"1620260115134340581263\",\"$610.44\",\"MARLA GRISELDA\",\"MENDEZ\",\"FLORES\",\"PROCESADO\",\"PAGO DE NOMINA\"],[\"56936397470\",\"1620260115134348451388\",\"$1,537.35\",\"ROLANDO ROGERIO\",\"CONTRERAS\",\"CAMARGO\",\"PROCESADO\",\"PAGO DE NOMINA\"]],\"canonical_rows\":[{\"cuenta\":\"56783223195\",\"referencia\":\"1620260115134340581263\",\"importe\":\"$610.44\",\"nombre\":\"MARLA GRISELDA\",\"apellido_paterno\":\"MENDEZ\",\"apellido_materno\":\"FLORES\",\"estatus\":\"PROCESADO\",\"concepto_pago\":\"PAGO DE NOMINA\"},{\"cuenta\":\"56936397470\",\"referencia\":\"1620260115134348451388\",\"importe\":\"$1,537.35\",\"nombre\":\"ROLANDO ROGERIO\",\"apellido_paterno\":\"CONTRERAS\",\"apellido_materno\":\"CAMARGO\",\"estatus\":\"PROCESADO\",\"concepto_pago\":\"PAGO DE NOMINA\"}]}",
                   "confidence":0.70,
+                  "valid":true,
+                  "validation_errors":[],
+                  "source":null
+                }
+              ],
+              "warnings":[],
+              "errors":[],
+              "meta":{
+                "pages_processed":1,
+                "ocr_engine":"paddleocr",
+                "pipeline_version":"python-extract-v1",
+                "model_version":"clf-v1",
+                "processing_ms":180
+              }
+            }
+            """;
+        }
+    }
+
+    private sealed class IneNameMergeHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var body = request.Content is null
+                ? string.Empty
+                : await request.Content.ReadAsStringAsync(cancellationToken);
+
+            var isOcrOnly = body.Contains("return_ocr_text", StringComparison.OrdinalIgnoreCase);
+            var payload = isOcrOnly ? BuildOcrPayload() : BuildExtractionPayload();
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(payload, Encoding.UTF8, "application/json")
+            };
+        }
+
+        private static string BuildOcrPayload()
+        {
+            return """
+            {
+              "document_id":"00000000-0000-0000-0000-000000000000",
+              "status":"READY",
+              "document_type":"INE",
+              "confidence":0.95,
+              "fields":[],
+              "warnings":[],
+              "errors":[],
+              "meta":{
+                "pages_processed":1,
+                "ocr_engine":"paddleocr",
+                "pipeline_version":"python-extract-v1",
+                "model_version":"clf-v1",
+                "processing_ms":180
+              },
+              "ocr_text":"INSTITUTO NACIONAL ELECTORAL NOMBRE IA CAMPOS CURP GACE010425HTCRMRA8 FECHA DE NACIMIENTO 25/04/2001 CLAVE DE ELECTOR GRCMER01042527H100"
+            }
+            """;
+        }
+
+        private static string BuildExtractionPayload()
+        {
+            return """
+            {
+              "document_id":"00000000-0000-0000-0000-000000000000",
+              "status":"READY",
+              "document_type":"INE",
+              "confidence":0.90,
+              "fields":[
+                {
+                  "key":"nombre",
+                  "label":"Nombre",
+                  "value":"ERWIN GUSTAVO GARCIA CAMPOS",
+                  "confidence":0.80,
+                  "valid":true,
+                  "validation_errors":[],
+                  "source":null
+                },
+                {
+                  "key":"curp",
+                  "label":"CURP",
+                  "value":"GACE010425HTCRMRA8",
+                  "confidence":0.92,
                   "valid":true,
                   "validation_errors":[],
                   "source":null

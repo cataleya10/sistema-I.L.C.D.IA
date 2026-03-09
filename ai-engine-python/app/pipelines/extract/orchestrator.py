@@ -69,10 +69,19 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                 fields.append(_make_field("curp", "CURP", normalized, ocr_boxes, confidence=0.9))
         name_match = _guess_name(text)
         if name_match:
-            fields.append(_make_field("nombre", "Nombre", _normalize_name(name_match), ocr_boxes, confidence=0.6))
+            guessed_name = _normalize_name(name_match)
+            if document_type == "INE":
+                guessed_tokens = [token for token in guessed_name.split() if token]
+                if len(guessed_tokens) < 3:
+                    guessed_name = ""
+                if guessed_name and curps and not _name_matches_curp(guessed_name, curps[0]):
+                    guessed_name = ""
+            if guessed_name:
+                fields.append(_make_field("nombre", "Nombre", guessed_name, ocr_boxes, confidence=0.6))
         if "nombre" in box_values:
             box_name = _normalize_name(box_values["nombre"]["value"])
             box_name_conf = 0.8
+            keep_box_name = True
             # Validate OCR name against CURP initials; lower confidence if mismatch
             # so that better sources (MRZ, text fallback) can win during deduplication.
             if curps:
@@ -82,8 +91,12 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                         box_name = _normalize_name(repaired)
                         box_name_conf = 0.82
                     else:
-                        box_name_conf = 0.55  # Mismatch — let other sources win
-            fields.append(_make_field("nombre", "Nombre", box_name, ocr_boxes, confidence=box_name_conf))
+                        if document_type == "INE":
+                            keep_box_name = False
+                        else:
+                            box_name_conf = 0.55
+            if keep_box_name:
+                fields.append(_make_field("nombre", "Nombre", box_name, ocr_boxes, confidence=box_name_conf))
         mrz_name = _extract_mrz_name_from_text(base_text_raw)
         if mrz_name:
             fields.append(_make_field("nombre", "Nombre", _normalize_name(mrz_name), ocr_boxes, confidence=0.96))
@@ -105,6 +118,30 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                         confidence=ine_name_conf,
                     )
                 )
+            if ocr_boxes:
+                box_line_entries = _lines_text_from_boxes(ocr_boxes)
+                box_text_lines = [
+                    str(line.get("text", "")).strip().upper()
+                    for line in box_line_entries
+                    if str(line.get("text", "")).strip()
+                ]
+                ine_box_line_name = _extract_ine_name_from_lines(
+                    box_text_lines,
+                    curps[0] if curps else None,
+                )
+                if ine_box_line_name:
+                    box_line_conf = 0.94
+                    if curps and not _name_matches_curp(ine_box_line_name, curps[0]):
+                        box_line_conf = 0.76
+                    fields.append(
+                        _make_field(
+                            "nombre",
+                            "Nombre",
+                            _normalize_name(ine_box_line_name),
+                            ocr_boxes,
+                            confidence=box_line_conf,
+                        )
+                    )
         birth_date = _find_value_after_keyword(lines, ["FECHA DE NACIMIENTO", "FECHA NACIMIENTO", "NACIMIENTO"])
         if birth_date:
             normalized_birth = _normalize_date_value(birth_date)

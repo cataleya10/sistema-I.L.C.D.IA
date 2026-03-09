@@ -165,8 +165,43 @@ def _normalize_legacy_value(key: str, value: str) -> str:
     return _normalize_text(value)
 
 
+def _name_quality_score(value: str, curp: str | None = None) -> int:
+    normalized = _normalize_name(value).upper()
+    if not normalized:
+        return -1000
+
+    tokens = [tok for tok in re.findall(r"[A-Z]+", normalized) if tok]
+    if not tokens:
+        return -1000
+
+    particles = {"DE", "DEL", "LA", "LAS", "LOS", "Y", "MC", "VAN", "VON"}
+    short_noise = sum(1 for tok in tokens if len(tok) <= 2 and tok not in particles)
+
+    score = len(tokens) * 10 + sum(min(len(tok), 8) for tok in tokens)
+    if len(tokens) >= 3:
+        score += 12
+    if len(tokens) <= 2:
+        score -= 15
+    score -= short_noise * 10
+
+    if any(ch.isdigit() for ch in normalized):
+        score -= 30
+    if ":" in normalized:
+        score -= 20
+
+    normalized_curp = _normalize_alnum(curp or "")
+    if len(normalized_curp) >= 4:
+        if _name_matches_curp(normalized, normalized_curp):
+            score += 30
+        else:
+            score -= 25
+
+    return score
+
+
 def _merge_legacy_fields(fields: list[dict], legacy_values: dict[str, str], ocr_boxes):
     existing = {field.get("key"): field for field in fields if field.get("value")}
+    existing_curp = str(existing.get("curp", {}).get("value", "") or "")
     for key, value in legacy_values.items():
         if not value:
             continue
@@ -175,6 +210,12 @@ def _merge_legacy_fields(fields: list[dict], legacy_values: dict[str, str], ocr_
         if not normalized:
             continue
         if key not in LEGACY_OVERRIDE_KEYS and key in existing:
+            if key in {"nombre", "nombres"}:
+                current_value = str(existing[key].get("value", "") or "")
+                current_score = _name_quality_score(current_value, existing_curp)
+                candidate_score = _name_quality_score(normalized, existing_curp)
+                if candidate_score >= current_score + 6:
+                    fields.append(_make_field(key, label, normalized, ocr_boxes, confidence=0.83))
             continue
         # Reject lugar_nacimiento values that contain section-header noise from ACTA
         if key == "lugar_nacimiento":
@@ -2077,6 +2118,9 @@ def _extract_ine_name_from_lines(lines: list[str], curp: str | None = None) -> s
             start_idx = idx
             break
 
+    if start_idx < 0:
+        return None
+
     candidate_pieces: list[str] = []
     if start_idx >= 0:
         line = norm_lines[start_idx]
@@ -2097,9 +2141,6 @@ def _extract_ine_name_from_lines(lines: list[str], curp: str | None = None) -> s
             if any(stop in line_key for stop in stop_keys):
                 break
             candidate_pieces.append(line)
-    else:
-        candidate_pieces = norm_lines[:8]
-
     tokens: list[str] = []
     particles = {"DE", "DEL", "LA", "LAS", "LOS", "Y"}
     for piece in candidate_pieces:

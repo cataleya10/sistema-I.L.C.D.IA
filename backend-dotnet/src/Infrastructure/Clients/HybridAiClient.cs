@@ -11,6 +11,11 @@ namespace Infrastructure.Clients;
 public sealed class HybridAiClient : IPythonAiClient
 {
     private static readonly Regex ThreeOrMoreDigitsRegex = new(@"\d{3,}", RegexOptions.Compiled);
+    private static readonly Regex NameTokenRegex = new(@"[A-ZÑÁÉÍÓÚÜ]+", RegexOptions.Compiled);
+    private static readonly HashSet<string> NameParticles = new(StringComparer.Ordinal)
+    {
+        "DE", "DEL", "LA", "LAS", "LOS", "Y", "MC", "VAN", "VON"
+    };
     private static readonly string[] StructuredTableHeaderHints =
     [
         "CUENTA",
@@ -291,6 +296,20 @@ public sealed class HybridAiClient : IPythonAiClient
             return candidate.Valid;
         }
 
+        if (IsNameLikeFieldKey(current.Key) && string.Equals(current.Key, candidate.Key, StringComparison.OrdinalIgnoreCase))
+        {
+            var currentNameQuality = ScoreNameFieldValue(current.Value);
+            var candidateNameQuality = ScoreNameFieldValue(candidate.Value);
+            if (candidateNameQuality >= currentNameQuality + 12)
+            {
+                return true;
+            }
+            if (currentNameQuality >= candidateNameQuality + 12)
+            {
+                return false;
+            }
+        }
+
         if (candidate.Confidence != current.Confidence)
         {
             return candidate.Confidence > current.Confidence;
@@ -314,6 +333,63 @@ public sealed class HybridAiClient : IPythonAiClient
         }
 
         return preferCandidateOnTie;
+    }
+
+    private static bool IsNameLikeFieldKey(string? key)
+    {
+        return string.Equals(key, "nombre", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(key, "titular", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(key, "razon_social", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int ScoreNameFieldValue(string? rawValue)
+    {
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            return int.MinValue / 4;
+        }
+
+        var value = rawValue.Trim().ToUpperInvariant();
+        var score = 0;
+
+        if (value.Contains(':'))
+        {
+            score -= 40;
+        }
+        if (ThreeOrMoreDigitsRegex.IsMatch(value))
+        {
+            score -= 30;
+        }
+
+        var tokens = NameTokenRegex.Matches(value)
+            .Select(match => match.Value)
+            .Where(token => !string.IsNullOrWhiteSpace(token))
+            .ToArray();
+        if (tokens.Length == 0)
+        {
+            return -120;
+        }
+
+        score += tokens.Length * 12;
+        if (tokens.Length >= 3)
+        {
+            score += 20;
+        }
+        if (tokens.Length <= 2)
+        {
+            score -= 15;
+        }
+
+        foreach (var token in tokens)
+        {
+            score += Math.Min(token.Length, 8);
+            if (token.Length <= 2 && !NameParticles.Contains(token))
+            {
+                score -= 9;
+            }
+        }
+
+        return score;
     }
 
     private bool ShouldFallbackToPython(DocumentProcessResponse csharpResponse)
