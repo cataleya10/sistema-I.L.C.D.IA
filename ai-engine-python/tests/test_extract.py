@@ -1439,6 +1439,64 @@ class ExtractPipelineTests(unittest.TestCase):
 
         self.assertIsNone(data.get("nombre"))
 
+    def test_extract_curp_name_ignores_constancia_header_noise(self):
+        ocr_text = "\n".join(
+            [
+                "ESTADOS UNIDOS MEXICANOS",
+                "CONSTANCIA DE LA CLAVE UNICA DE REGISTRO DE POBLACION",
+                "CLAVE GACE010425HTCRMRA8",
+                "NOMBRE",
+                "ERWIN GUSTAVO GARCIA CAMPOS",
+                "SEXO H",
+                "FECHA DE NACIMIENTO 25/04/2001",
+                "ENTIDAD DE REGISTRO TABASCO",
+            ]
+        )
+        fields = _run_sync(extract_fields("CURP", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
+        self.assertNotIn("ESTADOS UNIDOS MEXICANOS", data.get("nombre", ""))
+
+    def test_extract_curp_drops_header_only_name_noise(self):
+        ocr_text = "\n".join(
+            [
+                "ESTADOS UNIDOS MEXICANOS",
+                "CONSTANCIA DE LA CLAVE UNICA DE REGISTRO DE POBLACION",
+                "CLAVE GACE010425HTCRMRA8",
+            ]
+        )
+        fields = _run_sync(extract_fields("CURP", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertIsNone(data.get("nombre"))
+
+    def test_extract_curp_name_from_boxes_when_legacy_name_is_header_noise(self):
+        ocr_text = "\n".join(
+            [
+                "ESTADOS UNIDOS MEXICANOS",
+                "CONSTANCIA DE LA CLAVE UNICA DE REGISTRO DE POBLACION",
+                "CLAVE GACE010425HTCRMRA8",
+                "NOMBRE",
+                "ERWIN GUSTAVO GARCIA CAMPOS",
+            ]
+        )
+        ocr_boxes = [
+            _box("ESTADOS UNIDOS MEXICANOS", 10),
+            _box("CONSTANCIA DE LA CLAVE UNICA DE REGISTRO DE POBLACION", 35),
+            _box("CLAVE GACE010425HTCRMRA8", 60),
+            _box("NOMBRE", 85),
+            _box("ERWIN GUSTAVO GARCIA CAMPOS", 110),
+        ]
+        with patch(
+            "app.pipelines.extract.orchestrator.legacy_extract_fields",
+            return_value={"nombre": "ESTADOS UNIDOS MEXICANOS CONSTANCIA DE LA CLAVE UNICA"},
+        ):
+            fields = _run_sync(extract_fields("CURP", ocr_text, ocr_boxes))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
+
     def test_extract_cfe_reference_keeps_customer_context_from_noisy_block(self):
         ocr_text = "\n".join(
             [

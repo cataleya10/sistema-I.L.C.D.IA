@@ -70,9 +70,11 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
         name_match = _guess_name(text)
         if name_match:
             guessed_name = _normalize_name(name_match)
-            if document_type == "INE":
+            if document_type in {"INE", "CURP"}:
                 guessed_tokens = [token for token in guessed_name.split() if token]
                 if len(guessed_tokens) < 3:
+                    guessed_name = ""
+                if document_type == "CURP" and guessed_name and _is_curp_header_noise_name(guessed_name):
                     guessed_name = ""
                 if guessed_name and curps and not _name_matches_curp(guessed_name, curps[0]):
                     guessed_name = ""
@@ -82,16 +84,22 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
             box_name = _normalize_name(box_values["nombre"]["value"])
             box_name_conf = 0.8
             keep_box_name = True
+            if document_type == "CURP":
+                cleaned_curp_box_name = _clean_curp_name(box_name)
+                if cleaned_curp_box_name:
+                    box_name = _normalize_name(cleaned_curp_box_name)
+                else:
+                    keep_box_name = False
             # Validate OCR name against CURP initials; lower confidence if mismatch
             # so that better sources (MRZ, text fallback) can win during deduplication.
-            if curps:
+            if keep_box_name and curps:
                 if not _name_matches_curp(box_name, curps[0]):
                     repaired = _try_repair_name_with_curp(box_name, curps[0])
                     if repaired != box_name and _name_matches_curp(repaired, curps[0]):
                         box_name = _normalize_name(repaired)
                         box_name_conf = 0.82
                     else:
-                        if document_type == "INE":
+                        if document_type in {"INE", "CURP"}:
                             keep_box_name = False
                         else:
                             box_name_conf = 0.55
@@ -142,6 +150,52 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                             confidence=box_line_conf,
                         )
                     )
+        if document_type == "CURP":
+            curp_line_name = _extract_ine_name_from_lines(
+                lines,
+                curps[0] if curps else None,
+            )
+            if curp_line_name:
+                cleaned_curp_line_name = _clean_curp_name(curp_line_name)
+                if cleaned_curp_line_name:
+                    curp_name_conf = 0.93
+                    if curps and not _name_matches_curp(cleaned_curp_line_name, curps[0]):
+                        curp_name_conf = 0.75
+                    fields.append(
+                        _make_field(
+                            "nombre",
+                            "Nombre",
+                            _normalize_name(cleaned_curp_line_name),
+                            ocr_boxes,
+                            confidence=curp_name_conf,
+                        )
+                    )
+            if ocr_boxes:
+                box_line_entries = _lines_text_from_boxes(ocr_boxes)
+                box_text_lines = [
+                    str(line.get("text", "")).strip().upper()
+                    for line in box_line_entries
+                    if str(line.get("text", "")).strip()
+                ]
+                curp_box_line_name = _extract_ine_name_from_lines(
+                    box_text_lines,
+                    curps[0] if curps else None,
+                )
+                if curp_box_line_name:
+                    cleaned_curp_box_line_name = _clean_curp_name(curp_box_line_name)
+                    if cleaned_curp_box_line_name:
+                        curp_box_line_conf = 0.94
+                        if curps and not _name_matches_curp(cleaned_curp_box_line_name, curps[0]):
+                            curp_box_line_conf = 0.76
+                        fields.append(
+                            _make_field(
+                                "nombre",
+                                "Nombre",
+                                _normalize_name(cleaned_curp_box_line_name),
+                                ocr_boxes,
+                                confidence=curp_box_line_conf,
+                            )
+                        )
         birth_date = _find_value_after_keyword(lines, ["FECHA DE NACIMIENTO", "FECHA NACIMIENTO", "NACIMIENTO"])
         if birth_date:
             normalized_birth = _normalize_date_value(birth_date)

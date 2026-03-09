@@ -1763,6 +1763,67 @@ def _normalize_value_for_key(key: str, value: str) -> str:
     return normalizer(str(value or ""))
 
 
+def _is_curp_header_noise_name(value: str) -> bool:
+    text = _normalize_name(value).upper()
+    if not text:
+        return False
+
+    header_phrases = (
+        "ESTADOS UNIDOS MEXICANOS",
+        "CONSTANCIA DE LA CLAVE UNICA",
+        "CLAVE UNICA DE REGISTRO DE POBLACION",
+        "REGISTRO DE POBLACION",
+        "GOBIERNO DE MEXICO",
+        "RENAPO",
+    )
+    if any(phrase in text for phrase in header_phrases):
+        return True
+
+    tokens = [tok for tok in text.split() if tok]
+    header_tokens = {
+        "ESTADOS",
+        "UNIDOS",
+        "MEXICANOS",
+        "CONSTANCIA",
+        "CLAVE",
+        "UNICA",
+        "REGISTRO",
+        "POBLACION",
+        "RENAPO",
+        "GOBIERNO",
+        "MEXICO",
+    }
+    hits = sum(1 for tok in tokens if tok in header_tokens)
+    return hits >= 4
+
+
+def _clean_curp_name(value: str) -> str | None:
+    if not value:
+        return None
+    cleaned = _normalize_text(value).upper()
+    if not cleaned:
+        return None
+
+    cleaned = re.sub(r"^(?:NOMBRE(?:\(S\))?|NOMBRES)\s*[:\-]?\s*", "", cleaned)
+    cleaned = re.sub(
+        r"^(?:ESTADOS\s+UNIDOS\s+MEXICANOS\s+)?CONSTANCIA\s+DE\s+LA\s+CLAVE\s+UNICA(?:\s+DE\s+REGISTRO\s+DE\s+POBLACION)?\s*",
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(r"^CLAVE\s+UNICA\s+DE\s+REGISTRO\s+DE\s+POBLACION\s*", "", cleaned)
+    cleaned = re.split(r"\b(?:CURP|CLAVE|FECHA|SEXO|ENTIDAD|NACIMIENTO|REGISTRO)\b", cleaned)[0].strip(" :.-,")
+
+    cleaned = re.sub(r"[^A-ZÑÁÉÍÓÚÜ ]", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        return None
+    if _is_curp_header_noise_name(cleaned):
+        return None
+    if not _looks_like_person_name(cleaned):
+        return None
+    return cleaned
+
+
 def _normalize_field_value_for_contract(document_type: str, key: str, value: str) -> str:
     raw = str(value or "")
     if not raw:
@@ -1798,6 +1859,11 @@ def _normalize_field_value_for_contract(document_type: str, key: str, value: str
             compact = _normalize_alnum(_normalize_text(raw))
             if re.fullmatch(r"[A-Z]{10,40}", compact):
                 return _normalize_name(_split_compact_nss_token(compact))
+        if document_type == "CURP" and key == "nombre":
+            cleaned_curp = _clean_curp_name(raw)
+            if cleaned_curp:
+                return _normalize_name(cleaned_curp)
+            return ""
         return _normalize_name(raw)
     if key == "sexo":
         return _normalize_sex(raw)
@@ -1909,6 +1975,8 @@ def _looks_like_person_name(value: str) -> bool:
         "TARIFA",
     )
     if any(tok in banned for tok in tokens):
+        return False
+    if _is_curp_header_noise_name(text):
         return False
     if any(fragment in text for fragment in banned_fragments):
         return False
