@@ -89,6 +89,12 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         or "MEGACABLE" in _name
     ):
         return "COMPROBANTE_DOMICILIO", 0.9
+    # Comprobantes de pago/transferencia con nombre de banco → FACTURA, no DATOS_BANCARIOS
+    # Ej: "PAGO FIS BMPEI 9,243.60 BBVA.pdf", "TRANSFERENCIA SPEI SANTANDER.pdf"
+    _bank_names = ("BBVA", "BANAMEX", "BANCOMER", "SANTANDER", "SCOTIABANK", "HSBC", "BANORTE")
+    _payment_signals = ("PAGO", "TRANSFERENCIA", "DISPERSION", "SPEI", "NOMINA")
+    if any(p in _name for p in _payment_signals) and any(b in _name for b in _bank_names):
+        return "FACTURA", 0.9
     if (
         "ESTADO DE CUENTA" in _name
         or "ESTADO CUENTA" in _name
@@ -168,9 +174,14 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         "OPERACION INTERBANCARIA",
         # BBVA Pago Mismo Banco / transferencias
         "PAGO MISMO BANCO",
+        "GRUPO PAGO MISMO BANCO",
         "OPERACION AUTORIZADA",
         "DATOS DE CONFIRMACION DE LA TRANSFERENCIA",
         "FOLIO DE FIRMA",
+        "FOLIO UNICO",
+        # BBVA Net Cash (plataforma de pagos empresariales)
+        "BBVA NET CASH",
+        "BBVA NETCASH",
     )
     payment_markers_compact = (
         "DISPERSIONDEPAGODENOMINA",
@@ -187,15 +198,19 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         "SPEIENVIADO",
         "SPEIRECIBIDO",
         "FOLIOSPEI",
-        "COMPROBANTDETRANSFERENCIA",
+        "COMPROBANTEDETRANSFERENCIA",  # fix: antes faltaba la E
         "NUMERODERASTREO",
         "REFERENCIANUMERICA",
         "OPERACIONINTERBANCARIA",
         # BBVA Pago Mismo Banco compact
+        "GRUPOPAGOMISMOBANCO",
         "PAGOMISMOBANCO",
         "OPERACIONAUTORIZADA",
         "DATOSDECONFIRMACIONDELATRANSFERENCIA",
         "FOLIODEFIRMA",
+        "FOLIOUNICO",
+        # BBVA Net Cash compact
+        "BBVANETCASH",
     )
 
     if (
@@ -278,21 +293,26 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         return "CURP", 0.9
     if "NSS" in text or "IMSS" in text or "SEGURIDAD SOCIAL" in text:
         return "NSS", 0.82
+    # Señales fuertes de estado de cuenta bancario (sin importar banco)
+    _bank_statement_signals = (
+        "ESTADO DE CUENTA", "ACCOUNT STATEMENT", "SALDO INICIAL", "SALDO FINAL",
+        "SALDO ANTERIOR", "MOVIMIENTOS DEL PERIODO", "FECHA DE CORTE",
+    )
+    _bank_statement_signals_compact = (
+        "ESTADODECUENTA", "SALDOINICIAL", "SALDOFINAL", "SALDOANTERIOR",
+        "MOVIMIENTOSDEL", "FECHADECORTE",
+    )
+    _bank_names_content = ("BBVA", "BANCOMER", "BANAMEX", "SANTANDER", "SCOTIABANK", "HSBC", "BANORTE", "AZTECA")
+    _has_statement_signal = (
+        any(s in text for s in _bank_statement_signals)
+        or any(s in compact_text for s in _bank_statement_signals_compact)
+    )
+    _has_bank_name = any(b in text for b in _bank_names_content)
     if (
         "CLABE" in text
-        or "BANCO" in text
-        or "CUENTA" in text
-        or "ESTADO DE CUENTA" in text
         or "ESTADODECUENTA" in compact_text
-        or "ACCOUNT STATEMENT" in text
-        or "BBVA" in text
-        or "BANCOMER" in text
-        or "BANAMEX" in text
-        or "SANTANDER" in text
-        or "SCOTIABANK" in text
-        or "HSBC" in text
-        or "BANORTE" in text
-        or "AZTECA" in text
+        or _has_statement_signal
+        or (_has_bank_name and _has_statement_signal)
     ):
         return "DATOS_BANCARIOS", 0.8
     # Filename-based PAGO/FACTURA check (pago nómina only — kept at end since less precise)
@@ -406,9 +426,22 @@ def _has_hard_markers(doc_type: str, text: str, compact_text: str) -> bool:
             "COMPROBANTE DE TRANSFERENCIA",
             "ABONO NOMINA",
             "PAGO MISMO BANCO",
+            "GRUPO PAGO MISMO BANCO",
             "DISPERSIONNOMINA",
             "PAGODENOMINA",
             "TRANSFERENCIASPEI",
+            # BBVA Net Cash payment confirmation signals
+            "OPERACION AUTORIZADA",
+            "FOLIO DE FIRMA",
+            "DATOS DE CONFIRMACION DE LA TRANSFERENCIA",
+            "BBVA NET CASH",
+            "BBVA NETCASH",
+            "OPERACIONAUTORIZADA",
+            "FOLIODEFIRMA",
+            "DATOSDECONFIRMACIONDELATRANSFERENCIA",
+            "BBVANETCASH",
+            "GRUPOPAGOMISMOBANCO",
+            "PAGOMISMOBANCO",
         ],
     }
 
