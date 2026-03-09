@@ -1497,6 +1497,27 @@ class ExtractPipelineTests(unittest.TestCase):
 
         self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
 
+    def test_extract_curp_name_from_single_line_mixed_header_footer_noise(self):
+        ocr_text = (
+            "ESTADOS UNIDOS MEXICANOS CONSTANCIA DE LA CLAVE UNICA DE REGISTRO DE POBLACION "
+            "CLAVE GACE010425HTCRMRA8 NOMBRE ERWIN GUSTAVO GARCIA CAMPOS "
+            "GOBIERNO DE MEXICO GOBERNACION RENAPO"
+        )
+        fields = _run_sync(extract_fields("CURP", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
+
+    def test_extract_curp_name_trims_inline_entidad_suffix_noise(self):
+        ocr_text = (
+            "ESTADOSUNIDOSMEXICANOS CONSTANCIADELACLAVEUNICA DEREGISTRODEPOBLACION "
+            "CLAVE GACE010425HTCRMRA8 NOMBRE ERWIN GUSTAVO GARCIA CAMPOS ENTIDADDEREGISTRO TABASCO"
+        )
+        fields = _run_sync(extract_fields("CURP", ocr_text, None))
+        data = _field_map(fields)
+
+        self.assertEqual(data.get("nombre"), "ERWIN GUSTAVO GARCIA CAMPOS")
+
     def test_extract_cfe_reference_keeps_customer_context_from_noisy_block(self):
         ocr_text = "\n".join(
             [

@@ -1794,7 +1794,7 @@ def _is_curp_header_noise_name(value: str) -> bool:
         "MEXICO",
     }
     hits = sum(1 for tok in tokens if tok in header_tokens)
-    return hits >= 4
+    return hits >= 4 and hits >= max(3, len(tokens) // 2)
 
 
 def _clean_curp_name(value: str) -> str | None:
@@ -1804,6 +1804,9 @@ def _clean_curp_name(value: str) -> str | None:
     if not cleaned:
         return None
 
+    inline_nombre = re.search(r"\bNOMBRE(?:\(S\))?\b\s*[:\-]?\s*(.+)$", cleaned)
+    if inline_nombre:
+        cleaned = inline_nombre.group(1).strip()
     cleaned = re.sub(r"^(?:NOMBRE(?:\(S\))?|NOMBRES)\s*[:\-]?\s*", "", cleaned)
     cleaned = re.sub(
         r"^(?:ESTADOS\s+UNIDOS\s+MEXICANOS\s+)?CONSTANCIA\s+DE\s+LA\s+CLAVE\s+UNICA(?:\s+DE\s+REGISTRO\s+DE\s+POBLACION)?\s*",
@@ -1811,12 +1814,25 @@ def _clean_curp_name(value: str) -> str | None:
         cleaned,
     )
     cleaned = re.sub(r"^CLAVE\s+UNICA\s+DE\s+REGISTRO\s+DE\s+POBLACION\s*", "", cleaned)
-    cleaned = re.split(r"\b(?:CURP|CLAVE|FECHA|SEXO|ENTIDAD|NACIMIENTO|REGISTRO)\b", cleaned)[0].strip(" :.-,")
+    cleaned = re.split(
+        r"\b(?:CURP|CLAVE|FECHA(?:\s+DE\s+NACIMIENTO)?|SEXO|ENTIDAD(?:\s+DE\s+REGISTRO)?|"
+        r"ENTIDADDEREGISTRO|GOBIERNO|GOBERNACION|RENAPO|ESTADOS\s+UNIDOS\s+MEXICANOS|"
+        r"CONSTANCIA(?:\s+DE\s+LA\s+CLAVE\s+UNICA(?:\s+DE\s+REGISTRO\s+DE\s+POBLACION)?)?|"
+        r"DE\s+REGISTRO|NACIMIENTO|REGISTRO)\b",
+        cleaned,
+        maxsplit=1,
+    )[0].strip(" :.-,")
 
     cleaned = re.sub(r"[^A-ZÑÁÉÍÓÚÜ ]", " ", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     if not cleaned:
         return None
+    tokens = [tok for tok in cleaned.split() if tok]
+    while tokens and tokens[-1] in {"DE", "DEL", "LA", "LAS", "LOS", "Y"}:
+        tokens.pop()
+    if len(tokens) < 2:
+        return None
+    cleaned = " ".join(tokens)
     if _is_curp_header_noise_name(cleaned):
         return None
     if not _looks_like_person_name(cleaned):
