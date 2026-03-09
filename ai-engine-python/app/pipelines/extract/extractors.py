@@ -138,6 +138,9 @@ def _extract_acta_from_boxes(ocr_boxes):
             "REGISTRO",
             "PERSONA REGISTRADA",
             "DATOS DE LA",
+            # valores de sexo que se cuelan cuando el extractor lee la fila debajo del label
+            "HOMBRE",
+            "MUJER",
         }
         if any(fragment in upper for fragment in banned_fragments):
             return False
@@ -162,6 +165,23 @@ def _extract_acta_from_boxes(ocr_boxes):
                 candidate = " ".join(dict.fromkeys(parts))
                 if _is_valid_acta_name(candidate):
                     result["nombre"] = {"value": candidate}
+
+    # Layout invertido (actas digitales RENAPO): los valores NOMBRE/APELLIDOS aparecen
+    # en la fila ENCIMA de los labels (Nombre(s):, Primer Apellido:, Segundo Apellido:).
+    # Si aún no tenemos nombre, buscar la línea anterior al label row.
+    if "nombre" not in result:
+        nombre_label_line = _find_label_line(lines, "NOMBRE(S)") or _find_label_line(lines, "NOMBRE")
+        if nombre_label_line is not None:
+            label_idx = next((i for i, ln in enumerate(lines) if ln is nombre_label_line), None)
+            if label_idx is not None and label_idx > 0:
+                prev_line = lines[label_idx - 1]
+                prev_text = prev_line.get("text", "").upper()
+                _skip_words = {"DATOS DE LA PERSONA", "PERSONA REGISTRADA", "NOMBRE", "APELLIDO",
+                               "DATOS", "REGISTRADA", "HOMBRE", "MUJER", "SEXO"}
+                if not any(w in prev_text for w in _skip_words):
+                    candidate = _clean_name_piece(prev_text)
+                    if candidate and _is_valid_acta_name(candidate):
+                        result["nombre"] = {"value": candidate}
 
     nombre = _extract_label_value(lines, "NOMBRE(S)", stop_labels=["PRIMER", "SEGUNDO", "SEXO", "FECHA"])
     if not nombre:
