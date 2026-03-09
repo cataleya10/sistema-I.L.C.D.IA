@@ -4,8 +4,5 @@
   "terminal.integrated.env.windows": {
     "VIRTUAL_ENV": "${workspaceFolder}\\ai-engine-python\\.venv312",
     "PATH": "${workspaceFolder}\\ai-engine-python\\.venv312\\Scripts;${env:PATH}"
-  },
-  "python.analysis.extraPaths": [
-    "${workspaceFolder}/ai-engine-python"
-  ]
+  }
 }

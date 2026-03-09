@@ -17,8 +17,12 @@
     "ai-engine-python/reports",
     "ai-engine-python/tests/online_learning_*"
   ],
+  "venvPath": "ai-engine-python",
+  "venv": ".venv312",
+  "pythonVersion": "3.12",
   "typeCheckingMode": "basic",
-  "reportMissingImports": "warning",
+  "reportMissingImports": "none",
+  "reportMissingModuleSource": "none",
   "reportUndefinedVariable": "none",
   "reportGeneralTypeIssues": "none",
   "reportInvalidTypeForm": "none",
