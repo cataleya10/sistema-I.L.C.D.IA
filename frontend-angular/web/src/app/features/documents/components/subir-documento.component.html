@@ -1,0 +1,28 @@
+<section class="upload-card">
+  <h2>Procesar Documento</h2>
+
+  <div class="upload-field">
+    <label for="documento-pdf">Seleccionar PDF:</label>
+    <input
+      id="documento-pdf"
+      type="file"
+      accept=".pdf,application/pdf"
+      (change)="seleccionarArchivo($event)"
+    />
+  </div>
+
+  <button type="button" (click)="procesar()" [disabled]="cargando">
+    {{ cargando ? 'Procesando...' : 'Procesar Documento' }}
+  </button>
+
+  <p class="error" *ngIf="error">{{ error }}</p>
+
+  <section class="result-card" *ngIf="resultado">
+    <h3>Resultado</h3>
+    <p><strong>Estado:</strong> {{ resultado.exito ? 'Procesado' : 'Error' }}</p>
+    <p><strong>Mensaje:</strong> {{ resultado.mensaje }}</p>
+    <p><strong>Tipo:</strong> {{ resultado.tipo }}</p>
+    <p><strong>Archivo:</strong> {{ resultado.nombreArchivo }}</p>
+    <p *ngIf="resultado.estado"><strong>Estado backend:</strong> {{ resultado.estado }}</p>
+  </section>
+</section>

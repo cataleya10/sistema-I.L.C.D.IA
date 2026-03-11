@@ -13,7 +13,7 @@ import { ToastNotificationComponent } from '../../shared/components/toast-notifi
   imports: [CommonModule, RouterOutlet, RouterLink, RouterLinkActive, ToastNotificationComponent],
   template: `
     <div class="shell">
-      <header class="shell__header">
+      <header class="shell__header" *ngIf="showChrome()">
         <div>
           <h1>SISTEMA DE LECTURA INTELIGENTE</h1>
           <p>Bufete de Mantenimiento Predictivo e Ingenieria</p>
@@ -38,7 +38,7 @@ import { ToastNotificationComponent } from '../../shared/components/toast-notifi
           </ng-template>
         </nav>
       </header>
-      <main class="shell__content">
+      <main class="shell__content" [class.shell__content--minimal]="isPublicUploadRoute()">
         <router-outlet />
       </main>
     </div>
@@ -118,6 +118,12 @@ import { ToastNotificationComponent } from '../../shared/components/toast-notifi
       .shell__content {
         padding: 32px 40px;
       }
+      .shell__content--minimal {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px 16px;
+      }
       @media (max-width: 960px) {
         .shell__header {
           padding: 20px 16px;
@@ -166,6 +172,14 @@ export class AppShellComponent implements OnDestroy {
 
   isAuthenticated(): boolean {
     return !!this.auth.getToken();
+  }
+
+  isPublicUploadRoute(): boolean {
+    return !this.isAuthenticated() && this.router.url.startsWith('/documents/upload');
+  }
+
+  showChrome(): boolean {
+    return !this.isPublicUploadRoute();
   }
 
   get userName(): string | null {

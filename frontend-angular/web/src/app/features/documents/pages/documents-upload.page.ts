@@ -1,156 +1,232 @@
-import { Component } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormsModule } from '@angular/forms';
-import { DropzoneComponent } from '../../../shared/components/dropzone.component';
-import { DocumentsService } from '../services/documents.service';
 import { HttpErrorResponse } from '@angular/common/http';
-import { ToastNotificationComponent } from '../../../shared/components/toast-notification.component';
+import { Component } from '@angular/core';
+import { FormsModule } from '@angular/forms';
+import { Observable } from 'rxjs';
+import { AuthSession, AuthService } from '../../../core/services/auth.service';
+import { SubirDocumentoComponent } from '../components/subir-documento.component';
 
 @Component({
   selector: 'app-documents-upload-page',
   standalone: true,
-  imports: [CommonModule, FormsModule, DropzoneComponent, ToastNotificationComponent],
+  imports: [CommonModule, FormsModule, SubirDocumentoComponent],
   template: `
     <section class="page">
-      <header>
-        <h2>Carga de documentos</h2>
-        <p>Sube un documento para procesarlo automaticamente.</p>
-      </header>
+      <ng-container *ngIf="isAuthenticated(); else authCard">
+        <div class="session-bar">
+          <div>
+            <p class="session-bar__label">Backend conectado</p>
+            <strong>{{ auth.getUsername() }}</strong>
+          </div>
+          <button type="button" class="ghost" (click)="logout()">Cerrar sesion</button>
+        </div>
 
-      <div class="helper">
-        <span>Tipos permitidos: PDF, PNG, JPG.</span>
-        <span>Tamano maximo: 15 MB.</span>
-      </div>
+        <app-subir-documento></app-subir-documento>
+      </ng-container>
 
-      <label class="toggle">
-        <input type="checkbox" [(ngModel)]="forceFacturaOnUpload" [disabled]="isUploading" />
-        <span>Procesar automaticamente como FACTURA/PAGO</span>
-      </label>
+      <ng-template #authCard>
+        <section class="auth-card">
+          <p class="eyebrow">Conectar con backend</p>
+          <h2>Inicia sesion o crea un usuario local</h2>
+          <p class="auth-card__copy">
+            El procesamiento real usa JWT. Desde aqui puedes autenticarte y probar el upload
+            contra el API .NET y el motor IA.
+          </p>
 
-      <div class="loading" *ngIf="isUploading">Subiendo documento...</div>
-      <app-dropzone (fileDropped)="handleFile($event)" />
+          <form class="auth-form" (ngSubmit)="login()">
+            <label for="auth-email">Usuario o correo</label>
+            <input
+              id="auth-email"
+              name="email"
+              type="text"
+              [(ngModel)]="email"
+              autocomplete="username"
+              placeholder="usuario o correo"
+            />
 
-      <div class="file-info" *ngIf="lastFileName">
-        <strong>Archivo:</strong> {{ lastFileName }}
-        <span>{{ lastFileSize }}</span>
-      </div>
+            <label for="auth-password">Contrasena</label>
+            <input
+              id="auth-password"
+              name="password"
+              type="password"
+              [(ngModel)]="password"
+              autocomplete="current-password"
+              placeholder="contrasena"
+            />
 
-      <app-toast-notification [message]="message" (dismiss)="message = null" />
+            <div class="actions">
+              <button type="submit" [disabled]="authLoading">
+                {{ authLoading ? 'Conectando...' : 'Iniciar sesion' }}
+              </button>
+              <button type="button" class="ghost" (click)="register()" [disabled]="authLoading">
+                Crear usuario local
+              </button>
+            </div>
+
+            <p class="hint">Para pruebas nuevas, usa correo + contrasena y presiona "Crear usuario local".</p>
+            <p class="error" *ngIf="authError">{{ authError }}</p>
+          </form>
+        </section>
+      </ng-template>
     </section>
   `,
   styles: [
     `
       .page {
+        width: min(100%, 720px);
         display: grid;
-        gap: 20px;
-        max-width: 640px;
+        gap: 18px;
       }
-      .helper {
-        display: grid;
-        gap: 4px;
-        font-size: 12px;
-        color: #6b7280;
+      .session-bar,
+      .auth-card {
+        border: 1px solid #dbe4f0;
+        border-radius: 20px;
+        background: #ffffff;
+        box-shadow: 0 20px 45px rgba(15, 23, 42, 0.08);
       }
-      .loading {
-        font-size: 13px;
-        color: #6b7280;
-      }
-      .toggle {
-        display: inline-flex;
+      .session-bar {
+        display: flex;
         align-items: center;
-        gap: 8px;
-        font-size: 13px;
-        color: #374151;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 18px 22px;
       }
-      .file-info {
-        display: grid;
-        gap: 4px;
+      .session-bar__label,
+      .eyebrow {
+        margin: 0 0 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
         font-size: 12px;
-        color: #374151;
+        color: #64748b;
       }
-      .file-info strong {
+      .auth-card {
+        display: grid;
+        gap: 16px;
+        padding: 28px;
+      }
+      .auth-card h2,
+      .auth-card__copy {
+        margin: 0;
+      }
+      .auth-card__copy {
+        color: #475569;
+        line-height: 1.5;
+      }
+      .auth-form {
+        display: grid;
+        gap: 10px;
+      }
+      .auth-form label {
+        font-size: 14px;
+        color: #334155;
         font-weight: 600;
+      }
+      .auth-form input {
+        padding: 12px;
+        border: 1px solid #cbd5e1;
+        border-radius: 12px;
+        background: #f8fafc;
+      }
+      .actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 6px;
+      }
+      button {
+        width: fit-content;
+        min-width: 180px;
+        padding: 12px 18px;
+        border: 0;
+        border-radius: 999px;
+        background: #0f172a;
+        color: #ffffff;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button.ghost {
+        background: #e2e8f0;
+        color: #0f172a;
+      }
+      button:disabled {
+        opacity: 0.75;
+        cursor: wait;
+      }
+      .hint,
+      .error {
+        margin: 0;
+        font-size: 13px;
+      }
+      .hint {
+        color: #64748b;
+      }
+      .error {
+        color: #b91c1c;
       }
     `
   ]
 })
 export class DocumentsUploadPage {
-  message: string | null = null;
-  isUploading = false;
-  lastFileName: string | null = null;
-  lastFileSize = '';
-  forceFacturaOnUpload = false;
+  email = '';
+  password = '';
+  authLoading = false;
+  authError = '';
 
-  private readonly maxFileSizeBytes = 15728640;
-  private readonly allowedContentTypes = new Set(['application/pdf', 'image/png', 'image/jpeg']);
-  private readonly allowedExtensions = new Set(['.pdf', '.png', '.jpg', '.jpeg']);
+  constructor(public readonly auth: AuthService) {}
 
-  constructor(private readonly documents: DocumentsService) {}
+  isAuthenticated(): boolean {
+    return this.auth.isAuthenticated();
+  }
 
-  handleFile(file: File): void {
-    this.message = null;
-    if (!file || this.isUploading) {
+  login(): void {
+    if (!this.email.trim() || !this.password) {
+      this.authError = 'Ingresa usuario/correo y contrasena.';
       return;
     }
 
-    if (!this.isAllowedType(file)) {
-      this.message = 'Tipo de archivo no permitido. Usa PDF o imagen JPG/PNG.';
+    this.runAuthRequest(this.auth.login(this.email.trim(), this.password));
+  }
+
+  register(): void {
+    const email = this.email.trim().toLowerCase();
+    if (!email || !email.includes('@') || !this.password) {
+      this.authError = 'Para registrar, usa un correo valido y una contrasena.';
       return;
     }
 
-    if (file.size > this.maxFileSizeBytes) {
-      this.message = 'El archivo excede el maximo permitido (15 MB).';
-      return;
-    }
+    this.runAuthRequest(this.auth.register(email, this.password));
+  }
 
-    this.lastFileName = file.name;
-    this.lastFileSize = this.formatBytes(file.size);
-    this.isUploading = true;
+  logout(): void {
+    this.auth.logout();
+    this.authError = '';
+    this.password = '';
+  }
 
-    this.documents.upload(file).subscribe({
-      next: (uploaded) => {
-        if (!this.forceFacturaOnUpload) {
-          this.message = 'Documento cargado correctamente.';
-          this.isUploading = false;
-          return;
-        }
+  private runAuthRequest(request$: Observable<AuthSession>): void {
+    this.authLoading = true;
+    this.authError = '';
 
-        this.documents.process(uploaded.id, { forceDocumentType: 'FACTURA' }).subscribe({
-          next: () => {
-            this.message = 'Documento cargado y enviado a procesamiento forzado como FACTURA.';
-            this.isUploading = false;
-          },
-          error: () => {
-            this.message = 'Documento cargado, pero no se pudo iniciar el procesamiento forzado.';
-            this.isUploading = false;
-          }
-        });
+    request$.subscribe({
+      next: (session) => {
+        this.auth.setToken(session.token);
+        this.auth.setRefreshToken(session.refreshToken);
+        this.auth.setUser(session.username, session.role);
+        this.authLoading = false;
       },
       error: (error: HttpErrorResponse) => {
-        const detail = typeof error.error === 'string' ? error.error : error.message;
-        this.message = `Error al cargar el documento. ${detail}`;
-        this.isUploading = false;
+        this.authError = this.resolveAuthError(error);
+        this.authLoading = false;
       }
     });
   }
 
-  private isAllowedType(file: File): boolean {
-    if (this.allowedContentTypes.has(file.type)) {
-      return true;
+  private resolveAuthError(error: HttpErrorResponse): string {
+    if (error.status === 0) {
+      return 'No se pudo conectar al API.';
     }
-    const name = file.name.toLowerCase();
-    return Array.from(this.allowedExtensions).some((ext) => name.endsWith(ext));
-  }
 
-  private formatBytes(bytes: number): string {
-    if (bytes < 1024) {
-      return `${bytes} B`;
-    }
-    const kb = bytes / 1024;
-    if (kb < 1024) {
-      return `${kb.toFixed(1)} KB`;
-    }
-    const mb = kb / 1024;
-    return `${mb.toFixed(2)} MB`;
+    const payload = error.error as { error?: string; detail?: string; message?: string } | null;
+    return payload?.error ?? payload?.detail ?? payload?.message ?? 'No fue posible autenticar.';
   }
 }

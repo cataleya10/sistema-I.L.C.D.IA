@@ -4,7 +4,7 @@ import { authGuard } from './core/guards/auth.guard';
 export const routes: Routes = [
 	{
 		path: '',
-		redirectTo: 'documents',
+		redirectTo: 'documents/upload',
 		pathMatch: 'full'
 	},
 	{
@@ -19,8 +19,7 @@ export const routes: Routes = [
 	},
 	{
 		path: 'documents/upload',
-		loadComponent: () => import('./features/documents/pages/documents-upload.page').then(m => m.DocumentsUploadPage),
-		canActivate: [authGuard]
+		loadComponent: () => import('./features/documents/pages/documents-upload.page').then(m => m.DocumentsUploadPage)
 	},
 	{
 		path: 'documents/:id',
@@ -39,6 +38,6 @@ export const routes: Routes = [
 	},
 	{
 		path: '**',
-		redirectTo: 'documents'
+		redirectTo: 'documents/upload'
 	}
 ];
