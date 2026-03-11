@@ -10,9 +10,9 @@ $apiPath = Join-Path $root "backend-dotnet\src\Api"
 if ($Force) {
     $listeners = Get-NetTCPConnection -LocalPort 5000 -State Listen -ErrorAction SilentlyContinue
     if ($listeners) {
-        $pids = $listeners | Select-Object -ExpandProperty OwningProcess -Unique
-        foreach ($pid in $pids) {
-            try { Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue } catch {}
+        $processIds = $listeners | Select-Object -ExpandProperty OwningProcess -Unique
+        foreach ($processId in $processIds) {
+            try { Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue } catch {}
         }
         Start-Sleep -Milliseconds 400
     }

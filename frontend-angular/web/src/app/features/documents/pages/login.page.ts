@@ -265,6 +265,7 @@ export class LoginPage implements OnInit, AfterViewInit, OnDestroy {
 
   submit(): void {
     this.error = false;
+    this.errorMessage = 'Credenciales invalidas';
     this.googleError = '';
     const username = this.username.trim();
     if (!username || !this.password) {
@@ -281,7 +282,12 @@ export class LoginPage implements OnInit, AfterViewInit, OnDestroy {
         this.isSubmitting = false;
         this.router.navigate(['/documents']);
       },
-      error: () => {
+      error: (err) => {
+        if (err?.status === 0) {
+          this.errorMessage = 'No se pudo conectar al API (CORS o servidor caido)';
+        } else {
+          this.errorMessage = err?.error?.error || 'Credenciales invalidas';
+        }
         this.error = true;
         this.isSubmitting = false;
       }
