@@ -1,5 +1,6 @@
 .venv/
 .dotnet/
+/node_modules/
 ai-engine-python/.venv312/
 ai-engine-python/logs/
 ai-engine-python/app/**/__pycache__/
@@ -19,6 +20,7 @@ backend-dotnet/src/Shared/obj/
 .env
 start-all.pids.json
 logs/
+/frontend-angular/web/ng-serve*.log
 reports/
 **/__pycache__/
 *.pyc

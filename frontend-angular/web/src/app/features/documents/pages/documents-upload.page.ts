@@ -22,7 +22,7 @@ import { SubirDocumentoComponent } from '../components/subir-documento.component
         </div>
 
         <app-subir-documento></app-subir-documento>
-      </ng-container>
+      </ng-container> 
 
       <ng-template #authCard>
         <section class="auth-card">

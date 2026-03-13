@@ -4,13 +4,13 @@ import { DocumentoService } from '../../services/documento.service';
 import { ResultadoDocumento } from '../../interfaces/documento-resultado.interface';
 
 @Component({
-  selector: 'app-subir-documento',
+  selector: 'app-carga-documento-legacy',
   standalone: true,
   imports: [CommonModule],
   templateUrl: './subir-documento.component.html',
   styleUrls: ['./subir-documento.component.css']
 })
-export class SubirDocumentoComponent {
+export class SubirDocumentoLegacyComponent {
   archivoSeleccionado: File | null = null;
   tipoDocumento = 'FACTURA';
   resultado: ResultadoDocumento | null = null;

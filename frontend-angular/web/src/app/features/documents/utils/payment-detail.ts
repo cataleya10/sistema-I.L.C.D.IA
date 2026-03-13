@@ -18,7 +18,6 @@ function titleFromKey(key: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-/** Human-readable labels for canonical column keys. */
 const PAYMENT_COLUMN_LABELS: Record<string, string> = {
   cuenta: 'Cuenta',
   cuenta_retiro: 'Cuenta retiro',
@@ -53,7 +52,7 @@ const PAYMENT_COLUMN_LABELS: Record<string, string> = {
   estado: 'Estado',
   fecha_creacion: 'Fecha creacion',
   fecha_aplicacion: 'Fecha aplicacion',
-  hora_captura: 'Hora captura',
+  hora_captura: 'Hora captura'
 };
 
 function labelForPaymentColumn(key: string): string {
@@ -71,6 +70,10 @@ export function parsePaymentDetail(rawValue: string | null | undefined): Payment
     const payload = JSON.parse(serialized) as {
       bank?: unknown;
       metadata?: Record<string, unknown>;
+      canonical_columns?: unknown;
+      canonical_rows?: unknown;
+      display_columns?: Record<string, string>;
+      summary_tables?: unknown;
       table?: {
         canonical_columns?: unknown;
         canonical_rows?: unknown;
@@ -78,22 +81,33 @@ export function parsePaymentDetail(rawValue: string | null | undefined): Payment
         summary_tables?: unknown;
       };
     };
+
     const metadata = payload?.metadata && typeof payload.metadata === 'object' ? payload.metadata : {};
     const metadataEntries = Object.entries(metadata)
       .map(([key, value]) => ({ key: titleFromKey(key), value: normalizeText(value) }))
       .filter((entry) => entry.key && entry.value);
 
-    const canonicalColumns = Array.isArray(payload?.table?.canonical_columns)
-      ? payload.table!.canonical_columns.map((item) => normalizeText(item)).filter((item) => item.length > 0)
-      : [];
+    const canonicalColumnsRaw = Array.isArray(payload?.canonical_columns)
+      ? payload.canonical_columns
+      : Array.isArray(payload?.table?.canonical_columns)
+        ? payload.table!.canonical_columns
+        : [];
+    const canonicalColumns = canonicalColumnsRaw
+      .map((item) => normalizeText(item))
+      .filter((item) => item.length > 0);
 
-    // Read display_columns from API — original PDF header labels
     const displayColumnsMap: Record<string, string> =
-      payload?.table?.display_columns && typeof payload.table.display_columns === 'object'
-        ? payload.table.display_columns
-        : {};
+      payload?.display_columns && typeof payload.display_columns === 'object'
+        ? payload.display_columns
+        : payload?.table?.display_columns && typeof payload.table.display_columns === 'object'
+          ? payload.table.display_columns
+          : {};
 
-    const canonicalRowsRaw = Array.isArray(payload?.table?.canonical_rows) ? payload.table!.canonical_rows : [];
+    const canonicalRowsRaw = Array.isArray(payload?.canonical_rows)
+      ? payload.canonical_rows
+      : Array.isArray(payload?.table?.canonical_rows)
+        ? payload.table!.canonical_rows
+        : [];
     const canonicalRows = canonicalRowsRaw
       .map((row) => {
         if (!row || typeof row !== 'object') {
@@ -111,7 +125,11 @@ export function parsePaymentDetail(rawValue: string | null | undefined): Payment
       })
       .filter((row): row is string[] => Array.isArray(row) && row.some((cell) => cell.length > 0));
 
-    const summaryTablesRaw = Array.isArray(payload?.table?.summary_tables) ? payload.table!.summary_tables : [];
+    const summaryTablesRaw = Array.isArray(payload?.summary_tables)
+      ? payload.summary_tables
+      : Array.isArray(payload?.table?.summary_tables)
+        ? payload.table!.summary_tables
+        : [];
     const summaryTables = summaryTablesRaw
       .map((item) => {
         if (!item || typeof item !== 'object') {
@@ -127,7 +145,7 @@ export function parsePaymentDetail(rawValue: string | null | undefined): Payment
         return {
           title: normalizeText(typed.title) || 'Resumen',
           columns,
-          rows,
+          rows
         };
       })
       .filter(
@@ -143,12 +161,11 @@ export function parsePaymentDetail(rawValue: string | null | undefined): Payment
       bank: normalizeText(payload?.bank) || 'DESCONOCIDO',
       metadataEntries,
       canonicalColumns: canonicalColumns.map((col) => {
-        // Prefer original PDF header label, then generic label, then titleCase
         const normalized = col.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
         return displayColumnsMap[normalized] || displayColumnsMap[col] || labelForPaymentColumn(col);
       }),
       canonicalRows,
-      summaryTables,
+      summaryTables
     };
   } catch {
     return null;

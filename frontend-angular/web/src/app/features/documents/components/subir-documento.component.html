@@ -1,28 +1,149 @@
 <section class="upload-card">
-  <h2>Procesar Documento</h2>
+  <div class="section-head">
+    <div>
+      <p class="eyebrow">Carga de documento</p>
+      <h2>Procesar documento</h2>
+      <p class="subtitle">
+        Sube un PDF para extraer el resumen del documento y la tabla de beneficiarios.
+      </p>
+    </div>
+  </div>
 
   <div class="upload-field">
-    <label for="documento-pdf">Seleccionar PDF:</label>
+    <label for="document-file">Seleccionar PDF</label>
     <input
-      id="documento-pdf"
+      id="document-file"
       type="file"
       accept=".pdf,application/pdf"
       (change)="seleccionarArchivo($event)"
     />
+
+    <div class="file-chip" *ngIf="archivoSeleccionado">
+      <span>Archivo seleccionado</span>
+      <strong>{{ archivoSeleccionado.name }}</strong>
+    </div>
   </div>
 
-  <button type="button" (click)="procesar()" [disabled]="cargando">
-    {{ cargando ? 'Procesando...' : 'Procesar Documento' }}
-  </button>
+  <div class="actions">
+    <button type="button" (click)="procesar()" [disabled]="cargando">
+      {{ cargando ? 'Procesando...' : 'Procesar Documento' }}
+    </button>
+  </div>
 
-  <p class="error" *ngIf="error">{{ error }}</p>
+  <p *ngIf="mensaje" class="message success">
+    {{ mensaje }}
+  </p>
 
-  <section class="result-card" *ngIf="resultado">
-    <h3>Resultado</h3>
-    <p><strong>Estado:</strong> {{ resultado.exito ? 'Procesado' : 'Error' }}</p>
-    <p><strong>Mensaje:</strong> {{ resultado.mensaje }}</p>
-    <p><strong>Tipo:</strong> {{ resultado.tipo }}</p>
-    <p><strong>Archivo:</strong> {{ resultado.nombreArchivo }}</p>
-    <p *ngIf="resultado.estado"><strong>Estado backend:</strong> {{ resultado.estado }}</p>
-  </section>
+  <p *ngIf="error" class="message error">
+    {{ error }}
+  </p>
+</section>
+
+<section class="result-card" *ngIf="resultado">
+  <div class="section-head">
+    <div>
+      <p class="eyebrow">Resultado</p>
+      <h3>Documento procesado</h3>
+    </div>
+    <span class="status-pill" [class.ok]="resultado.success" [class.fail]="!resultado.success">
+      {{ resultado.success ? 'Procesado' : 'Error' }}
+    </span>
+  </div>
+
+  <div class="info-list">
+    <p><strong>Mensaje:</strong> {{ resultado.message }}</p>
+    <p><strong>Tipo:</strong> {{ resultado.tipoDocumento }}</p>
+  </div>
+
+  <div *ngIf="resultado.resumen" class="summary-card">
+    <h3>Resumen</h3>
+
+    <div class="summary-grid">
+      <article class="summary-item">
+        <span>Banco</span>
+        <strong>{{ resultado.resumen.banco || '-' }}</strong>
+      </article>
+
+      <article class="summary-item">
+        <span>Folio</span>
+        <strong>{{ resultado.resumen.folio || '-' }}</strong>
+      </article>
+
+      <article class="summary-item">
+        <span>Archivo</span>
+        <strong>{{ resultado.resumen.nombreArchivo || '-' }}</strong>
+      </article>
+
+      <article class="summary-item">
+        <span>Cantidad de movimientos</span>
+        <strong>{{ resultado.resumen.cantidadMovimientos || '-' }}</strong>
+      </article>
+
+      <article class="summary-item">
+        <span>Importe total</span>
+        <strong>{{ resultado.resumen.importeTotal || '-' }}</strong>
+      </article>
+    </div>
+  </div>
+
+  <div *ngIf="resultado.beneficiarios?.length" class="validation-card">
+    <h3>Validación</h3>
+
+    <p>
+      <strong>Importe total del documento:</strong>
+      ${{ formatearMoneda(obtenerImporteTotalNumerico()) }}
+    </p>
+
+    <p>
+      <strong>Suma de beneficiarios:</strong>
+      ${{ formatearMoneda(obtenerSumaBeneficiarios()) }}
+    </p>
+
+    <p>
+      <strong>Resultado:</strong>
+      <span [class.valid-ok]="laValidacionEsCorrecta()" [class.valid-fail]="!laValidacionEsCorrecta()">
+        {{ laValidacionEsCorrecta() ? 'Correcta' : 'No coincide' }}
+      </span>
+    </p>
+  </div>
+
+  <div *ngIf="resultado.beneficiarios?.length" class="table-card">
+    <div class="section-head">
+      <div>
+        <p class="eyebrow">Detalle</p>
+        <h3>Beneficiarios</h3>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Clave</th>
+            <th>Nombre</th>
+            <th>Importe</th>
+            <th>Fecha</th>
+            <th>Referencia</th>
+            <th>Cuenta</th>
+            <th>Banco</th>
+            <th>Días</th>
+            <th>Concepto</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let b of resultado.beneficiarios; let rowIndex = index" [class.alt]="rowIndex % 2 === 1">
+            <td>{{ b.claveBeneficiario || '-' }}</td>
+            <td>{{ b.nombre || '-' }}</td>
+            <td>{{ b.importe || '-' }}</td>
+            <td>{{ b.fechaAplicacion || '-' }}</td>
+            <td>{{ b.referencia || '-' }}</td>
+            <td>{{ b.cuentaBeneficiario || '-' }}</td>
+            <td>{{ b.bancoReceptor || '-' }}</td>
+            <td>{{ b.diasVigencia || '-' }}</td>
+            <td>{{ b.conceptoPago || '-' }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
 </section>
