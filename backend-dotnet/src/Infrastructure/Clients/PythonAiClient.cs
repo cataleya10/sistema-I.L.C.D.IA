@@ -1,4 +1,5 @@
 ﻿using System.Net.Http.Headers;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -75,16 +76,7 @@ public class PythonAiClient : IPythonAiClient
             HttpMethod.Get,
             $"/online-learning/stats?recent={safeRecent}");
 
-        if (!string.IsNullOrWhiteSpace(_apiKey))
-        {
-            request.Headers.Add("X-Api-Key", _apiKey);
-        }
-
-        var correlationId = GetCorrelationId();
-        if (!string.IsNullOrWhiteSpace(correlationId))
-        {
-            request.Headers.Add("X-Correlation-Id", correlationId);
-        }
+        AddSharedHeaders(request);
 
         using var response = await _httpClient.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
@@ -106,6 +98,59 @@ public class PythonAiClient : IPythonAiClient
             ByReason = result.ByReason ?? new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
             ByDocumentType = result.ByDocumentType ?? new Dictionary<string, OnlineLearningByTypeDto>(StringComparer.OrdinalIgnoreCase),
             RecentEvents = result.RecentEvents ?? Array.Empty<OnlineLearningEventDto>()
+        };
+    }
+
+    public async Task<AuditFolderResponseDto> AuditFolderAsync(
+        AuditFolderRequestDto requestPayload,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(requestPayload);
+
+        var payloadJson = JsonSerializer.Serialize(requestPayload, _jsonOptions);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/diagnostics/audit-folder")
+        {
+            Content = new StringContent(payloadJson, Encoding.UTF8, "application/json")
+        };
+
+        AddSharedHeaders(request);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        var raw = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var detail = ExtractErrorDetail(raw);
+            if (response.StatusCode == HttpStatusCode.BadRequest)
+            {
+                throw new InvalidOperationException(detail ?? "La solicitud de auditoria es invalida.");
+            }
+
+            throw new HttpRequestException(
+                detail ?? $"La solicitud de auditoria al motor IA fallo con estado {(int)response.StatusCode}.",
+                null,
+                response.StatusCode);
+        }
+
+        var result = JsonSerializer.Deserialize<AuditFolderResponseDto>(raw, _jsonOptions);
+        if (result is null)
+        {
+            throw new InvalidOperationException("La respuesta de auditoria del motor IA es invalida.");
+        }
+
+        return result with
+        {
+            FolderPath = result.FolderPath ?? string.Empty,
+            DocumentTypeCounts = result.DocumentTypeCounts ?? new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+            Documents = (result.Documents ?? Array.Empty<AuditDocumentSummaryDto>())
+                .Select(document => document with
+                {
+                    Name = document.Name ?? string.Empty,
+                    FilePath = document.FilePath ?? string.Empty,
+                    Status = document.Status ?? string.Empty,
+                    Warnings = document.Warnings ?? Array.Empty<string>(),
+                    MappedFields = document.MappedFields ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                })
+                .ToArray()
         };
     }
 
@@ -171,16 +216,7 @@ public class PythonAiClient : IPythonAiClient
             Content = content
         };
 
-        if (!string.IsNullOrWhiteSpace(_apiKey))
-        {
-            request.Headers.Add("X-Api-Key", _apiKey);
-        }
-
-        var correlationId = GetCorrelationId();
-        if (!string.IsNullOrWhiteSpace(correlationId))
-        {
-            request.Headers.Add("X-Correlation-Id", correlationId);
-        }
+        AddSharedHeaders(request);
 
         using var response = await _httpClient.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
@@ -200,6 +236,48 @@ public class PythonAiClient : IPythonAiClient
         }
 
         return new PythonProcessPayload(result, ocrText);
+    }
+
+    private void AddSharedHeaders(HttpRequestMessage request)
+    {
+        if (!string.IsNullOrWhiteSpace(_apiKey))
+        {
+            request.Headers.Add("X-Api-Key", _apiKey);
+        }
+
+        var correlationId = GetCorrelationId();
+        if (!string.IsNullOrWhiteSpace(correlationId))
+        {
+            request.Headers.Add("X-Correlation-Id", correlationId);
+        }
+    }
+
+    private static string? ExtractErrorDetail(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var json = JsonDocument.Parse(raw);
+            if (!json.RootElement.TryGetProperty("detail", out var detailElement))
+            {
+                return null;
+            }
+
+            return detailElement.ValueKind switch
+            {
+                JsonValueKind.String => detailElement.GetString(),
+                JsonValueKind.Array => string.Join("; ", detailElement.EnumerateArray().Select(item => item.ToString())),
+                _ => detailElement.ToString()
+            };
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private sealed record PythonProcessPayload(DocumentProcessResponse Response, string? OcrText);

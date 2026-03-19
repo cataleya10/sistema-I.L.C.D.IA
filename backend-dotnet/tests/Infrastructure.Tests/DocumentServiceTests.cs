@@ -201,6 +201,15 @@ public class DocumentServiceTests
             CancellationToken cancellationToken)
             => _handler(documentId, filePath, originalFilename, optionsJson, cancellationToken);
 
+        public Task<AuditFolderResponseDto> AuditFolderAsync(
+            AuditFolderRequestDto request,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _ = request;
+            throw new NotSupportedException();
+        }
+
         public Task<OnlineLearningStatsDto> GetOnlineLearningStatsAsync(
             int recent,
             CancellationToken cancellationToken)

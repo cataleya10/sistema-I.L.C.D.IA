@@ -324,6 +324,51 @@ class DocumentProcessorTests(unittest.TestCase):
         self.assertEqual(learn_mock.call_count, 1)
         self.assertFalse(any("[NOMINA_STRICT]" in warning for warning in response.warnings))
 
+    def test_process_document_nomina_strict_skips_low_fill_for_small_tables(self):
+        payload = {
+            "canonical_columns": [
+                "cuenta",
+                "referencia",
+                "importe",
+                "nombre",
+                "apellido_paterno",
+                "apellido_materno",
+                "estatus",
+                "concepto_pago",
+            ],
+            "canonical_rows": [
+                {
+                    "cuenta": "56909499074",
+                    "referencia": "1620260115132513648289",
+                    "importe": "$4,856.57",
+                    "nombre": "NESTOR",
+                    "apellido_paterno": "TORRES",
+                    "apellido_materno": "PAPAQUI",
+                    "estatus": "PROCESADO",
+                    "concepto_pago": "PAGO DE NOMINA",
+                },
+                {
+                    "cuenta": "56909499407",
+                    "referencia": "1620260115132513668290",
+                    "importe": "$3,000.00",
+                    "nombre": "SABINO LARA",
+                    "apellido_paterno": "VIVEROS",
+                    "apellido_materno": "",
+                    "estatus": "PROCESADO",
+                    "concepto_pago": "PAGO DE NOMINA",
+                },
+            ],
+        }
+        response, learn_mock = self._run_case(
+            [_tabla_celdas_field(payload)],
+            doc_type="FACTURA",
+            critical_fields={"FACTURA": ["tabla_celdas"]},
+        )
+
+        self.assertEqual(response.status, "READY")
+        self.assertEqual(learn_mock.call_count, 1)
+        self.assertFalse(any("apellido_materno" in warning for warning in response.warnings))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -475,6 +475,9 @@ public class DocumentsControllerEndpointExportTests
         public Task<DocumentProcessResponse> ProcessDocumentAsync(Guid documentId, string filePath, string? originalFilename, string? optionsJson, CancellationToken cancellationToken)
             => throw new NotImplementedException();
 
+        public Task<AuditFolderResponseDto> AuditFolderAsync(AuditFolderRequestDto request, CancellationToken cancellationToken)
+            => throw new NotImplementedException();
+
         public Task<OnlineLearningStatsDto> GetOnlineLearningStatsAsync(int recent, CancellationToken cancellationToken)
             => throw new NotImplementedException();
     }

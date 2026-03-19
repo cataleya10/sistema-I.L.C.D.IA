@@ -140,6 +140,8 @@ class PipelineIntegrationTests(unittest.TestCase):
 
         table_field = _require_field(validated, "tabla_celdas")
         self.assertTrue(bool(table_field.get("value")))
+        detail_field = _require_field(validated, "pago_detalle")
+        self.assertTrue(bool(detail_field.get("value")))
 
 
 if __name__ == "__main__":

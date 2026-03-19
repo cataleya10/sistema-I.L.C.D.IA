@@ -3,10 +3,12 @@ import asyncio
 from unittest.mock import patch
 
 from app.api.routes import (
+    audit_folder_endpoint,
     online_learning_stats_endpoint,
     online_learning_feedback_endpoint,
     online_learning_retrain_endpoint,
 )
+from app.schemas.audit import AuditFolderRequest
 from app.schemas.online_learning import (
     OnlineLearningFeedbackRequest,
     FeedbackField,
@@ -15,6 +17,35 @@ from app.schemas.online_learning import (
 
 
 class ApiRoutesTests(unittest.TestCase):
+    def test_audit_folder_endpoint_returns_service_payload(self):
+        expected = {
+            "folder_path": "C:\\docs",
+            "recurse": True,
+            "limit": 25,
+            "issues_only": False,
+            "matched_files": 3,
+            "processed_files": 3,
+            "documents_returned": 3,
+            "clean_count": 2,
+            "issue_count": 1,
+            "error_count": 0,
+            "hard_fail_count": 0,
+            "non_factura_count": 0,
+            "document_type_counts": {"FACTURA": 3},
+            "documents": [],
+        }
+        payload = AuditFolderRequest(folder_path="C:\\docs", recurse=True, limit=25, issues_only=False)
+        with patch("app.api.routes.run_audit_folder", return_value=expected) as audit_mock:
+            response = asyncio.run(audit_folder_endpoint(payload=payload))
+
+        self.assertEqual(response, expected)
+        audit_mock.assert_called_once_with(
+            "C:\\docs",
+            recurse=True,
+            limit=25,
+            issues_only=False,
+        )
+
     def test_online_learning_stats_endpoint_returns_payload(self):
         expected = {
             "totals": {"attempted": 7, "trained": 5, "skipped": 2},

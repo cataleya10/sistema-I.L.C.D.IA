@@ -85,6 +85,49 @@ public class DocumentsController : ControllerBase
         }
     }
 
+    [HttpPost("diagnostics/audit-folder")]
+    [RequireRole("Admin")]
+    public async Task<ActionResult<AuditFolderResponseDto>> AuditFolder(
+        [FromBody] AuditFolderRequestDto? request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request is null || string.IsNullOrWhiteSpace(request.FolderPath))
+        {
+            return BadRequest("La ruta de carpeta es obligatoria.");
+        }
+
+        var folderPath = request.FolderPath.Trim();
+        if (!Path.IsPathRooted(folderPath))
+        {
+            return BadRequest("La ruta de carpeta debe ser absoluta.");
+        }
+
+        if (request.Limit is < 1 or > 500)
+        {
+            return BadRequest("El limite debe estar entre 1 y 500.");
+        }
+
+        try
+        {
+            var result = await _pythonAiClient.AuditFolderAsync(
+                request with { FolderPath = folderPath },
+                cancellationToken);
+            return Ok(result);
+        }
+        catch (NotSupportedException)
+        {
+            return StatusCode(StatusCodes.Status501NotImplemented, "La auditoria de carpetas requiere el motor Python habilitado.");
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(string.IsNullOrWhiteSpace(ex.Message) ? "La solicitud de auditoria es invalida." : ex.Message);
+        }
+        catch (HttpRequestException)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, "No se pudo consultar la auditoria del motor IA.");
+        }
+    }
+
     [HttpGet("{id:guid}")]
     [RequireRole("Admin,User")]
     public async Task<ActionResult<DocumentDetailDto>> GetById(Guid id, CancellationToken cancellationToken)

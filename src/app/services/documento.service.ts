@@ -48,8 +48,28 @@ export class DocumentoService {
       return fields.find((f: any) => f.key?.toLowerCase() === key.toLowerCase());
     };
 
+    const parseStructuredField = (raw: any): any | null => {
+      if (!raw) {
+        return null;
+      }
+      if (typeof raw === 'object') {
+        return raw;
+      }
+      if (typeof raw !== 'string') {
+        return null;
+      }
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return null;
+      }
+    };
+
     const pagoDetalleField = getField('pago_detalle');
-    const pagoDetalle = pagoDetalleField?.value ?? pagoDetalleField?.corrected_value;
+    const tablaCeldasField = getField('tabla_celdas');
+    const pagoDetalle =
+      parseStructuredField(pagoDetalleField?.corrected_value ?? pagoDetalleField?.value) ??
+      parseStructuredField(tablaCeldasField?.corrected_value ?? tablaCeldasField?.value);
 
     let beneficiarios: any[] = [];
     let banco = '';

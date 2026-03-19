@@ -2,8 +2,10 @@ import json
 
 from fastapi import APIRouter, UploadFile, File, Form, Header, HTTPException, Depends, Query, Response
 from app.schemas.process import ProcessResponse
+from app.schemas.audit import AuditFolderRequest, AuditFolderResponse
 from app.schemas.online_learning import OnlineLearningFeedbackRequest, OnlineLearningRetrainRequest
 from app.services.document_processor import process_document, export_table_to_csv_excel
+from app.services.document_audit import audit_folder as run_audit_folder
 from app.services.online_learning import (
     get_online_learning_stats,
     get_precision_metrics,
@@ -33,6 +35,19 @@ async def process_document_endpoint(
         file.filename = original_filename
     payload = await process_document(file, document_id=document_id, source=source, options=options)
     return payload
+
+
+@router.post("/diagnostics/audit-folder", dependencies=[Depends(verify_api_key)], response_model=AuditFolderResponse)
+async def audit_folder_endpoint(payload: AuditFolderRequest):
+    try:
+        return await run_audit_folder(
+            payload.folder_path,
+            recurse=payload.recurse,
+            limit=payload.limit,
+            issues_only=payload.issues_only,
+        )
+    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get("/online-learning/stats", dependencies=[Depends(verify_api_key)])

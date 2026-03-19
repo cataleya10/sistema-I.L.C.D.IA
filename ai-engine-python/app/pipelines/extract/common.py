@@ -2098,14 +2098,32 @@ def _is_valid_payment_detail_payload(value: str) -> bool:
         return False
     if not isinstance(payload, dict):
         return False
+
+    def _has_table_rows(rows) -> bool:
+        if not isinstance(rows, list):
+            return False
+
+        non_empty_rows = 0
+        for row in rows:
+            if isinstance(row, dict):
+                if any(str(cell or "").strip() for cell in row.values()):
+                    non_empty_rows += 1
+                    continue
+            elif isinstance(row, list):
+                if any(str(cell or "").strip() for cell in row):
+                    non_empty_rows += 1
+                    continue
+        return non_empty_rows >= 1 if rows and isinstance(rows[0], dict) else non_empty_rows >= 2
+
     metadata = payload.get("metadata")
     table = payload.get("table")
     has_metadata = isinstance(metadata, dict) and any(str(v or "").strip() for v in metadata.values())
-    has_rows = False
+    has_rows = _has_table_rows(payload.get("rows"))
+    has_canonical_rows = _has_table_rows(payload.get("canonical_rows"))
     if isinstance(table, dict):
-        rows = table.get("rows")
-        has_rows = isinstance(rows, list) and any(isinstance(item, dict) and item for item in rows)
-    return has_metadata or has_rows
+        has_rows = has_rows or _has_table_rows(table.get("rows"))
+        has_canonical_rows = has_canonical_rows or _has_table_rows(table.get("canonical_rows"))
+    return has_metadata or has_rows or has_canonical_rows
 
 
 def _looks_like_person_name(value: str) -> bool:

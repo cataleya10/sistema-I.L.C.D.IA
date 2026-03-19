@@ -83,6 +83,52 @@ public class PythonAiClientTests
         return JsonSerializer.Serialize(resp, JsonOpts);
     }
 
+    private static string MakeAuditResponseJson()
+    {
+        var resp = new
+        {
+            folder_path = @"C:\audits\nomina",
+            recurse = true,
+            limit = 25,
+            issues_only = false,
+            matched_files = 2,
+            processed_files = 2,
+            documents_returned = 1,
+            clean_count = 1,
+            issue_count = 1,
+            error_count = 0,
+            hard_fail_count = 0,
+            non_factura_count = 0,
+            document_type_counts = new Dictionary<string, int>
+            {
+                ["FACTURA"] = 2
+            },
+            documents = new[]
+            {
+                new
+                {
+                    name = "nomina-01.pdf",
+                    file_path = @"C:\audits\nomina\nomina-01.pdf",
+                    status = "READY",
+                    document_type = "FACTURA",
+                    confidence = 0.98m,
+                    tabla_rows = 5,
+                    detalle_rows = 4,
+                    warning_count = 1,
+                    warnings = new[] { "fila incompleta" },
+                    hard_fail = false,
+                    mapped_fields = new Dictionary<string, string>
+                    {
+                        ["referencia"] = "ABC123"
+                    },
+                    error = (string?)null
+                }
+            }
+        };
+
+        return JsonSerializer.Serialize(resp, JsonOpts);
+    }
+
     private static PythonAiClient CreateClient(FakeHandler handler, IConfiguration? config = null)
     {
         var httpClient = new HttpClient(handler);
@@ -281,6 +327,58 @@ public class PythonAiClientTests
     }
 
     // ── MergeOptionsWithOcrFlag (via ExtractOcrAsync) ────
+
+    [Fact]
+    public async Task AuditFolderAsync_ReturnsSummary_AndSendsJsonPayload()
+    {
+        HttpRequestMessage? captured = null;
+        string? body = null;
+
+        var handler = new FakeHandler(async req =>
+        {
+            captured = req;
+            body = req.Content is null ? null : await req.Content.ReadAsStringAsync();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(MakeAuditResponseJson(), System.Text.Encoding.UTF8, "application/json")
+            };
+        });
+
+        var client = CreateClient(handler);
+        var result = await client.AuditFolderAsync(
+            new AuditFolderRequestDto(@"C:\audits\nomina", true, 25, false),
+            CancellationToken.None);
+
+        Assert.NotNull(captured);
+        Assert.Equal(HttpMethod.Post, captured!.Method);
+        Assert.Contains("/diagnostics/audit-folder", captured.RequestUri!.ToString());
+        Assert.NotNull(body);
+        Assert.Contains("\"folder_path\":\"C:\\\\audits\\\\nomina\"", body!);
+        Assert.Contains("\"limit\":25", body!);
+        Assert.Equal(@"C:\audits\nomina", result.FolderPath);
+        Assert.Equal(2, result.MatchedFiles);
+        Assert.Single(result.Documents);
+        Assert.Equal("ABC123", result.Documents[0].MappedFields["referencia"]);
+    }
+
+    [Fact]
+    public async Task AuditFolderAsync_ThrowsInvalidOperationException_WhenPythonReturnsBadRequest()
+    {
+        var handler = new FakeHandler(_ =>
+            new HttpResponseMessage(HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent("{\"detail\":\"carpeta invalida\"}", System.Text.Encoding.UTF8, "application/json")
+            });
+
+        var client = CreateClient(handler);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.AuditFolderAsync(
+                new AuditFolderRequestDto(@"C:\bad", true, 10, false),
+                CancellationToken.None));
+
+        Assert.Contains("carpeta invalida", ex.Message);
+    }
 
     [Fact]
     public async Task ExtractOcrAsync_IncludesReturnOcrTextFlag()

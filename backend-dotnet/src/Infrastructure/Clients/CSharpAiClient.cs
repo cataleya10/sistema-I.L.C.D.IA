@@ -65,6 +65,15 @@ public sealed class CSharpAiClient : IPythonAiClient
                 Array.Empty<OnlineLearningEventDto>()));
     }
 
+    public Task<AuditFolderResponseDto> AuditFolderAsync(
+        AuditFolderRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _ = request;
+        throw new NotSupportedException("La auditoria de carpetas requiere el motor Python habilitado.");
+    }
+
     public Task<DocumentProcessResponse> ProcessTextAsync(
         Guid documentId,
         string rawText,

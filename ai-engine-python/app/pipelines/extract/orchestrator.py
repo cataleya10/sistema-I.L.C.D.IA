@@ -596,7 +596,9 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                     _fb_idx += 1
 
         if document_type == "FACTURA":
-            return fields
+            cleaned = _postprocess_fields(document_type, fields)
+            contracted = _apply_field_contracts(document_type, cleaned)
+            return _dedupe_fields(contracted)
 
     if document_type == "DATOS_BANCARIOS":
         if ocr_boxes:

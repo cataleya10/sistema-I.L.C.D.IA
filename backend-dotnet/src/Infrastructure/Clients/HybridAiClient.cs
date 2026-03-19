@@ -193,6 +193,13 @@ public sealed class HybridAiClient : IPythonAiClient
         return _pythonClient.GetOnlineLearningStatsAsync(recent, cancellationToken);
     }
 
+    public Task<AuditFolderResponseDto> AuditFolderAsync(
+        AuditFolderRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        return _pythonClient.AuditFolderAsync(request, cancellationToken);
+    }
+
     private static DocumentProcessResponse MergeResponses(
         DocumentProcessResponse preferred,
         DocumentProcessResponse secondary)

@@ -11,6 +11,10 @@ public interface IPythonAiClient
         string? optionsJson,
         CancellationToken cancellationToken);
 
+    Task<AuditFolderResponseDto> AuditFolderAsync(
+        AuditFolderRequestDto request,
+        CancellationToken cancellationToken);
+
     Task<OnlineLearningStatsDto> GetOnlineLearningStatsAsync(
         int recent,
         CancellationToken cancellationToken);

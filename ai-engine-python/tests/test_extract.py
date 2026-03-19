@@ -753,6 +753,26 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertEqual(canonical_rows[0].get("cuenta_beneficiario"), "00014052605935660925")
         self.assertEqual(canonical_rows[0].get("concepto_pago"), "PAGO35")
 
+    def test_extract_scotia_metadata_keeps_full_usuario_nombre(self):
+        from app.pipelines.extract import _extract_scotia_payment_metadata, _sanitize_payment_metadata
+
+        text = (
+            "Scotiabank Inverlat S.A.\n"
+            "Numero de usuario del sistema y nombre: 002 - MARIO ANTONIO FLOTA ALPUCHE\n"
+        )
+
+        metadata = _extract_scotia_payment_metadata(text)
+        self.assertEqual(
+            metadata.get("usuario_sistema_nombre"),
+            "002 - MARIO ANTONIO FLOTA ALPUCHE",
+        )
+
+        sanitized = _sanitize_payment_metadata({"usuario_sistema_nombre": "DEL", **metadata})
+        self.assertEqual(
+            sanitized.get("usuario_sistema_nombre"),
+            "002 - MARIO ANTONIO FLOTA ALPUCHE",
+        )
+
     def test_extract_factura_scotia_rows_are_deduplicated(self):
         ocr_text = "\n".join(
             [
@@ -2106,6 +2126,58 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertEqual(result[0], ["CUENTA", "REFERENCIA", "IMPORTE", "NOMBRE", "CONCEPTO"])
         self.assertEqual(result[1][0], "12345678901")
 
+    def test_normalize_payment_table_rows_splits_merged_referencia_importe_header(self):
+        from app.pipelines.extract import (
+            _normalize_payment_table_rows,
+            _payment_rows_to_objects,
+            _payment_to_canonical_rows,
+            _validate_payment_table_cells,
+        )
+
+        rows = [
+            ["Cuenta", "Referencia Importe", "", "Nombre", "Apellido paterno", "Apellido materno", "Estatus", "Concepto"],
+            ["56937043135", "1620260115134918954976", "$3,000.00", "CITLALI", "JIMENEZ", "DIAZ", "Procesado", "Pago de N"],
+            ["56784206638", "1620260115134904384225", "$3,000.00", "ANA MARIA", "MENDEZ", "HERNANDEZ", "Procesado", "Pago de N"],
+        ]
+
+        normalized = _normalize_payment_table_rows(rows)
+
+        self.assertEqual(normalized[0][:3], ["Cuenta", "Referencia", "Importe"])
+        self.assertEqual(_validate_payment_table_cells(normalized), [])
+
+        row_objects = _payment_rows_to_objects(normalized)
+        _, canonical_rows = _payment_to_canonical_rows("SANTANDER", row_objects)
+
+        self.assertEqual(canonical_rows[0].get("referencia"), "1620260115134918954976")
+        self.assertEqual(canonical_rows[0].get("importe"), "$3,000.00")
+        self.assertEqual(canonical_rows[0].get("nombre"), "CITLALI")
+
+    def test_normalize_payment_table_rows_merges_name_fragments_around_missing_nombre(self):
+        from app.pipelines.extract import (
+            _normalize_payment_table_rows,
+            _payment_rows_to_objects,
+            _payment_to_canonical_rows,
+        )
+
+        rows = [
+            ["Cuenta", "Referencia", "Importe", "Nombre", "Apellido paterno", "Apellido materno", "Estatus", "Concepto"],
+            ["", "", "", "CLAUDIA DEL", "", "", "", ""],
+            ["56784206075", "1620260115134904364224", "$3,000.00", "", "UCAN", "AC", "Procesado", "Pago de N"],
+            ["", "", "", "CARMEN", "", "", "", ""],
+        ]
+
+        normalized = _normalize_payment_table_rows(rows)
+
+        self.assertEqual(len(normalized), 2)
+        self.assertEqual(normalized[1][3], "CLAUDIA DEL CARMEN")
+
+        row_objects = _payment_rows_to_objects(normalized)
+        _, canonical_rows = _payment_to_canonical_rows("SANTANDER", row_objects)
+
+        self.assertEqual(row_objects[0].get("nombre"), "CLAUDIA DEL CARMEN")
+        self.assertTrue(canonical_rows[0].get("nombre"))
+        self.assertEqual(canonical_rows[0].get("apellido_paterno"), "UCAN")
+
     def test_santander_text_extraction_uses_bbva_parser(self):
         """Santander nómina text with same format as BBVA should produce rows."""
         from app.pipelines.extract import _extract_bbva_nomina_advanced_rows_from_text
@@ -2563,6 +2635,35 @@ class TestBuildPaymentMappedFields(unittest.TestCase):
         self.assertEqual(mapped.get("numero_empleado"), "000123")
         self.assertEqual(mapped.get("tipo_cuenta"), "03")
         self.assertEqual(mapped.get("clave_rastreo"), "BANORTE12345")
+
+    def test_prefers_most_complete_canonical_row(self):
+        from app.pipelines.extract import _build_payment_mapped_fields
+        detail = {
+            "bank": "BBVA",
+            "metadata": {},
+            "table": {
+                "canonical_rows": [
+                    {
+                        "cuenta": "0123456789",
+                        "importe": "$1,000.00",
+                    },
+                    {
+                        "cuenta": "0123456789",
+                        "referencia": "998877665544",
+                        "importe": "$1,000.00",
+                        "nombre": "MARIA",
+                        "apellido_paterno": "LOPEZ",
+                        "apellido_materno": "PEREZ",
+                        "estatus": "APLICADO",
+                    },
+                ]
+            },
+        }
+        mapped = _build_payment_mapped_fields(detail)
+        self.assertEqual(mapped["banco"], "BBVA")
+        self.assertEqual(mapped.get("referencia"), "998877665544")
+        self.assertEqual(mapped.get("estatus"), "APLICADO")
+        self.assertEqual(mapped.get("nombre_beneficiario"), "MARIA LOPEZ PEREZ")
 
 
 class TestClassifyBbvaTransferMarkers(unittest.TestCase):
@@ -3526,6 +3627,15 @@ class TestValidatePaymentTableCells(unittest.TestCase):
         warnings = _validate_payment_table_cells(rows)
         self.assertEqual(warnings, [])
 
+    def test_amount_without_dollar_sign_is_valid(self):
+        from app.pipelines.extract import _validate_payment_table_cells
+        rows = [
+            ["CUENTA", "IMPORTE"],
+            ["123456789012345678", "3,000.00"],
+        ]
+        warnings = _validate_payment_table_cells(rows)
+        self.assertEqual(warnings, [])
+
     def test_invalid_amount_format(self):
         from app.pipelines.extract import _validate_payment_table_cells
         rows = [
@@ -3589,6 +3699,26 @@ class TestValidatePaymentTableCells(unittest.TestCase):
         warnings = _validate_payment_table_cells(rows)
         status_warnings = [w for w in warnings if "estatus" in w]
         self.assertEqual(status_warnings, [])
+
+    def test_tipo_cuenta_is_not_validated_as_account(self):
+        from app.pipelines.extract import _validate_payment_table_cells
+        rows = [
+            ["Tipo Cuenta", "No. de Cuenta", "Importe"],
+            ["01", "000000001192487703", "$376.82"],
+        ]
+        warnings = _validate_payment_table_cells(rows)
+        self.assertEqual(warnings, [])
+
+    def test_summary_rows_are_skipped_in_cell_validation(self):
+        from app.pipelines.extract import _validate_payment_table_cells
+        rows = [
+            ["Cuenta", "Importe"],
+            ["123456789012345678", "$1,000.00"],
+            ["CANTIDAD DE MOVIMIENTOS BAJAS", "IMPORTE DE MOVIMIENTO BAJAS"],
+            ["0", "0"],
+        ]
+        warnings = _validate_payment_table_cells(rows)
+        self.assertEqual(warnings, [])
 
     def test_empty_rows_no_crash(self):
         from app.pipelines.extract import _validate_payment_table_cells

@@ -2460,12 +2460,166 @@ def _normalize_payment_table_rows(rows: list[list[str]]) -> list[list[str]]:
         return rows
 
 
+def _repair_merged_payment_headers(rows: list[list[str]]) -> list[list[str]]:
+    """Repair fused payment headers like 'Referencia Importe' + blank amount column."""
+    if len(rows) < 2:
+        return rows
+
+    repaired = [[str(cell or "") for cell in row] for row in rows]
+    header = repaired[0]
+
+    def _is_amount_like(value: str) -> bool:
+        text = _normalize_text(str(value or ""))
+        if not text:
+            return False
+        if _VALID_AMOUNT_FMT_RE.fullmatch(text):
+            return True
+        return bool(re.fullmatch(r"\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})", text))
+
+    def _is_reference_like(value: str) -> bool:
+        text = _normalize_text(str(value or ""))
+        if not text or _is_amount_like(text):
+            return False
+        digits = re.sub(r"\D", "", text)
+        return len(digits) >= 10 and digits == re.sub(r"\s+", "", text)
+
+    for idx, cell in enumerate(header):
+        token = _normalize_keyword(cell).upper()
+        if token not in {"REFERENCIAIMPORTE", "IMPORTEREFERENCIA"}:
+            continue
+        if idx + 1 >= len(header):
+            continue
+        if _normalize_keyword(header[idx + 1]):
+            continue
+
+        current_values = [
+            _normalize_text(str(row[idx] or ""))
+            for row in repaired[1:]
+            if idx < len(row) and _normalize_text(str(row[idx] or ""))
+        ]
+        next_values = [
+            _normalize_text(str(row[idx + 1] or ""))
+            for row in repaired[1:]
+            if idx + 1 < len(row) and _normalize_text(str(row[idx + 1] or ""))
+        ]
+        if not current_values or not next_values:
+            continue
+
+        current_ref_like = sum(1 for value in current_values if _is_reference_like(value))
+        current_amount_like = sum(1 for value in current_values if _is_amount_like(value))
+        next_ref_like = sum(1 for value in next_values if _is_reference_like(value))
+        next_amount_like = sum(1 for value in next_values if _is_amount_like(value))
+
+        current_prefers_reference = current_ref_like >= max(1, len(current_values) // 2)
+        current_prefers_amount = current_amount_like >= max(1, len(current_values) // 2)
+        next_prefers_reference = next_ref_like >= max(1, len(next_values) // 2)
+        next_prefers_amount = next_amount_like >= max(1, len(next_values) // 2)
+
+        if current_prefers_reference and next_prefers_amount:
+            header[idx] = "Referencia"
+            header[idx + 1] = "Importe"
+        elif current_prefers_amount and next_prefers_reference:
+            header[idx] = "Importe"
+            header[idx + 1] = "Referencia"
+
+    return repaired
+
+
+def _merge_name_fragment_rows(rows: list[list[str]]) -> list[list[str]]:
+    """Merge standalone name fragments around payment rows missing the nombre cell."""
+    if len(rows) < 3:
+        return rows
+
+    merged_rows = [[str(cell or "") for cell in row] for row in rows]
+    header = merged_rows[0]
+    norm_header = [_normalize_keyword(cell).upper() for cell in header]
+    name_idx = next(
+        (
+            idx
+            for idx, token in enumerate(norm_header)
+            if token in {"NOMBRE", "NOMBREBENEFICIARIO", "NOMBRECORTO", "BENEFICIARIO"}
+        ),
+        -1,
+    )
+    if name_idx < 0:
+        return merged_rows
+
+    def _pad(row: list[str]) -> list[str]:
+        padded = list(row)
+        while len(padded) < len(header):
+            padded.append("")
+        return padded
+
+    def _is_name_fragment_row(row: list[str]) -> bool:
+        padded = _pad(row)
+        non_empty = [idx for idx, cell in enumerate(padded) if _normalize_text(str(cell or ""))]
+        if non_empty != [name_idx]:
+            return False
+        candidate = _normalize_name(str(padded[name_idx] or ""))
+        return bool(candidate and _looks_like_person_name(candidate))
+
+    def _is_payment_row_missing_name(row: list[str]) -> bool:
+        padded = _pad(row)
+        if _normalize_text(str(padded[name_idx] or "")):
+            return False
+        non_empty_cells = [_normalize_text(str(cell or "")) for cell in padded if _normalize_text(str(cell or ""))]
+        if len(non_empty_cells) < 4:
+            return False
+        has_long_number = any(len(re.sub(r"\D", "", cell)) >= 10 for cell in non_empty_cells)
+        has_amount = any(_VALID_AMOUNT_FMT_RE.fullmatch(cell) for cell in non_empty_cells)
+        has_status = any(cell.upper() in _ALL_PAYMENT_STATUSES for cell in non_empty_cells)
+        return has_long_number and (has_amount or has_status)
+
+    used_fragments: set[int] = set()
+    for idx in range(1, len(merged_rows)):
+        row = _pad(merged_rows[idx])
+        if not _is_payment_row_missing_name(row):
+            continue
+
+        before_parts: list[str] = []
+        prev_idx = idx - 1
+        while prev_idx >= 1 and prev_idx not in used_fragments:
+            prev_row = _pad(merged_rows[prev_idx])
+            if not _is_name_fragment_row(prev_row):
+                break
+            before_parts.insert(0, _normalize_text(str(prev_row[name_idx] or "")))
+            used_fragments.add(prev_idx)
+            prev_idx -= 1
+
+        after_parts: list[str] = []
+        next_idx = idx + 1
+        while next_idx < len(merged_rows) and next_idx not in used_fragments:
+            next_row = _pad(merged_rows[next_idx])
+            if not _is_name_fragment_row(next_row):
+                break
+            after_parts.append(_normalize_text(str(next_row[name_idx] or "")))
+            used_fragments.add(next_idx)
+            next_idx += 1
+
+        merged_name = _normalize_name(" ".join(part for part in before_parts + after_parts if part).strip())
+        if merged_name:
+            row[name_idx] = merged_name
+            merged_rows[idx] = row
+
+    if not used_fragments:
+        return merged_rows
+
+    compacted = [header]
+    for idx, row in enumerate(merged_rows[1:], start=1):
+        if idx in used_fragments:
+            continue
+        compacted.append(_pad(row))
+    return compacted
+
+
 def _normalize_payment_table_rows_impl(rows: list[list[str]]) -> list[list[str]]:
     if len(rows) < 2:
         return rows
 
     # Fix 0: Dedup multi-page OCR header tokens y normaliza a claves canónicas
-    header = _dedup_header_row(list(rows[0]))
+    repaired_rows = _repair_merged_payment_headers(rows)
+    repaired_rows = _merge_name_fragment_rows(repaired_rows)
+    header = _dedup_header_row(list(repaired_rows[0]))
     canonical_map = {
         "tipo de registro": "tipoderegistro",
         "tipo de movimiento (pago)": "tipomovimiento",
@@ -2532,7 +2686,7 @@ def _normalize_payment_table_rows_impl(rows: list[list[str]]) -> list[list[str]]
     result: list[list[str]]
     if is_advanced:
         norm_rows: list[dict[str, str]] = []
-        for orig_row in rows[1:]:
+        for orig_row in repaired_rows[1:]:
             if col_injected:
                 ins = estatus_idx
                 raw_row: list[str] = list(orig_row[:ins]) + [""] + list(orig_row[ins:])
@@ -2583,7 +2737,7 @@ def _normalize_payment_table_rows_impl(rows: list[list[str]]) -> list[list[str]]
     else:
         # Tabla simple: mantener como listas
         result = [header]
-        for orig_row in rows[1:]:
+        for orig_row in repaired_rows[1:]:
             if col_injected:
                 ins = estatus_idx
                 row_values = list(orig_row[:ins]) + [""] + list(orig_row[ins:])
@@ -3117,17 +3271,46 @@ def _build_payment_mapped_fields(payment_detail: dict) -> dict[str, str]:
     if not isinstance(canonical_rows, list):
         return mapped
 
-    first_row = next(
-        (
-            row
-            for row in canonical_rows
-            if isinstance(row, dict)
-            and any(_normalize_text(str(cell or "")) for cell in row.values())
-        ),
-        None,
-    )
-    if not isinstance(first_row, dict):
+    candidate_rows = [
+        row
+        for row in canonical_rows
+        if isinstance(row, dict)
+        and any(_normalize_text(str(cell or "")) for cell in row.values())
+    ]
+    if not candidate_rows:
         return mapped
+
+    def _mapping_row_score(row: dict[str, Any]) -> tuple[int, int, int]:
+        def _has_any(*keys: str) -> bool:
+            return any(_normalize_text(str(row.get(key) or "")) for key in keys)
+
+        primary_hits = sum(
+            1
+            for keys in (
+                ("cuenta", "cuenta_beneficiario", "cuenta_retiro"),
+                ("referencia",),
+                ("importe",),
+                ("nombre", "nombre_beneficiario", "titular"),
+            )
+            if _has_any(*keys)
+        )
+        secondary_hits = sum(
+            1
+            for keys in (
+                ("apellido_paterno",),
+                ("apellido_materno",),
+                ("estatus",),
+                ("concepto_pago",),
+                ("clave_rastreo",),
+                ("numero_empleado",),
+                ("banco_destino",),
+            )
+            if _has_any(*keys)
+        )
+        non_empty = sum(1 for value in row.values() if _normalize_text(str(value or "")))
+        return primary_hits, secondary_hits, non_empty
+
+    selected_row = max(candidate_rows, key=_mapping_row_score)
 
     key_map = {
         "cuenta": "cuenta",
@@ -3160,7 +3343,7 @@ def _build_payment_mapped_fields(payment_detail: dict) -> dict[str, str]:
         "motivo_pago": "motivo_pago",
     }
     for source_key, target_key in key_map.items():
-        value = _normalize_text(str(first_row.get(source_key) or ""))
+        value = _normalize_text(str(selected_row.get(source_key) or ""))
         if value:
             mapped[target_key] = value
 
@@ -3819,7 +4002,7 @@ def _payment_pick_labeled_value(raw_text: str, labels: list[str], max_len: int =
 
 # ── Level 1: Field-level data validation for payment table cells ───────────
 
-_VALID_AMOUNT_FMT_RE = re.compile(r"^\$[\d,]+\.\d{2}$")
+_VALID_AMOUNT_FMT_RE = re.compile(r"^\$?\s*[\d,]+\.\d{2}$")
 _VALID_DATE_FMT_RE = re.compile(r"^\d{2}/\d{2}/\d{4}$")
 _VALID_ACCOUNT_FMT_RE = re.compile(r"^\d{6,20}$")
 _VALID_CLABE_FMT_RE = re.compile(r"^\d{18}$")
@@ -3834,6 +4017,7 @@ _ACCOUNT_HEADER_TOKENS = frozenset({
     "CUENTA", "CUENTARETIRO", "CUENTABENEFICIARIO", "CUENTADEPOSITO",
     "CONTRATO", "NUMEROCONTRATO", "CLABE",
 })
+_NON_ACCOUNT_HEADER_TOKENS = frozenset({"TIPOCUENTA", "TIPODECUENTA"})
 
 _DATE_HEADER_TOKENS = frozenset({
     "FECHA", "FECHAPAGO", "FECHAOPERACION", "FECHAAPLICACION",
@@ -3859,7 +4043,10 @@ def _classify_table_columns(header: list[str]) -> dict[int, str]:
             classification[idx] = "count"
         elif key in _AMOUNT_HEADER_TOKENS or "IMPORTE" in key or "MONTO" in key:
             classification[idx] = "amount"
-        elif key in _ACCOUNT_HEADER_TOKENS or "CUENTA" in key or "CLABE" in key:
+        elif (
+            (key in _ACCOUNT_HEADER_TOKENS or "CUENTA" in key or "CLABE" in key)
+            and key not in _NON_ACCOUNT_HEADER_TOKENS
+        ):
             classification[idx] = "account"
         elif key in _DATE_HEADER_TOKENS or "FECHA" in key:
             classification[idx] = "date"
@@ -3884,7 +4071,14 @@ def _validate_payment_table_cells(rows: list[list[str]]) -> list[str]:
 
     warnings: list[str] = []
 
+    skip_next_summary_values = False
     for row_idx, row in enumerate(rows[1:], start=2):
+        if skip_next_summary_values:
+            skip_next_summary_values = False
+            continue
+        if _is_summary_row(row):
+            skip_next_summary_values = True
+            continue
         for col_idx, col_type in col_types.items():
             if col_idx >= len(row):
                 continue
@@ -4152,7 +4346,15 @@ def _extract_scotia_payment_metadata(raw_text: str) -> dict[str, str]:
     archivo_match = re.search(r"NOMBRE DEL ARCHIVO\s*:?\s*([A-Z0-9._ -]{6,80})", text)
     if archivo_match:
         out["nombre_archivo"] = _normalize_text(archivo_match.group(1))
-    usuario_match = re.search(r"NOMBRE DE USUARIO DEL SISTEMA Y NOMBRE\s*:?\s*([A-Z0-9._ -]{6,120})", text)
+    usuario_match = re.search(
+        r"(?:NUMERO\s+DE\s+)?USUARIO\s+DEL\s+SISTEMA\s+Y\s+NOMBRE\s*:?\s*([A-Z0-9._ -]{6,120})",
+        text,
+    )
+    if not usuario_match:
+        usuario_match = re.search(
+            r"NOMBRE\s+DE\s+USUARIO\s+DEL\s+SISTEMA\s+Y\s+NOMBRE\s*:?\s*([A-Z0-9._ -]{6,120})",
+            text,
+        )
     if usuario_match:
         out["usuario_sistema_nombre"] = _normalize_text(usuario_match.group(1))
     validacion_match = re.search(
@@ -4526,6 +4728,22 @@ def _sanitize_payment_metadata(metadata: dict[str, str]) -> dict[str, str]:
         "cuenta_carga",
         "referencia_carga",
     }
+
+    def _clean_user_system_name(value: str) -> str:
+        cleaned = _normalize_text(str(value or "")).upper()
+        if not cleaned:
+            return ""
+        cleaned = re.sub(
+            r"^(?:NUMERO\s+DE\s+)?(?:NOMBRE\s+DE\s+)?USUARIO\s+DEL\s+SISTEMA(?:\s+Y\s+NOMBRE)?\s*:?\s*",
+            "",
+            cleaned,
+        ).strip(" -:")
+        if not cleaned:
+            return ""
+        if re.fullmatch(r"(?:DE|DEL|LA|EL|Y|NOMBRE|USUARIO|SISTEMA)", cleaned):
+            return ""
+        return cleaned
+
     for key, value in metadata.items():
         raw = _normalize_text(str(value or ""))
         if not raw:
@@ -4571,7 +4789,12 @@ def _sanitize_payment_metadata(metadata: dict[str, str]) -> dict[str, str]:
             "tipo_pago",
             "tipo_registro_carga",
         }:
-            cleaned[key] = _normalize_text(raw).upper()
+            normalized_text = _normalize_text(raw).upper()
+            if key == "usuario_sistema_nombre":
+                normalized_text = _clean_user_system_name(normalized_text)
+                if not normalized_text:
+                    continue
+            cleaned[key] = normalized_text
             continue
         cleaned[key] = raw
     return cleaned
@@ -5543,6 +5766,9 @@ def _extract_payment_detail_payload_impl(base_text_raw: str, table_payload: dict
             "summary_tables": summary_tables,
         },
     }
+    mapped_fields = _build_payment_mapped_fields(result)
+    if mapped_fields:
+        result["mapped_fields"] = mapped_fields
     # Refuerzo: forzar el banco detectado en encabezado en el payload final
     bank_header = _payment_detect_bank(text)
     if bank_header:

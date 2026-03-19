@@ -35,12 +35,16 @@ backend-dotnet/tests/**/obj/
 backend-dotnet/tests/**/.dotnet-cli-home/
 backend-dotnet/tests/**/.nuget-packages/
 backend-dotnet/.tmp/
+backend-dotnet/tests/**/*.log
 ai-engine-python/app/models/online_training_dataset.jsonl
 ai-engine-python/app/models/online_training_stats.json
 ai-engine-python/app/models/*.tmp
 ai-engine-python/artifacts/
+ai-engine-python/.tmp/
+ai-engine-python/tests/.tmp/
 .pytest_cache/
 pytest-cache-files-*/
+storage/
 
 # TLS / private keys (never commit)
 *.pem

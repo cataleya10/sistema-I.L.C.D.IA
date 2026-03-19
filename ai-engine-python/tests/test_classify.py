@@ -81,6 +81,21 @@ class ClassifyPipelineTests(unittest.TestCase):
         self.assertEqual(doc_type, "FACTURA")
         self.assertGreaterEqual(confidence, 0.85)
 
+    def test_classify_bbva_traspasos_terceros_as_factura(self):
+        doc_type, confidence = asyncio.run(
+            classify.classify_document(
+                None,
+                (
+                    "COMPROBANTE Traspasos a terceros Resultado del traspaso "
+                    "Cuenta de retiro 0123965767 Cuenta de deposito 1502987987 "
+                    "Nombre del tercero FRANCISCA CUPIDO PERALTA Importe $1,080.00"
+                ),
+                "PAGO DIF CUPIDO PERALTA FRANCISCA $ 1,080.00.pdf",
+            )
+        )
+        self.assertEqual(doc_type, "FACTURA")
+        self.assertGreaterEqual(confidence, 0.85)
+
 
 if __name__ == "__main__":
     unittest.main()

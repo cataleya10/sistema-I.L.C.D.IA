@@ -425,14 +425,16 @@ def _evaluate_payroll_strict(fields: list[dict], doc_type: str) -> tuple[list[st
         hard_fail = True
 
     min_fill_rate = max(0.0, min(1.0, float(settings.payroll_strict_min_fill_rate)))
-    for col in _PAYROLL_STRICT_FILL_COLUMNS:
-        filled = sum(1 for row in canonical_rows if str(row.get(col, "") or "").strip())
-        fill_rate = filled / max(1, total_rows)
-        if fill_rate < min_fill_rate:
-            warnings.append(
-                f"[NOMINA_STRICT] columna '{col}' con llenado bajo: {fill_rate:.1%} (< {min_fill_rate:.0%})."
-            )
-            hard_fail = True
+    min_rows_for_strict_fill = max(1, int(settings.payroll_strict_min_rows))
+    if total_rows >= min_rows_for_strict_fill:
+        for col in _PAYROLL_STRICT_FILL_COLUMNS:
+            filled = sum(1 for row in canonical_rows if str(row.get(col, "") or "").strip())
+            fill_rate = filled / max(1, total_rows)
+            if fill_rate < min_fill_rate:
+                warnings.append(
+                    f"[NOMINA_STRICT] columna '{col}' con llenado bajo: {fill_rate:.1%} (< {min_fill_rate:.0%})."
+                )
+                hard_fail = True
 
     max_ratio = max(0.0, min(1.0, float(settings.payroll_strict_max_dominant_surname_ratio)))
     min_rows_for_ratio = max(10, int(settings.payroll_strict_min_rows))
