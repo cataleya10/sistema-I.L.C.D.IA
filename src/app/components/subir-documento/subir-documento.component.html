@@ -1,69 +1,106 @@
-﻿<div style="padding: 20px;">
-  <h2>Procesar Documento</h2>
+﻿<!-- ── PANEL DE LOGIN (si no hay sesión) ─────────────────────────────────── -->
+<div *ngIf="!auth.isLoggedIn()" class="panel login-panel">
+  <h2>Iniciar sesión</h2>
 
-  <div style="margin-bottom: 20px;">
-    <label><strong>Seleccionar PDF:</strong></label>
+  <div class="campo">
+    <label>Usuario</label>
+    <input type="text" [(ngModel)]="username" placeholder="usuario" autocomplete="username" />
+  </div>
+
+  <div class="campo">
+    <label>Contraseña</label>
     <input
-      type="file"
-      accept=".pdf"
-      (change)="seleccionarArchivo($event)"
-      style="display:block; margin-top:10px;"
+      type="password"
+      [(ngModel)]="password"
+      placeholder="contraseña"
+      autocomplete="current-password"
+      (keyup.enter)="iniciarSesion()"
     />
+  </div>
+
+  <p *ngIf="loginError" class="error-msg">{{ loginError }}</p>
+
+  <button (click)="iniciarSesion()" [disabled]="iniciandoSesion">
+    {{ iniciandoSesion ? 'Entrando...' : 'Entrar' }}
+  </button>
+</div>
+
+<!-- ── PANEL DE CARGA (con sesión activa) ────────────────────────────────── -->
+<div *ngIf="auth.isLoggedIn()" class="panel">
+  <div class="panel-header">
+    <h2>Procesar Documento</h2>
+    <button class="btn-logout" (click)="cerrarSesion()">Cerrar sesión</button>
+  </div>
+
+  <div class="campo">
+    <label><strong>Seleccionar PDF:</strong></label>
+    <input type="file" accept=".pdf" (change)="seleccionarArchivo($event)" />
   </div>
 
   <button (click)="procesar()" [disabled]="cargando">
     {{ cargando ? 'Procesando...' : 'Procesar Documento' }}
   </button>
-</div>
 
-<div *ngIf="resultado" style="margin-top: 30px; padding: 20px; border: 1px solid #ccc; border-radius: 8px;">
-  <h3>Resultado</h3>
+  <!-- Resultado inline (debug rápido) -->
+  <div *ngIf="resultado" class="resultado-inline">
+    <h3>Resultado</h3>
 
-  <p><strong>Estado:</strong> {{ resultado.success ? 'Procesado' : 'Error' }}</p>
-  <p><strong>Mensaje:</strong> {{ resultado.message }}</p>
-  <p><strong>Tipo:</strong> {{ resultado.tipoDocumento }}</p>
+    <p>
+      <strong>Estado:</strong>
+      <span [class.ok]="resultado.success" [class.ko]="!resultado.success">
+        {{ resultado.success ? '✔ OK' : '✖ Error' }}
+      </span>
+      &nbsp;{{ resultado.message }}
+    </p>
+    <p><strong>Tipo:</strong> {{ resultado.tipoDocumento }}</p>
 
-  <div *ngIf="resultado.resumen" style="margin-top: 25px;">
-    <h3>Resumen</h3>
-    <p><strong>Banco:</strong> {{ resultado.resumen.banco }}</p>
-    <p><strong>Folio:</strong> {{ resultado.resumen.folio }}</p>
-    <p><strong>Archivo:</strong> {{ resultado.resumen.nombreArchivo }}</p>
-    <p><strong>Cantidad de movimientos:</strong> {{ resultado.resumen.cantidadMovimientos }}</p>
-    <p><strong>Importe total:</strong> {{ resultado.resumen.importeTotal }}</p>
-  </div>
+    <div *ngIf="resultado.resumen">
+      <h4>Resumen</h4>
+      <p *ngIf="resultado.resumen.banco"><strong>Banco:</strong> {{ resultado.resumen.banco }}</p>
+      <p *ngIf="resultado.resumen.folio"><strong>Folio:</strong> {{ resultado.resumen.folio }}</p>
+      <p *ngIf="resultado.resumen.nombreArchivo">
+        <strong>Archivo:</strong> {{ resultado.resumen.nombreArchivo }}
+      </p>
+      <p *ngIf="resultado.resumen.cantidadMovimientos">
+        <strong>Movimientos:</strong> {{ resultado.resumen.cantidadMovimientos }}
+      </p>
+      <p *ngIf="resultado.resumen.importeTotal">
+        <strong>Importe total:</strong> {{ resultado.resumen.importeTotal }}
+      </p>
+    </div>
 
-  <div *ngIf="resultado.beneficiarios?.length" style="margin-top: 25px;">
-    <h3>Beneficiarios</h3>
-
-    <div style="overflow-x: auto;">
-      <table border="1" cellpadding="8" cellspacing="0" style="width: 100%; border-collapse: collapse;">
-        <thead>
-          <tr>
-            <th>Clave</th>
-            <th>Nombre</th>
-            <th>Importe</th>
-            <th>Fecha</th>
-            <th>Referencia</th>
-            <th>Cuenta</th>
-            <th>Banco</th>
-            <th>Días</th>
-            <th>Concepto</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr *ngFor="let b of resultado.beneficiarios">
-            <td>{{ b.claveBeneficiario }}</td>
-            <td>{{ b.nombre }}</td>
-            <td>{{ b.importe }}</td>
-            <td>{{ b.fechaAplicacion }}</td>
-            <td>{{ b.referencia }}</td>
-            <td>{{ b.cuentaBeneficiario }}</td>
-            <td>{{ b.bancoReceptor }}</td>
-            <td>{{ b.diasVigencia }}</td>
-            <td>{{ b.conceptoPago }}</td>
-          </tr>
-        </tbody>
-      </table>
+    <div *ngIf="resultado.beneficiarios?.length">
+      <h4>Beneficiarios</h4>
+      <div style="overflow-x: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Clave</th>
+              <th>Nombre</th>
+              <th>Importe</th>
+              <th>Fecha</th>
+              <th>Referencia</th>
+              <th>Cuenta</th>
+              <th>Banco receptor</th>
+              <th>Días</th>
+              <th>Concepto</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let b of resultado.beneficiarios">
+              <td>{{ b.claveBeneficiario }}</td>
+              <td>{{ b.nombre }}</td>
+              <td>{{ b.importe }}</td>
+              <td>{{ b.fechaAplicacion }}</td>
+              <td>{{ b.referencia }}</td>
+              <td>{{ b.cuentaBeneficiario }}</td>
+              <td>{{ b.bancoReceptor }}</td>
+              <td>{{ b.diasVigencia }}</td>
+              <td>{{ b.conceptoPago }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 </div>

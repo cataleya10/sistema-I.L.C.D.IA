@@ -1,0 +1,55 @@
+.campo-card {
+  border: 1px solid #dcdcdc;
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 14px;
+  background: #f9f9f9;
+}
+
+.estado-card {
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+
+.estado-card.exito {
+  background: #e8f5e9;
+  border: 1px solid #a5d6a7;
+  color: #2e7d32;
+}
+
+.estado-card.error {
+  background: #ffebee;
+  border: 1px solid #ef9a9a;
+  color: #c62828;
+}
+
+.sin-datos {
+  color: #888;
+  font-style: italic;
+  margin-top: 12px;
+}
+
+.tabla-container {
+  overflow-x: auto;
+  margin-top: 10px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+}
+
+th, td {
+  border: 1px solid #cfcfcf;
+  padding: 8px;
+  text-align: left;
+  font-size: 14px;
+}
+
+th {
+  background: #efefef;
+  font-weight: bold;
+}

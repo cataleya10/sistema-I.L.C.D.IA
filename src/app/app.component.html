@@ -1,1 +1,2 @@
-<app-carga-documento-legacy></app-carga-documento-legacy>
+<app-carga-documento-legacy (resultadoExtraido)="resultadoExtraccion = $event"></app-carga-documento-legacy>
+<app-resultado-extraccion [resultado]="resultadoExtraccion"></app-resultado-extraccion>

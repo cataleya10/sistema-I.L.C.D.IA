@@ -1,0 +1,74 @@
+<div *ngIf="resultado">
+  <h2>Resultado de extracción</h2>
+
+  <div class="estado-card" [class.exito]="resultado.success" [class.error]="!resultado.success">
+    <p><strong>Tipo documento:</strong> {{ resultado.tipoDocumento }}</p>
+    <p><strong>Estado:</strong> {{ resultado.message }}</p>
+  </div>
+
+  <div *ngIf="resultado.resumen" class="campo-card">
+    <h3>Resumen</h3>
+    <table>
+      <tbody>
+        <tr>
+          <th>Banco</th>
+          <td>{{ resultado.resumen.banco }}</td>
+        </tr>
+        <tr>
+          <th>Folio</th>
+          <td>{{ resultado.resumen.folio }}</td>
+        </tr>
+        <tr>
+          <th>Archivo</th>
+          <td>{{ resultado.resumen.nombreArchivo }}</td>
+        </tr>
+        <tr>
+          <th>Cantidad de movimientos</th>
+          <td>{{ resultado.resumen.cantidadMovimientos }}</td>
+        </tr>
+        <tr>
+          <th>Importe total</th>
+          <td>{{ resultado.resumen.importeTotal }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div *ngIf="resultado.beneficiarios?.length" class="campo-card">
+    <h3>Beneficiarios</h3>
+    <div class="tabla-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Clave</th>
+            <th>Nombre</th>
+            <th>Importe</th>
+            <th>Fecha Aplicación</th>
+            <th>Referencia</th>
+            <th>Cuenta Beneficiario</th>
+            <th>Banco Receptor</th>
+            <th>Días Vigencia</th>
+            <th>Concepto de Pago</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let b of resultado.beneficiarios">
+            <td>{{ b.claveBeneficiario }}</td>
+            <td>{{ b.nombre }}</td>
+            <td>{{ b.importe }}</td>
+            <td>{{ b.fechaAplicacion }}</td>
+            <td>{{ b.referencia }}</td>
+            <td>{{ b.cuentaBeneficiario }}</td>
+            <td>{{ b.bancoReceptor }}</td>
+            <td>{{ b.diasVigencia }}</td>
+            <td>{{ b.conceptoPago }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <p *ngIf="resultado.success && !resultado.beneficiarios?.length" class="sin-datos">
+    No se encontraron beneficiarios en el documento.
+  </p>
+</div>

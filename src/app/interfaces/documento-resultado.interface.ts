@@ -1,11 +1,11 @@
 
 
 export interface FacturaResumen {
-  banco: string;
-  folio: string;
-  nombreArchivo: string;
-  cantidadMovimientos: string;
-  importeTotal: string;
+  banco?: string;
+  folio?: string;
+  nombreArchivo?: string;
+  cantidadMovimientos?: string;
+  importeTotal?: string;
 }
 
 export interface FacturaBeneficiario {
@@ -25,5 +25,5 @@ export interface ResultadoDocumento {
   success: boolean;
   message: string;
   resumen: FacturaResumen;
-  beneficiarios: FacturaBeneficiario[];
+  beneficiarios?: FacturaBeneficiario[];
 }

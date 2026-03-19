@@ -1,0 +1,30 @@
+.campo-card {
+  border: 1px solid #dcdcdc;
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 14px;
+  background: #f9f9f9;
+}
+
+.tabla-container {
+  overflow-x: auto;
+  margin-top: 10px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+}
+
+th, td {
+  border: 1px solid #cfcfcf;
+  padding: 8px;
+  text-align: left;
+  font-size: 14px;
+}
+
+th {
+  background: #efefef;
+  font-weight: bold;
+}

@@ -1,0 +1,111 @@
+.panel {
+  padding: 24px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.login-panel {
+  max-width: 360px;
+  margin: 60px auto;
+  border: 1px solid #ddd;
+  border-radius: 12px;
+  background: #fafafa;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.campo {
+  margin-bottom: 14px;
+}
+
+.campo label {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+.campo input[type='text'],
+.campo input[type='password'] {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+button {
+  padding: 9px 20px;
+  background: #1976d2;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+button:disabled {
+  background: #aaa;
+  cursor: not-allowed;
+}
+
+.btn-logout {
+  background: transparent;
+  color: #c62828;
+  border: 1px solid #c62828;
+  font-size: 13px;
+  padding: 5px 12px;
+}
+
+.btn-logout:hover {
+  background: #ffebee;
+}
+
+.error-msg {
+  color: #c62828;
+  font-size: 13px;
+  margin: 4px 0 10px;
+}
+
+.resultado-inline {
+  margin-top: 28px;
+  padding: 16px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background: #f9f9f9;
+}
+
+.ok {
+  color: #2e7d32;
+  font-weight: bold;
+}
+
+.ko {
+  color: #c62828;
+  font-weight: bold;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+  margin-top: 8px;
+}
+
+th,
+td {
+  border: 1px solid #cfcfcf;
+  padding: 8px;
+  text-align: left;
+  font-size: 13px;
+}
+
+th {
+  background: #efefef;
+  font-weight: bold;
+}

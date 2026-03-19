@@ -1,0 +1,46 @@
+<div *ngIf="resultado">
+  <h2>Resultado de extracción</h2>
+
+  <p><strong>Tipo documento:</strong> {{ resultado.document_type }}</p>
+  <p><strong>Estatus:</strong> {{ resultado.status }}</p>
+  <p><strong>Confianza:</strong> {{ resultado.confidence }}</p>
+
+  <div *ngIf="resultado.fields?.length">
+    <div *ngFor="let field of resultado.fields" class="campo-card">
+      <h4>{{ field.label || field.key }}</h4>
+
+      <ng-container *ngIf="esJsonTabla(field.value); else valorNormal">
+        <div class="tabla-container">
+          <table>
+            <thead>
+              <tr>
+                <th *ngFor="let header of obtenerHeaders(field.value)">
+                  {{ header }}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let row of obtenerRows(field.value)">
+                <ng-container *ngIf="!esFilaObjeto(row)">
+                  <td *ngFor="let cell of row">
+                    {{ cell }}
+                  </td>
+                </ng-container>
+
+                <ng-container *ngIf="esFilaObjeto(row)">
+                  <td *ngFor="let header of obtenerHeaders(field.value)">
+                    {{ row[header] || '' }}
+                  </td>
+                </ng-container>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </ng-container>
+
+      <ng-template #valorNormal>
+        <p>{{ field.value }}</p>
+      </ng-template>
+    </div>
+  </div>
+</div>
