@@ -2632,6 +2632,12 @@ def _normalize_payment_table_rows_impl(rows: list[list[str]]) -> list[list[str]]
         "no. banco receptor": "bancoreceptor",
         "dias de vigencia": "diasvigencia",
         "concepto pago": "conceptopago",
+        # Short/abbreviated header forms (from PDFs with condensed column labels)
+        "clave": "clavedebeneficiario",
+        "fecha": "fechaaplicacion",
+        "banco": "bancoreceptor",
+        "dias": "diasvigencia",
+        "cliente": "cuentabeneficiario",
         # Agrega más mapeos según los tests
     }
     def canon(h):
@@ -5167,6 +5173,12 @@ def _canonical_payment_key(bank: str, raw_key: str) -> str:
         "tipopago": "tipo_operacion",
         "mediopago": "forma_deposito",
         "formapago": "forma_deposito",
+        # Short/abbreviated column header forms (from PDFs with condensed headers)
+        "clave": "clave_beneficiario",
+        "fecha": "fecha_aplicacion",
+        "banco": "banco_destino",
+        "dias": "dias_vigencia",
+        "cliente": "cuenta_beneficiario",
     }
     fuzzy = _FUZZY_ALIASES.get(key)
     if fuzzy:
