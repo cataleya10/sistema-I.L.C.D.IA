@@ -1,0 +1,21 @@
+{
+  "filename": "bancario_004.pdf",
+  "document_type": "DATOS_BANCARIOS",
+  "banco_origen": "BBVA BANCOMER",
+  "carpeta_origen": "bancomer",
+  "nombre_original": "PAGO FIS BMPEI $19,958.51 BBVA.pdf",
+  "added_date": "2026-03-25",
+  "labeled": true,
+  "notes": "REVISAR: corrige los campos incorrectos y cambia labeled a true",
+  "expected_fields": {
+    "clabe": "000000000103552837",
+    "cuenta": "1159276580",
+    "banco": "BBVA BANCOMER",
+    "titular": "BUFETE DE MANTENIMIENTO PREDICTIVO E",
+    "rfc": "",
+    "fecha_corte": "28/02/2026",
+    "periodo": ""
+  },
+  "prelabeled_date": "2026-03-25 11:31",
+  "prelabel_campos": "5/7"
+}

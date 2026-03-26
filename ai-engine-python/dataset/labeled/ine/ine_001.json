@@ -1,0 +1,18 @@
+{
+  "filename": "ine_001.pdf",
+  "document_type": "INE",
+  "prelabeled_date": "2026-03-25 11:33",
+  "labeled": true,
+  "notes": "REVISAR: corrige los campos incorrectos y cambia 'labeled' a true",
+  "expected_fields": {
+    "clave_elector": "GRCMER01042527H100",
+    "curp": "GACE010425HTCRMRA8",
+    "domicilio": "RIA ZAPOTAL 2 DA SECCION 86781 JONUTA.TAB.",
+    "entidad_nacimiento": "",
+    "fecha_nacimiento": "25/04/2001",
+    "nombre": "IA CAMPOS",
+    "seccion": "0860",
+    "sexo": "H",
+    "vigencia": "2029"
+  }
+}

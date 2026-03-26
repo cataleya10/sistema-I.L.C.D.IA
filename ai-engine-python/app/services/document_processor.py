@@ -233,7 +233,7 @@ FASTPATH_REQUIRED_FIELDS: dict[str, list[str]] = {
     "ACTA_NACIMIENTO": ["nombre", "fecha_nacimiento", "folio", "numero_acta"],
     "COMPROBANTE_DOMICILIO": ["domicilio", "cp"],
     "NSS": ["nss", "nombre"],
-    "DATOS_BANCARIOS": ["clabe", "banco", "titular"],
+    "DATOS_BANCARIOS": ["clabe", "banco"],
     "FACTURA": ["tabla_celdas"],
     "CONSTANCIA_SITUACION_FISCAL": ["rfc", "nombre", "domicilio"],
     "GENERICO": [],
@@ -282,6 +282,7 @@ CRITICAL_KEY_ALIASES: dict[str, dict[str, list[str]]] = {
     },
     "DATOS_BANCARIOS": {
         "titular": ["titular", "nombre", "nombre_completo", "nombre_titular"],
+        "tabla_celdas": ["tabla_celdas", "tabla", "celdas"],
     },
     "FACTURA": {
         "titular": ["titular", "nombre", "nombre_completo", "nombre_titular"],

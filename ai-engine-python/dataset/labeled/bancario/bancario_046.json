@@ -1,0 +1,21 @@
+{
+  "filename": "bancario_046.pdf",
+  "document_type": "DATOS_BANCARIOS",
+  "banco_origen": "",
+  "carpeta_origen": "otrosBancos",
+  "nombre_original": "PAGO DIF GOMEZ DZUL LUIS IVAN $4,500.00.pdf",
+  "added_date": "2026-03-25",
+  "labeled": true,
+  "notes": "REVISAR: corrige los campos incorrectos y cambia labeled a true",
+  "expected_fields": {
+    "clabe": "",
+    "cuenta": "1349111866",
+    "banco": "BANORTE",
+    "titular": "SUMINISTROS JETRISH SA DE CV",
+    "rfc": "SJE2506173S3",
+    "fecha_corte": "07/03/2026",
+    "periodo": ""
+  },
+  "prelabeled_date": "2026-03-25 11:31",
+  "prelabel_campos": "5/7"
+}

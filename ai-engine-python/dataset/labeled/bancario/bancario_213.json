@@ -1,0 +1,20 @@
+{
+  "filename": "bancario_213.pdf",
+  "document_type": "DATOS_BANCARIOS",
+  "nombre_original": "PAGO FIS BMPEI JUAREZ SOSA JOSE LUIS \\,462.58 SDR.pdf",
+  "added_date": "2026-03-25",
+  "labeled": true,
+  "notes": "REVISAR: corrige los campos incorrectos y cambia labeled a true",
+  "banco_origen": "SANTANDER",
+  "expected_fields": {
+    "clabe": "",
+    "cuenta": "80122978989",
+    "banco": "SANTANDER",
+    "titular": "",
+    "rfc": "",
+    "fecha_corte": "15/01/2026",
+    "periodo": ""
+  },
+  "prelabeled_date": "2026-03-25 11:31",
+  "prelabel_campos": "3/7"
+}

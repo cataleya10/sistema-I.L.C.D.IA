@@ -1,0 +1,21 @@
+{
+  "filename": "bancario_071.pdf",
+  "document_type": "DATOS_BANCARIOS",
+  "banco_origen": "",
+  "carpeta_origen": "otrosBancos2",
+  "nombre_original": "PAGO DIF MOJARRAS PEREZ ANTONIO $17,000.00.pdf",
+  "added_date": "2026-03-25",
+  "labeled": true,
+  "notes": "REVISAR: corrige los campos incorrectos y cambia labeled a true",
+  "expected_fields": {
+    "clabe": "072910013512416271",
+    "cuenta": "0729100135124",
+    "banco": "BANORTE",
+    "titular": "",
+    "rfc": "",
+    "fecha_corte": "14/03/2026",
+    "periodo": ""
+  },
+  "prelabeled_date": "2026-03-25 11:31",
+  "prelabel_campos": "4/7"
+}

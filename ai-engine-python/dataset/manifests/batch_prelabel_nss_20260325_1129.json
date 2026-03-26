@@ -1,0 +1,19 @@
+{
+  "tipo": "nss",
+  "fecha": "2026-03-25 11:29",
+  "total": 1,
+  "completos": 0,
+  "parciales": 0,
+  "sin_texto": 1,
+  "errores": 0,
+  "detalle_errores": [],
+  "documentos": [
+    {
+      "id": "nss_001",
+      "status": "sin_texto",
+      "detectados": 0,
+      "total": 3,
+      "filename": "nss_001.pdf"
+    }
+  ]
+}

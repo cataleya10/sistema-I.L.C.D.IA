@@ -1,0 +1,14 @@
+{
+  "filename": "curp_001.pdf",
+  "document_type": "CURP",
+  "prelabeled_date": "2026-03-25 11:34",
+  "labeled": true,
+  "notes": "REVISAR: corrige los campos incorrectos y cambia 'labeled' a true",
+  "expected_fields": {
+    "curp": "GACE010425HTCRMRA8",
+    "entidad_nacimiento": "TABASCO",
+    "fecha_nacimiento": "25/04/2001",
+    "nombre": "ERWIN GUSTAVO GARCIA CAMPOS",
+    "sexo": "H"
+  }
+}

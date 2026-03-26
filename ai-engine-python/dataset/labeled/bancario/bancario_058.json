@@ -1,0 +1,21 @@
+{
+  "filename": "bancario_058.pdf",
+  "document_type": "DATOS_BANCARIOS",
+  "banco_origen": "",
+  "carpeta_origen": "otrosBancos2",
+  "nombre_original": "PAGO DIF BARBARENA ALARCON VICTOR HUGO $5,000.00.pdf",
+  "added_date": "2026-03-25",
+  "labeled": true,
+  "notes": "REVISAR: corrige los campos incorrectos y cambia labeled a true",
+  "expected_fields": {
+    "clabe": "014052569372358703",
+    "cuenta": "0140525693723",
+    "banco": "SANTANDER",
+    "titular": "",
+    "rfc": "",
+    "fecha_corte": "14/03/2026",
+    "periodo": ""
+  },
+  "prelabeled_date": "2026-03-25 11:31",
+  "prelabel_campos": "4/7"
+}

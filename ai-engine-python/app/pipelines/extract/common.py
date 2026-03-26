@@ -9,6 +9,21 @@ from datetime import datetime
 from typing import Any
 
 from .constants import *  # noqa: F403
+from app.utils.regex_patterns import (
+    CURP_PATTERN,
+    RFC_PATTERN,
+    RFC_WITH_HOMOCLAVE,
+    NSS_PATTERN,
+    CLABE_PATTERN,
+    ACCOUNT_PATTERN,
+    AMOUNT_PATTERN,
+    DATE_PATTERN,
+    DATE_FLEX_PATTERN,
+    NAME_PATTERN,
+    CP_PATTERN,
+    fix_curp_ocr as _try_fix_curp_ocr,
+    search_curp as _search_curp,
+)  # fuente única de verdad — no redefinir aquí
 from app.pipelines.legacy_adapter import legacy_extract_fields
 from app.pipelines.table_postprocess import (
     postprocess_payment_table,
@@ -25,50 +40,8 @@ def _export_all():
     return [n for n in dir(mod) if not n.startswith('__')]
 
 
-CURP_PATTERN = re.compile(r"\b[A-Z][AEIOUX][A-Z]{2}\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])[HM][A-Z]{5}[A-Z0-9]\d\b")
-
-# Posiciones de letras y dígitos en un CURP de 18 caracteres (índice 0)
-_CURP_LETTER_POS = frozenset({0, 1, 2, 3, 10, 11, 12, 13, 14, 15, 16})
-_CURP_DIGIT_POS = frozenset({4, 5, 6, 7, 8, 9, 17})
-_CURP_OCR_DIGIT_TO_LETTER = {"0": "O", "1": "I", "5": "S", "8": "B"}
-_CURP_OCR_LETTER_TO_DIGIT = {"O": "0", "I": "1", "L": "1", "S": "5", "B": "8"}
-
-
-def _try_fix_curp_ocr(candidate: str) -> str:
-    """Corrige confusiones OCR comunes en un candidato de 18 chars que podría ser CURP."""
-    if len(candidate) != 18:
-        return candidate
-    chars = list(candidate.upper())
-    for i, ch in enumerate(chars):
-        if i in _CURP_LETTER_POS and ch in _CURP_OCR_DIGIT_TO_LETTER:
-            chars[i] = _CURP_OCR_DIGIT_TO_LETTER[ch]
-        elif i in _CURP_DIGIT_POS and ch in _CURP_OCR_LETTER_TO_DIGIT:
-            chars[i] = _CURP_OCR_LETTER_TO_DIGIT[ch]
-    return "".join(chars)
-
-
-def _search_curp(text: str) -> str | None:
-    """Busca CURP en texto; si no encuentra match directo, intenta corrección OCR."""
-    m = CURP_PATTERN.search(text.upper())
-    if m:
-        return m.group(0)
-    for candidate in re.findall(r"[A-Z0-9]{18}", text.upper()):
-        fixed = _try_fix_curp_ocr(candidate)
-        if CURP_PATTERN.fullmatch(fixed):
-            return fixed
-    return None
-RFC_PATTERN = re.compile(r"\b[A-Z&]{3,4}\d{6}[A-Z0-9]{3}\b")
-NSS_PATTERN = re.compile(r"\b\d{11}\b")
-CLABE_PATTERN = re.compile(r"\b\d{18}\b")
-ACCOUNT_PATTERN = re.compile(r"\b\d{10,16}\b")
-AMOUNT_PATTERN = re.compile(r"\b\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})\b")
-DATE_PATTERN = re.compile(r"\b\d{2}[/-]\d{2}[/-]\d{4}\b")
-DATE_FLEX_PATTERN = re.compile(
-    r"\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}(?:\s+|[-/])[A-Z]{3,9}(?:\s+|[-/])\d{2,4})\b"
-)
-NAME_PATTERN = re.compile(r"\b[A-Z]{2,}(?:\s+[A-Z]{2,}){1,7}\b")
-RFC_WITH_HOMOCLAVE = RFC_PATTERN  # alias — same regex, single compiled instance
-CP_PATTERN = re.compile(r"\b\d{5}\b")
+# Patrones importados desde app.utils.regex_patterns (ver arriba).
+# _try_fix_curp_ocr y _search_curp también importados como alias.
 
 LABEL_MAP = {
     "CURP": "curp",
@@ -3119,5 +3092,5 @@ def _try_repair_name_with_curp(name: str, curp: str) -> str:
     return name
 
 
-__all__ = _export_all()
+__all__ = _export_all()  # type: ignore[assignment]
 

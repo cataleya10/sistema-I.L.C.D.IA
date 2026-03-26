@@ -134,6 +134,17 @@ async def _global_exception_handler(request: Request, exc: Exception):
 
 
 @app.on_event("startup")
+async def preload_ner_model():
+    """Precarga el modelo NER spaCy al arrancar la API.
+
+    Si el modelo no existe todavia (sistema nuevo o sin entrenamiento previo)
+    simplemente registra un aviso y continua — no bloquea el arranque.
+    """
+    from app.services.ner_service import preload_model
+    preload_model()
+
+
+@app.on_event("startup")
 async def validate_runtime_security():
     if settings.enforce_python_runtime:
         min_major, min_minor = (int(part) for part in settings.required_python_min.split(".", 1))

@@ -1,0 +1,21 @@
+{
+  "filename": "bancario_078.pdf",
+  "document_type": "DATOS_BANCARIOS",
+  "banco_origen": "",
+  "carpeta_origen": "otrosBancos2",
+  "nombre_original": "PAGO DIF RODRIGUEZ ULIM GABRIEL ULISES $5,000.00.pdf",
+  "added_date": "2026-03-25",
+  "labeled": true,
+  "notes": "REVISAR: corrige los campos incorrectos y cambia labeled a true",
+  "expected_fields": {
+    "clabe": "014052569363083919",
+    "cuenta": "0140525693630",
+    "banco": "SANTANDER",
+    "titular": "",
+    "rfc": "",
+    "fecha_corte": "14/03/2026",
+    "periodo": ""
+  },
+  "prelabeled_date": "2026-03-25 11:31",
+  "prelabel_campos": "4/7"
+}

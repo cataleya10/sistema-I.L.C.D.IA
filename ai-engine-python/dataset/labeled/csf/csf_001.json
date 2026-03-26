@@ -1,0 +1,16 @@
+{
+  "filename": "csf_001.pdf",
+  "document_type": "CONSTANCIA_SITUACION_FISCAL",
+  "nombre_original": "CSF.pdf",
+  "added_date": "2026-03-25",
+  "labeled": true,
+  "notes": "REVISAR: corrige los campos incorrectos y cambia labeled a true",
+  "expected_fields": {
+    "rfc": "GACE010425NW6",
+    "nombre": "",
+    "regimen": "",
+    "domicilio": ""
+  },
+  "prelabeled_date": "2026-03-25 11:29",
+  "prelabel_campos": "1/4"
+}

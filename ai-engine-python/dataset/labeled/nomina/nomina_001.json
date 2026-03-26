@@ -1,0 +1,19 @@
+{
+  "filename": "nomina_001.pdf",
+  "document_type": "NOMINA",
+  "prelabeled_date": "2026-03-25 11:34",
+  "labeled": true,
+  "notes": "REVISAR: corrige los campos incorrectos y cambia 'labeled' a true",
+  "expected_fields": {
+    "curp": "",
+    "empresa": "",
+    "fecha_pago": "",
+    "neto_pagar": "",
+    "nombre": "",
+    "nss": "",
+    "periodo": "",
+    "rfc": "XAXX010101000",
+    "total_deducciones": "",
+    "total_percepciones": ""
+  }
+}

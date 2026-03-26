@@ -89,12 +89,20 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         or "MEGACABLE" in _name
     ):
         return "COMPROBANTE_DOMICILIO", 0.9
-    # Comprobantes de pago/transferencia con nombre de banco → FACTURA, no DATOS_BANCARIOS
-    # Ej: "PAGO FIS BMPEI 9,243.60 BBVA.pdf", "TRANSFERENCIA SPEI SANTANDER.pdf"
+
+    # ✅ FIX: Reportes de dispersión/nómina bancaria en el nombre del archivo
+    # → DATOS_BANCARIOS (antes se clasificaban como FACTURA)
     _bank_names = ("BBVA", "BANAMEX", "BANCOMER", "SANTANDER", "SCOTIABANK", "HSBC", "BANORTE")
-    _payment_signals = ("PAGO", "TRANSFERENCIA", "DISPERSION", "SPEI", "NOMINA")
+    _dispersion_signals = ("DISPERSION", "ARCHIVO DE PAGOS", "REPORTE DE TRANSMISION", "REPORTE TRANSMISION")
+    _payment_signals = ("PAGO", "TRANSFERENCIA", "SPEI", "NOMINA")
+
+    if any(d in _name for d in _dispersion_signals):
+        return "DATOS_BANCARIOS", 0.92
+
+    # Comprobantes de pago/transferencia individuales con nombre de banco → FACTURA
     if any(p in _name for p in _payment_signals) and any(b in _name for b in _bank_names):
         return "FACTURA", 0.9
+
     if (
         "ESTADO DE CUENTA" in _name
         or "ESTADO CUENTA" in _name
@@ -127,7 +135,6 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         "AGUA",
         "PREDIAL",
         "GAS",
-        # CFE data-section keywords (appear in billing body, not just logo)
         "NO DE SERVICIO",
         "NUMERO DE SERVICIO",
         "TARIFA DOMESTICA",
@@ -153,7 +160,6 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         "COMISIONFEDERALDEELECTRICIDAD",
     )
     payment_markers = (
-        "DISPERSION DE PAGO DE NOMINA",
         "PAGO DE NOMINA",
         "REPORTE DE OPERACIONES",
         "COMPROBANTE DE LA OPERACION",
@@ -162,10 +168,8 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         "TRASPASOS A OTROS BANCOS",
         "CLAVE RASTREO",
         "DATOS DEL BENEFICIARIO",
-        "REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS",
         "TIPO DE MOVIMIENTO (PAGO)",
         "ABONO NOMINA",
-        # SPEI / transferencias interbancarias
         "TRANSFERENCIA SPEI",
         "SPEI ENVIADO",
         "SPEI RECIBIDO",
@@ -175,19 +179,16 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         "NUMERO DE RASTREO",
         "REFERENCIA NUMERICA",
         "OPERACION INTERBANCARIA",
-        # BBVA Pago Mismo Banco / transferencias
         "PAGO MISMO BANCO",
         "GRUPO PAGO MISMO BANCO",
         "OPERACION AUTORIZADA",
         "DATOS DE CONFIRMACION DE LA TRANSFERENCIA",
         "FOLIO DE FIRMA",
         "FOLIO UNICO",
-        # BBVA Net Cash (plataforma de pagos empresariales)
         "BBVA NET CASH",
         "BBVA NETCASH",
     )
     payment_markers_compact = (
-        "DISPERSIONDEPAGODENOMINA",
         "PAGODENOMINA",
         "REPORTEDEOPERACIONES",
         "COMPROBANTEDELAOPERACION",
@@ -196,26 +197,22 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         "TRASPASOSAOTROSBANCOS",
         "CLAVERASTREO",
         "DATOSDELBENEFICIARIO",
-        "REPORTEDETRANSMISIONDEARCHIVODEPAGOS",
         "TIPODEMOVIMIENTOPAGO",
         "ABONONOMINA",
-        # SPEI compact
         "TRANSFERENCIASPEI",
         "SPEIENVIADO",
         "SPEIRECIBIDO",
         "FOLIOSPEI",
-        "COMPROBANTEDETRANSFERENCIA",  # fix: antes faltaba la E
+        "COMPROBANTEDETRANSFERENCIA",
         "NUMERODERASTREO",
         "REFERENCIANUMERICA",
         "OPERACIONINTERBANCARIA",
-        # BBVA Pago Mismo Banco compact
         "GRUPOPAGOMISMOBANCO",
         "PAGOMISMOBANCO",
         "OPERACIONAUTORIZADA",
         "DATOSDECONFIRMACIONDELATRANSFERENCIA",
         "FOLIODEFIRMA",
         "FOLIOUNICO",
-        # BBVA Net Cash compact
         "BBVANETCASH",
     )
 
@@ -253,16 +250,49 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         or "TOMO" in text
     ):
         return "ACTA_NACIMIENTO", 0.85
+
+    # ✅ FIX: Reportes de dispersión bancaria → DATOS_BANCARIOS
+    # Estos documentos son reportes de archivo de pagos masivos (BBVA, Santander, Banorte).
+    # Tienen tabla de beneficiarios con CLABE/cuenta, importe, estatus.
+    # Deben clasificarse como DATOS_BANCARIOS, NO como FACTURA.
+    _dispersion_markers = (
+        "REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS",
+        "REPORTE DE TRANSMISION DE ARCHIVO DE PAGO",
+        "DISPERSION DE PAGO DE NOMINA",
+        "DISPERSION DE NOMINA",
+        "ARCHIVO DE PAGOS",
+        "ARCHIVO DE PAGO DE NOMINA",
+        "RESULTADO DE ARCHIVO DE PAGOS",
+        "REPORTE DE DISPERSION",
+        "REPORTE DE TRANSMISION",
+    )
+    _dispersion_compact = (
+        "REPORTEDETRANSMISIONDEARCHIVODEPAGOS",
+        "REPORTEDETRANSMISIONDEARCHIVODEPAGO",
+        "DISPERSIONDEPAGODENOMINA",
+        "DISPERSIONDENOMINA",
+        "ARCHIVODEPAGOS",
+        "ARCHIVODEPAGODEDOMINA",
+        "RESULTADODEARCHIVODEPAGOS",
+        "REPORTEDEDISPERSION",
+        "REPORTEDETRANSMISION",
+    )
+    if (
+        any(m in text for m in _dispersion_markers)
+        or any(m in compact_text for m in _dispersion_compact)
+    ):
+        return "DATOS_BANCARIOS", 0.92
+
     # Nómina/SPEI/pago keywords tienen prioridad sobre service_markers Y sobre NSS
-    # (una nómina BBVA puede tener "TOTAL A PAGAR" o "NSS" que dispara clasificación incorrecta)
     if (
         any(marker in text for marker in payment_markers)
         or any(marker in compact_text for marker in payment_markers_compact)
     ):
         return "FACTURA", 0.9
+
     if any(marker in text for marker in service_markers) or any(marker in compact_text for marker in service_markers_compact):
         return "COMPROBANTE_DOMICILIO", 0.86
-    # NSS check después de FACTURA para evitar que nóminas con "NSS"/"IMSS" se clasifiquen mal
+
     if (
         "NUMERO DE SEGURIDAD SOCIAL" in text
         or "NSS" in text
@@ -299,7 +329,7 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         return "CURP", 0.9
     if "NSS" in text or "IMSS" in text or "SEGURIDAD SOCIAL" in text:
         return "NSS", 0.82
-    # Señales fuertes de estado de cuenta bancario (sin importar banco)
+
     _bank_statement_signals = (
         "ESTADO DE CUENTA", "ACCOUNT STATEMENT", "SALDO INICIAL", "SALDO FINAL",
         "SALDO ANTERIOR", "MOVIMIENTOS DEL PERIODO", "FECHA DE CORTE",
@@ -321,7 +351,7 @@ def _keyword_override(text: str, compact_text: str, filename: str | None):
         or (_has_bank_name and _has_statement_signal)
     ):
         return "DATOS_BANCARIOS", 0.8
-    # Filename-based PAGO/FACTURA check (pago nómina only — kept at end since less precise)
+
     if (
         "PAGO" in _name
         and any(token in _name for token in ("NOMINA", "DISPERSION", "BMPEI", "SBK", "BNT", "SPEI", "BENEFICIARIO"))
@@ -342,12 +372,8 @@ async def classify_document(image, ocr_text: str, filename: str | None = None):
             override, override_conf = _keyword_override(text, compact_text, name)
             if override:
                 return override, max(confidence, override_conf)
-            # Validate NB prediction — if the doc doesn't have hard markers
-            # for the predicted type, the NB is likely wrong (e.g. a generic
-            # document with "NOMBRE" being classified as INE).
             if _has_hard_markers(predicted, text, compact_text):
                 return predicted, confidence
-            # NB prediction not confirmed by hard markers → GENERICO
             logger.info(
                 "NB predicted %s (conf=%.2f) but no hard markers found, downgrading to GENERICO",
                 predicted, confidence,
@@ -356,16 +382,11 @@ async def classify_document(image, ocr_text: str, filename: str | None = None):
     override, override_conf = _keyword_override(text, compact_text, name)
     if override:
         return override, override_conf
-    # No specific document type recognized — use GENERICO for universal extraction
     return "GENERICO", 0.5
 
 
 def _has_hard_markers(doc_type: str, text: str, compact_text: str) -> bool:
-    """Check if the text contains hard evidence for the predicted document type.
-
-    This prevents the NB classifier from misclassifying generic documents
-    that happen to contain words like 'NOMBRE', 'CEDULA', 'FECHA' etc.
-    """
+    """Check if the text contains hard evidence for the predicted document type."""
     checks: dict[str, list[str]] = {
         "INE": [
             "INSTITUTO NACIONAL ELECTORAL",
@@ -422,9 +443,17 @@ def _has_hard_markers(doc_type: str, text: str, compact_text: str) -> bool:
             "ESTADO DE CUENTA",
             "CLABE",
             "ESTADODECUENTA",
+            # ✅ FIX: agregar markers de reportes de dispersión
+            "REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS",
+            "DISPERSION DE NOMINA",
+            "DISPERSION DE PAGO DE NOMINA",
+            "ARCHIVO DE PAGOS",
+            "REPORTE DE DISPERSION",
+            "REPORTEDETRANSMISIONDEARCHIVODEPAGOS",
+            "DISPERSIONDENOMINA",
+            "ARCHIVODEPAGOS",
         ],
         "FACTURA": [
-            # Payment / payroll / SPEI markers
             "PAGO DE NOMINA",
             "DISPERSION DE NOMINA",
             "TRANSFERENCIA SPEI",
@@ -436,7 +465,6 @@ def _has_hard_markers(doc_type: str, text: str, compact_text: str) -> bool:
             "DISPERSIONNOMINA",
             "PAGODENOMINA",
             "TRANSFERENCIASPEI",
-            # BBVA Net Cash payment confirmation signals
             "OPERACION AUTORIZADA",
             "FOLIO DE FIRMA",
             "DATOS DE CONFIRMACION DE LA TRANSFERENCIA",
@@ -453,7 +481,6 @@ def _has_hard_markers(doc_type: str, text: str, compact_text: str) -> bool:
 
     markers = checks.get(doc_type)
     if markers is None:
-        # No hard markers defined for this type → trust NB
         return True
 
     combined = text + " " + compact_text

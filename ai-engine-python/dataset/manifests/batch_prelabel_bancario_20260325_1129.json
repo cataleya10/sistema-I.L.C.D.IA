@@ -1,0 +1,1510 @@
+{
+  "tipo": "bancario",
+  "fecha": "2026-03-25 11:29",
+  "total": 214,
+  "completos": 0,
+  "parciales": 213,
+  "sin_texto": 1,
+  "errores": 0,
+  "detalle_errores": [],
+  "documentos": [
+    {
+      "id": "bancario_001",
+      "status": "parcial",
+      "detectados": 5,
+      "total": 7,
+      "filename": "bancario_001.pdf"
+    },
+    {
+      "id": "bancario_002",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_002.pdf"
+    },
+    {
+      "id": "bancario_003",
+      "status": "parcial",
+      "detectados": 5,
+      "total": 7,
+      "filename": "bancario_003.pdf"
+    },
+    {
+      "id": "bancario_004",
+      "status": "parcial",
+      "detectados": 5,
+      "total": 7,
+      "filename": "bancario_004.pdf"
+    },
+    {
+      "id": "bancario_005",
+      "status": "parcial",
+      "detectados": 5,
+      "total": 7,
+      "filename": "bancario_005.pdf"
+    },
+    {
+      "id": "bancario_006",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_006.pdf"
+    },
+    {
+      "id": "bancario_007",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_007.pdf"
+    },
+    {
+      "id": "bancario_008",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_008.pdf"
+    },
+    {
+      "id": "bancario_009",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_009.pdf"
+    },
+    {
+      "id": "bancario_010",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_010.pdf"
+    },
+    {
+      "id": "bancario_011",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_011.pdf"
+    },
+    {
+      "id": "bancario_012",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_012.pdf"
+    },
+    {
+      "id": "bancario_013",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_013.pdf"
+    },
+    {
+      "id": "bancario_014",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_014.pdf"
+    },
+    {
+      "id": "bancario_015",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_015.pdf"
+    },
+    {
+      "id": "bancario_016",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_016.pdf"
+    },
+    {
+      "id": "bancario_017",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_017.pdf"
+    },
+    {
+      "id": "bancario_018",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_018.pdf"
+    },
+    {
+      "id": "bancario_019",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_019.pdf"
+    },
+    {
+      "id": "bancario_020",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_020.pdf"
+    },
+    {
+      "id": "bancario_021",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_021.pdf"
+    },
+    {
+      "id": "bancario_022",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_022.pdf"
+    },
+    {
+      "id": "bancario_023",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_023.pdf"
+    },
+    {
+      "id": "bancario_024",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_024.pdf"
+    },
+    {
+      "id": "bancario_025",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_025.pdf"
+    },
+    {
+      "id": "bancario_026",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_026.pdf"
+    },
+    {
+      "id": "bancario_027",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_027.pdf"
+    },
+    {
+      "id": "bancario_028",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_028.pdf"
+    },
+    {
+      "id": "bancario_029",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_029.pdf"
+    },
+    {
+      "id": "bancario_030",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_030.pdf"
+    },
+    {
+      "id": "bancario_031",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_031.pdf"
+    },
+    {
+      "id": "bancario_032",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_032.pdf"
+    },
+    {
+      "id": "bancario_033",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_033.pdf"
+    },
+    {
+      "id": "bancario_034",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_034.pdf"
+    },
+    {
+      "id": "bancario_035",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_035.pdf"
+    },
+    {
+      "id": "bancario_036",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_036.pdf"
+    },
+    {
+      "id": "bancario_037",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_037.pdf"
+    },
+    {
+      "id": "bancario_038",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_038.pdf"
+    },
+    {
+      "id": "bancario_039",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_039.pdf"
+    },
+    {
+      "id": "bancario_040",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_040.pdf"
+    },
+    {
+      "id": "bancario_041",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_041.pdf"
+    },
+    {
+      "id": "bancario_042",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_042.pdf"
+    },
+    {
+      "id": "bancario_043",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_043.pdf"
+    },
+    {
+      "id": "bancario_044",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_044.pdf"
+    },
+    {
+      "id": "bancario_045",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_045.pdf"
+    },
+    {
+      "id": "bancario_046",
+      "status": "parcial",
+      "detectados": 5,
+      "total": 7,
+      "filename": "bancario_046.pdf"
+    },
+    {
+      "id": "bancario_047",
+      "status": "parcial",
+      "detectados": 5,
+      "total": 7,
+      "filename": "bancario_047.pdf"
+    },
+    {
+      "id": "bancario_048",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_048.pdf"
+    },
+    {
+      "id": "bancario_049",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_049.pdf"
+    },
+    {
+      "id": "bancario_050",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_050.pdf"
+    },
+    {
+      "id": "bancario_051",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_051.pdf"
+    },
+    {
+      "id": "bancario_052",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_052.pdf"
+    },
+    {
+      "id": "bancario_053",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_053.pdf"
+    },
+    {
+      "id": "bancario_054",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_054.pdf"
+    },
+    {
+      "id": "bancario_055",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_055.pdf"
+    },
+    {
+      "id": "bancario_056",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_056.pdf"
+    },
+    {
+      "id": "bancario_057",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_057.pdf"
+    },
+    {
+      "id": "bancario_058",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_058.pdf"
+    },
+    {
+      "id": "bancario_059",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_059.pdf"
+    },
+    {
+      "id": "bancario_060",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_060.pdf"
+    },
+    {
+      "id": "bancario_061",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_061.pdf"
+    },
+    {
+      "id": "bancario_062",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_062.pdf"
+    },
+    {
+      "id": "bancario_063",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_063.pdf"
+    },
+    {
+      "id": "bancario_064",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_064.pdf"
+    },
+    {
+      "id": "bancario_065",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_065.pdf"
+    },
+    {
+      "id": "bancario_066",
+      "status": "parcial",
+      "detectados": 2,
+      "total": 7,
+      "filename": "bancario_066.pdf"
+    },
+    {
+      "id": "bancario_067",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_067.pdf"
+    },
+    {
+      "id": "bancario_068",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_068.pdf"
+    },
+    {
+      "id": "bancario_069",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_069.pdf"
+    },
+    {
+      "id": "bancario_070",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_070.pdf"
+    },
+    {
+      "id": "bancario_071",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_071.pdf"
+    },
+    {
+      "id": "bancario_072",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_072.pdf"
+    },
+    {
+      "id": "bancario_073",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_073.pdf"
+    },
+    {
+      "id": "bancario_074",
+      "status": "parcial",
+      "detectados": 2,
+      "total": 7,
+      "filename": "bancario_074.pdf"
+    },
+    {
+      "id": "bancario_075",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_075.pdf"
+    },
+    {
+      "id": "bancario_076",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_076.pdf"
+    },
+    {
+      "id": "bancario_077",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_077.pdf"
+    },
+    {
+      "id": "bancario_078",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_078.pdf"
+    },
+    {
+      "id": "bancario_079",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_079.pdf"
+    },
+    {
+      "id": "bancario_080",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_080.pdf"
+    },
+    {
+      "id": "bancario_081",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_081.pdf"
+    },
+    {
+      "id": "bancario_082",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_082.pdf"
+    },
+    {
+      "id": "bancario_083",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_083.pdf"
+    },
+    {
+      "id": "bancario_084",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_084.pdf"
+    },
+    {
+      "id": "bancario_085",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_085.pdf"
+    },
+    {
+      "id": "bancario_086",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_086.pdf"
+    },
+    {
+      "id": "bancario_087",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_087.pdf"
+    },
+    {
+      "id": "bancario_088",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_088.pdf"
+    },
+    {
+      "id": "bancario_089",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_089.pdf"
+    },
+    {
+      "id": "bancario_090",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_090.pdf"
+    },
+    {
+      "id": "bancario_091",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_091.pdf"
+    },
+    {
+      "id": "bancario_092",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_092.pdf"
+    },
+    {
+      "id": "bancario_093",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_093.pdf"
+    },
+    {
+      "id": "bancario_094",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_094.pdf"
+    },
+    {
+      "id": "bancario_095",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_095.pdf"
+    },
+    {
+      "id": "bancario_096",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_096.pdf"
+    },
+    {
+      "id": "bancario_097",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_097.pdf"
+    },
+    {
+      "id": "bancario_098",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_098.pdf"
+    },
+    {
+      "id": "bancario_099",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_099.pdf"
+    },
+    {
+      "id": "bancario_100",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_100.pdf"
+    },
+    {
+      "id": "bancario_101",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_101.pdf"
+    },
+    {
+      "id": "bancario_102",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_102.pdf"
+    },
+    {
+      "id": "bancario_103",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_103.pdf"
+    },
+    {
+      "id": "bancario_104",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_104.pdf"
+    },
+    {
+      "id": "bancario_105",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_105.pdf"
+    },
+    {
+      "id": "bancario_106",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_106.pdf"
+    },
+    {
+      "id": "bancario_107",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_107.pdf"
+    },
+    {
+      "id": "bancario_108",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_108.pdf"
+    },
+    {
+      "id": "bancario_109",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_109.pdf"
+    },
+    {
+      "id": "bancario_110",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_110.pdf"
+    },
+    {
+      "id": "bancario_111",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_111.pdf"
+    },
+    {
+      "id": "bancario_112",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_112.pdf"
+    },
+    {
+      "id": "bancario_113",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_113.pdf"
+    },
+    {
+      "id": "bancario_114",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_114.pdf"
+    },
+    {
+      "id": "bancario_115",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_115.pdf"
+    },
+    {
+      "id": "bancario_116",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_116.pdf"
+    },
+    {
+      "id": "bancario_117",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_117.pdf"
+    },
+    {
+      "id": "bancario_118",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_118.pdf"
+    },
+    {
+      "id": "bancario_119",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_119.pdf"
+    },
+    {
+      "id": "bancario_120",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_120.pdf"
+    },
+    {
+      "id": "bancario_121",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_121.pdf"
+    },
+    {
+      "id": "bancario_122",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_122.pdf"
+    },
+    {
+      "id": "bancario_123",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_123.pdf"
+    },
+    {
+      "id": "bancario_124",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_124.pdf"
+    },
+    {
+      "id": "bancario_125",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_125.pdf"
+    },
+    {
+      "id": "bancario_126",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_126.pdf"
+    },
+    {
+      "id": "bancario_127",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_127.pdf"
+    },
+    {
+      "id": "bancario_128",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_128.pdf"
+    },
+    {
+      "id": "bancario_129",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_129.pdf"
+    },
+    {
+      "id": "bancario_130",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_130.pdf"
+    },
+    {
+      "id": "bancario_131",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_131.pdf"
+    },
+    {
+      "id": "bancario_132",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_132.pdf"
+    },
+    {
+      "id": "bancario_133",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_133.pdf"
+    },
+    {
+      "id": "bancario_134",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_134.pdf"
+    },
+    {
+      "id": "bancario_135",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_135.pdf"
+    },
+    {
+      "id": "bancario_136",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_136.pdf"
+    },
+    {
+      "id": "bancario_137",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_137.pdf"
+    },
+    {
+      "id": "bancario_138",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_138.pdf"
+    },
+    {
+      "id": "bancario_139",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_139.pdf"
+    },
+    {
+      "id": "bancario_140",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_140.pdf"
+    },
+    {
+      "id": "bancario_141",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_141.pdf"
+    },
+    {
+      "id": "bancario_142",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_142.pdf"
+    },
+    {
+      "id": "bancario_143",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_143.pdf"
+    },
+    {
+      "id": "bancario_144",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_144.pdf"
+    },
+    {
+      "id": "bancario_145",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_145.pdf"
+    },
+    {
+      "id": "bancario_146",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_146.pdf"
+    },
+    {
+      "id": "bancario_147",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_147.pdf"
+    },
+    {
+      "id": "bancario_148",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_148.pdf"
+    },
+    {
+      "id": "bancario_149",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_149.pdf"
+    },
+    {
+      "id": "bancario_150",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_150.pdf"
+    },
+    {
+      "id": "bancario_151",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_151.pdf"
+    },
+    {
+      "id": "bancario_152",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_152.pdf"
+    },
+    {
+      "id": "bancario_153",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_153.pdf"
+    },
+    {
+      "id": "bancario_154",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_154.pdf"
+    },
+    {
+      "id": "bancario_155",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_155.pdf"
+    },
+    {
+      "id": "bancario_156",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_156.pdf"
+    },
+    {
+      "id": "bancario_157",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_157.pdf"
+    },
+    {
+      "id": "bancario_158",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_158.pdf"
+    },
+    {
+      "id": "bancario_159",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_159.pdf"
+    },
+    {
+      "id": "bancario_160",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_160.pdf"
+    },
+    {
+      "id": "bancario_161",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_161.pdf"
+    },
+    {
+      "id": "bancario_162",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_162.pdf"
+    },
+    {
+      "id": "bancario_163",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_163.pdf"
+    },
+    {
+      "id": "bancario_164",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_164.pdf"
+    },
+    {
+      "id": "bancario_165",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_165.pdf"
+    },
+    {
+      "id": "bancario_166",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_166.pdf"
+    },
+    {
+      "id": "bancario_167",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_167.pdf"
+    },
+    {
+      "id": "bancario_168",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_168.pdf"
+    },
+    {
+      "id": "bancario_169",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_169.pdf"
+    },
+    {
+      "id": "bancario_170",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_170.pdf"
+    },
+    {
+      "id": "bancario_171",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_171.pdf"
+    },
+    {
+      "id": "bancario_172",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_172.pdf"
+    },
+    {
+      "id": "bancario_173",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_173.pdf"
+    },
+    {
+      "id": "bancario_174",
+      "status": "parcial",
+      "detectados": 6,
+      "total": 7,
+      "filename": "bancario_174.pdf"
+    },
+    {
+      "id": "bancario_175",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_175.pdf"
+    },
+    {
+      "id": "bancario_176",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_176.pdf"
+    },
+    {
+      "id": "bancario_177",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_177.pdf"
+    },
+    {
+      "id": "bancario_178",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_178.pdf"
+    },
+    {
+      "id": "bancario_179",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_179.pdf"
+    },
+    {
+      "id": "bancario_180",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_180.pdf"
+    },
+    {
+      "id": "bancario_181",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_181.pdf"
+    },
+    {
+      "id": "bancario_182",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_182.pdf"
+    },
+    {
+      "id": "bancario_183",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_183.pdf"
+    },
+    {
+      "id": "bancario_184",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_184.pdf"
+    },
+    {
+      "id": "bancario_185",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_185.pdf"
+    },
+    {
+      "id": "bancario_186",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_186.pdf"
+    },
+    {
+      "id": "bancario_187",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_187.pdf"
+    },
+    {
+      "id": "bancario_188",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_188.pdf"
+    },
+    {
+      "id": "bancario_189",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_189.pdf"
+    },
+    {
+      "id": "bancario_190",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_190.pdf"
+    },
+    {
+      "id": "bancario_191",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_191.pdf"
+    },
+    {
+      "id": "bancario_192",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_192.pdf"
+    },
+    {
+      "id": "bancario_193",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_193.pdf"
+    },
+    {
+      "id": "bancario_194",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_194.pdf"
+    },
+    {
+      "id": "bancario_195",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_195.pdf"
+    },
+    {
+      "id": "bancario_196",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_196.pdf"
+    },
+    {
+      "id": "bancario_197",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_197.pdf"
+    },
+    {
+      "id": "bancario_198",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_198.pdf"
+    },
+    {
+      "id": "bancario_199",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_199.pdf"
+    },
+    {
+      "id": "bancario_200",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_200.pdf"
+    },
+    {
+      "id": "bancario_201",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_201.pdf"
+    },
+    {
+      "id": "bancario_202",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_202.pdf"
+    },
+    {
+      "id": "bancario_203",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_203.pdf"
+    },
+    {
+      "id": "bancario_204",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_204.pdf"
+    },
+    {
+      "id": "bancario_205",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_205.pdf"
+    },
+    {
+      "id": "bancario_206",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_206.pdf"
+    },
+    {
+      "id": "bancario_207",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_207.pdf"
+    },
+    {
+      "id": "bancario_208",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_208.pdf"
+    },
+    {
+      "id": "bancario_209",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_209.pdf"
+    },
+    {
+      "id": "bancario_210",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_210.pdf"
+    },
+    {
+      "id": "bancario_211",
+      "status": "sin_texto",
+      "detectados": 0,
+      "total": 7,
+      "filename": "bancario_211.pdf"
+    },
+    {
+      "id": "bancario_212",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_212.pdf"
+    },
+    {
+      "id": "bancario_213",
+      "status": "parcial",
+      "detectados": 3,
+      "total": 7,
+      "filename": "bancario_213.pdf"
+    },
+    {
+      "id": "bancario_214",
+      "status": "parcial",
+      "detectados": 4,
+      "total": 7,
+      "filename": "bancario_214.pdf"
+    }
+  ]
+}

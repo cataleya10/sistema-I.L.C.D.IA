@@ -1,0 +1,21 @@
+{
+  "filename": "bancario_011.pdf",
+  "document_type": "DATOS_BANCARIOS",
+  "banco_origen": "BANORTE",
+  "carpeta_origen": "banorte",
+  "nombre_original": "PAGO FIS BMPEI $ 4,440.89 BNT.pdf",
+  "added_date": "2026-03-25",
+  "labeled": true,
+  "notes": "REVISAR: corrige los campos incorrectos y cambia labeled a true",
+  "expected_fields": {
+    "clabe": "000000001302118815",
+    "cuenta": "0438349034",
+    "banco": "BANORTE",
+    "titular": "",
+    "rfc": "",
+    "fecha_corte": "13/03/2026",
+    "periodo": ""
+  },
+  "prelabeled_date": "2026-03-25 11:31",
+  "prelabel_campos": "4/7"
+}

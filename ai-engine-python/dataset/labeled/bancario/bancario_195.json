@@ -1,0 +1,21 @@
+{
+  "filename": "bancario_195.pdf",
+  "document_type": "DATOS_BANCARIOS",
+  "banco_origen": "SCOTIABANK",
+  "carpeta_origen": "scotianBankDiferencia",
+  "nombre_original": "PAGO DIF FLOMEN $10,378.80 SBK.pdf",
+  "added_date": "2026-03-25",
+  "labeled": true,
+  "notes": "REVISAR: corrige los campos incorrectos y cambia labeled a true",
+  "expected_fields": {
+    "clabe": "",
+    "cuenta": "62036123962",
+    "banco": "SCOTIABANK",
+    "titular": "SUMINISTROS FLOMEN SA DE CV",
+    "rfc": "",
+    "fecha_corte": "04/02/2026",
+    "periodo": ""
+  },
+  "prelabeled_date": "2026-03-25 11:31",
+  "prelabel_campos": "4/7"
+}

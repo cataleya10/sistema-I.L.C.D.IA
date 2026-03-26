@@ -1,0 +1,17 @@
+{
+  "filename": "bancario_211.pdf",
+  "document_type": "DATOS_BANCARIOS",
+  "prelabeled_date": "2026-03-25 11:34",
+  "labeled": true,
+  "notes": "REVISAR: corrige los campos incorrectos y cambia 'labeled' a true",
+  "expected_fields": {
+    "banco": "SANTANDER",
+    "clabe": "014052569387305437",
+    "cuenta": "56938730543",
+    "fecha_corte": "",
+    "periodo": "",
+    "rfc": "",
+    "titular": "ERWIN GUSTAVO GARCIA CAMPOS",
+    "_extra_nombre": "ERWIN GUSTAVO GARCIA CAMPOS"
+  }
+}

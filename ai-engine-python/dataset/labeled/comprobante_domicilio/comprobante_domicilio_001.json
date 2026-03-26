@@ -1,0 +1,19 @@
+{
+  "filename": "comprobante_domicilio_001.pdf",
+  "document_type": "COMPROBANTE_DOMICILIO",
+  "nombre_original": "Comprobante de domicilio.pdf",
+  "added_date": "2026-03-25",
+  "labeled": true,
+  "notes": "REVISAR: corrige los campos incorrectos y cambia labeled a true",
+  "expected_fields": {
+    "proveedor": "",
+    "titular": "",
+    "domicilio": "",
+    "cp": "",
+    "fecha_limite": "",
+    "total": "",
+    "numero_servicio": ""
+  },
+  "prelabeled_date": "2026-03-25 11:29",
+  "prelabel_campos": "0/7"
+}

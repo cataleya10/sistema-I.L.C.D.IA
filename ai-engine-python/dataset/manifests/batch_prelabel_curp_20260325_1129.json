@@ -1,0 +1,19 @@
+{
+  "tipo": "curp",
+  "fecha": "2026-03-25 11:29",
+  "total": 1,
+  "completos": 0,
+  "parciales": 0,
+  "sin_texto": 1,
+  "errores": 0,
+  "detalle_errores": [],
+  "documentos": [
+    {
+      "id": "curp_001",
+      "status": "sin_texto",
+      "detectados": 0,
+      "total": 5,
+      "filename": "curp_001.pdf"
+    }
+  ]
+}

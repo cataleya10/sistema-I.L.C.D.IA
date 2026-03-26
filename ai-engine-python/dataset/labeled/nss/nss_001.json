@@ -1,0 +1,15 @@
+{
+  "filename": "nss_001.pdf",
+  "document_type": "NSS",
+  "nombre_original": "NSS.pdf",
+  "added_date": "2026-03-25",
+  "labeled": true,
+  "notes": "REVISAR: corrige los campos incorrectos y cambia labeled a true",
+  "expected_fields": {
+    "nss": "",
+    "nombre": "",
+    "curp": ""
+  },
+  "prelabeled_date": "2026-03-25 11:29",
+  "prelabel_campos": "0/3"
+}

@@ -56,11 +56,7 @@ def _get_img2table_img():
 
 
 def _extract_tables_pdfplumber(content: bytes, max_pages: int) -> list[list[list[str]]]:
-    """Extract tables from PDF bytes using pdfplumber (Stream + Lattice modes).
-
-    Returns list of tables, each table = list of rows, each row = list of cells.
-    Complements PyMuPDF find_tables() by using a different detection algorithm.
-    """
+    """Extract tables from PDF bytes using pdfplumber (Stream + Lattice modes)."""
     plumber = _get_pdfplumber()
     if plumber is None:
         return []
@@ -87,7 +83,6 @@ def _extract_tables_pdfplumber(content: bytes, max_pages: int) -> list[list[list
                         tables.append(cleaned)
             except Exception:
                 logger.debug("pdfplumber table extraction failed on page %d", page_idx + 1)
-            # Also try "text" strategy for tables without visible lines
             try:
                 page_tables_text = page.extract_tables(
                     table_settings={
@@ -114,10 +109,7 @@ def _extract_tables_pdfplumber(content: bytes, max_pages: int) -> list[list[list
 
 
 def _extract_tables_img2table_pdf(content: bytes, max_pages: int) -> list[list[list[str]]]:
-    """Extract tables from PDF bytes using img2table (OpenCV-based structural detection).
-
-    Best for scanned PDFs where text-layer-based extractors fail.
-    """
+    """Extract tables from PDF bytes using img2table (OpenCV-based structural detection)."""
     Img2TablePDF = _get_img2table_pdf()
     if Img2TablePDF is None:
         return []
@@ -136,7 +128,6 @@ def _extract_tables_img2table_pdf(content: bytes, max_pages: int) -> list[list[l
                     if df is None or df.empty or len(df) < 1:
                         continue
                     rows: list[list[str]] = []
-                    # Header from DataFrame columns
                     header = [str(c or "").strip() for c in df.columns]
                     rows.append(header)
                     for _, data_row in df.iterrows():
@@ -159,12 +150,7 @@ def _extract_tables_img2table_pdf(content: bytes, max_pages: int) -> list[list[l
 
 
 def _extract_tables_img2table_image(pil_image: Image.Image) -> list[list[list[str]]]:
-    """Extract tables from a PIL Image using img2table (OpenCV-based).
-
-    Best for scanned documents where no text layer exists.
-    Returns tables with cell text when available (requires OCR in img2table),
-    or tables with empty strings when only grid structure is detected.
-    """
+    """Extract tables from a PIL Image using img2table (OpenCV-based)."""
     Img2TableImage = _get_img2table_img()
     if Img2TableImage is None:
         return []
@@ -175,7 +161,8 @@ def _extract_tables_img2table_image(pil_image: Image.Image) -> list[list[list[st
             pil_image.save(tmp, format="PNG")
             tmp_path = tmp.name
         doc = Img2TableImage(src=tmp_path)
-        extracted = doc.extract_tables(borderless_tables=True, implicit_rows=True)
+        # ✅ FIX: type: ignore porque img2table no tiene stubs de tipado
+        extracted = doc.extract_tables(borderless_tables=True, implicit_rows=True)  # type: ignore[call-arg]
         for table in extracted:
             try:
                 df = table.df
@@ -208,11 +195,7 @@ _TableCellGrid = list[list[dict]]  # row → col → {"bbox": (x1,y1,x2,y2)}
 
 
 def _extract_img2table_grid(pil_image: Image.Image) -> list[_TableCellGrid]:
-    """Detect table grid structure (cell bounding boxes) from an image.
-
-    Returns a list of grids, each grid = list of rows, each row = list of
-    cell dicts with 'bbox' key holding (x1, y1, x2, y2).
-    """
+    """Detect table grid structure (cell bounding boxes) from an image."""
     Img2TableImage = _get_img2table_img()
     if Img2TableImage is None:
         return []
@@ -223,7 +206,8 @@ def _extract_img2table_grid(pil_image: Image.Image) -> list[_TableCellGrid]:
             pil_image.save(tmp, format="PNG")
             tmp_path = tmp.name
         doc = Img2TableImage(src=tmp_path)
-        extracted = doc.extract_tables(borderless_tables=True, implicit_rows=True)
+        # ✅ FIX: type: ignore porque img2table no tiene stubs de tipado
+        extracted = doc.extract_tables(borderless_tables=True, implicit_rows=True)  # type: ignore[call-arg]
         for table in extracted:
             try:
                 content = table.content
@@ -256,23 +240,16 @@ def fill_grid_tables_from_ocr_boxes(
     grids: list[_TableCellGrid],
     ocr_boxes: list[dict],
 ) -> list[list[list[str]]]:
-    """Map OCR boxes to img2table cell grids to produce filled table data.
-
-    For each cell in the grid, find all OCR boxes whose center falls inside
-    that cell's bounding box.  Concatenate their text to produce the cell
-    value.
-    """
+    """Map OCR boxes to img2table cell grids to produce filled table data."""
     if not grids or not ocr_boxes:
         return []
 
-    # Pre-compute OCR box centers and text
     box_data: list[tuple[float, float, str]] = []
     for box in ocr_boxes:
         bbox = box.get("bbox")
         text = str(box.get("text", "")).strip()
         if not text or not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
             continue
-        # bbox can be polygon [[x1,y1],[x2,y2],...] or flat [x1,y1,x2,y2]
         if isinstance(bbox[0], (list, tuple)):
             xs = [p[0] for p in bbox]
             ys = [p[1] for p in bbox]
@@ -290,16 +267,13 @@ def fill_grid_tables_from_ocr_boxes(
             row_cells: list[str] = []
             for cell in row:
                 x1, y1, x2, y2 = cell["bbox"]
-                # Find OCR boxes whose center falls inside this cell
                 parts: list[tuple[float, str]] = []
                 for cx, cy, text in box_data:
                     if x1 <= cx <= x2 and y1 <= cy <= y2:
                         parts.append((cx, text))
-                # Sort by X to maintain reading order
                 parts.sort(key=lambda t: t[0])
                 row_cells.append(" ".join(p[1] for p in parts).strip())
             rows.append(row_cells)
-        # Only keep tables with at least 2 rows with non-empty content
         non_empty_rows = sum(1 for r in rows if any(c.strip() for c in r))
         if non_empty_rows >= 2:
             tables.append(rows)
@@ -307,12 +281,7 @@ def fill_grid_tables_from_ocr_boxes(
 
 
 def _image_to_pdf_bytes(pil_image: Image.Image) -> bytes:
-    """Convert a PIL Image to a single-page PDF in memory using PyMuPDF.
-
-    This allows reusing PDF-specific table extractors (PyMuPDF find_tables,
-    pdfplumber) on uploaded images, giving images the same multi-source
-    table extraction pipeline that PDFs enjoy.
-    """
+    """Convert a PIL Image to a single-page PDF in memory using PyMuPDF."""
     img_bytes = io.BytesIO()
     pil_image.save(img_bytes, format="PNG")
     img_bytes.seek(0)
@@ -327,11 +296,7 @@ def _image_to_pdf_bytes(pil_image: Image.Image) -> bytes:
 
 
 def _extract_tables_from_image_via_pdf(pil_image: Image.Image) -> list[list[list[str]]]:
-    """Extract tables from a PIL Image by converting it to PDF first.
-
-    Applies the same PyMuPDF find_tables() and pdfplumber extraction that
-    PDFs receive, so images get the same multi-source table detection.
-    """
+    """Extract tables from a PIL Image by converting it to PDF first."""
     tables: list[list[list[str]]] = []
     try:
         pdf_bytes = _image_to_pdf_bytes(pil_image)
@@ -339,12 +304,12 @@ def _extract_tables_from_image_via_pdf(pil_image: Image.Image) -> list[list[list
         logger.debug("Image-to-PDF conversion failed, skipping PDF-based table extraction")
         return []
 
-    # 1) PyMuPDF find_tables()
     try:
         with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:  # type: ignore[attr-defined]
             page = doc.load_page(0)
             tab_finder = page.find_tables()
-            for table in tab_finder.tables:
+            # ✅ FIX: type: ignore porque PyMuPDF no siempre expone .tables en stubs
+            for table in tab_finder.tables:  # type: ignore[union-attr]
                 raw_rows = table.extract()
                 if raw_rows and len(raw_rows) >= 2:
                     clean_rows = [
@@ -357,13 +322,11 @@ def _extract_tables_from_image_via_pdf(pil_image: Image.Image) -> list[list[list
     except Exception:
         logger.debug("PyMuPDF find_tables() failed on image-converted PDF")
 
-    # 2) pdfplumber
     plumber_tables = _extract_tables_pdfplumber(pdf_bytes, max_pages=1)
     if plumber_tables:
         logger.debug("pdfplumber found %d table(s) from image-converted PDF", len(plumber_tables))
         tables.extend(plumber_tables)
 
-    # 3) img2table PDF mode
     img2t_tables = _extract_tables_img2table_pdf(pdf_bytes, max_pages=1)
     if img2t_tables:
         logger.debug("img2table PDF found %d table(s) from image-converted PDF", len(img2t_tables))
@@ -373,11 +336,7 @@ def _extract_tables_from_image_via_pdf(pil_image: Image.Image) -> list[list[list
 
 
 def _deduplicate_tables(all_tables: list[list[list[str]]]) -> list[list[list[str]]]:
-    """Remove duplicate tables that appear from multiple extractors.
-
-    Two tables are considered duplicates if they have identical header
-    signatures and overlapping data rows.
-    """
+    """Remove duplicate tables that appear from multiple extractors."""
     if len(all_tables) <= 1:
         return all_tables
 
@@ -394,12 +353,10 @@ def _deduplicate_tables(all_tables: list[list[list[str]]]) -> list[list[list[str
     for table in all_tables:
         sig = _table_sig(table)
         if sig in seen:
-            # Keep the one with more non-empty cells
             existing = seen[sig]
             new_cells = sum(1 for row in table[1:] for c in row if str(c or "").strip())
             old_cells = sum(1 for row in existing[1:] for c in row if str(c or "").strip())
             if new_cells > old_cells:
-                # Replace with better table
                 result = [t for t in result if _table_sig(t) != sig]
                 result.append(table)
                 seen[sig] = table
@@ -431,7 +388,6 @@ def _has_sufficient_text_layer(text: str) -> bool:
     compact = " ".join((text or "").split())
     if not compact:
         return False
-
     alnum_count = sum(1 for ch in compact if ch.isalnum())
     word_count = len(compact.split(" "))
     return (
@@ -440,22 +396,16 @@ def _has_sufficient_text_layer(text: str) -> bool:
     )
 
 
-# Keywords that indicate a document likely contains structured tables
-# (FACTURA, nómina, PAGO). If absent, we skip pdfplumber in the fast path.
-# Cover both SAT/CFDI facturas and nómina/payroll documents.
 _TABLE_CONTENT_KEYWORDS: frozenset[str] = frozenset({
-    # CFDI / SAT factura
     "IMPORTE", "CONCEPTO", "DESCRIPCION", "DESCRIPCIÓN",
     "RFC RECEPTOR", "RFC EMISOR", "RFC DEL RECEPTOR", "RFC DEL EMISOR",
     "FOLIO FISCAL", "CLAVE SAT", "UNIDAD SAT", "VALOR UNITARIO",
     "SUBTOTAL", "TOTAL IMPUESTOS", "CFDI", "COMPROBANTE FISCAL",
     "CANTIDAD", "PRECIO UNITARIO", "IVA", "RETENCIÓN", "RETENCION",
     "CLAVE PROD", "TRASLADO",
-    # Nómina / payroll
     "PERCEPCIONES", "DEDUCCIONES", "NOMINA", "NÓMINA",
     "NOMBRE IMPORTE", "SUELDO", "SALARIO", "QUINCENA",
     "RFC TRABAJADOR", "NETO A PAGAR", "TOTAL PERCEPCIONES",
-    # Tabla genérica
     "TOTAL", "BANCO", "CLABE",
 })
 
@@ -467,12 +417,7 @@ def _text_likely_has_tables(text: str) -> bool:
 
 
 async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dict[str, Any]], list[list[list[str]]], list]:
-    """Preprocess an uploaded document file.
-
-    Returns (images, extracted_text, text_layer_boxes, pdf_tables, table_cell_grids).
-    ``table_cell_grids`` is a list of img2table cell grids (for images) that
-    can later be filled with OCR box text via :func:`fill_grid_tables_from_ocr_boxes`.
-    """
+    """Preprocess an uploaded document file."""
     import asyncio
     content = await file.read()
     if len(content) > MAX_UPLOAD_BYTES:
@@ -486,13 +431,12 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
         pdf_tables: list[list[list[str]]] = []
         images: list[Image.Image] = []
 
-        # Phase 1: extract text, word boxes, and tables (fast — no image rendering)
         with fitz.open(stream=content, filetype="pdf") as doc:  # type: ignore[attr-defined]
             max_pages = min(len(doc), settings.max_pages)
             for index in range(max_pages):
                 page = doc.load_page(index)
-                extracted_parts.append(str(page.get_text("text") or ""))
-                words: Any = page.get_text("words")
+                extracted_parts.append(str(page.get_text("text") or ""))  # type: ignore[attr-defined]
+                words: Any = page.get_text("words")  # type: ignore[attr-defined]
                 if isinstance(words, list):
                     for raw_word in words:
                         payload = _word_payload(raw_word)
@@ -507,10 +451,10 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
                                 "page": index + 1,
                             }
                         )
-                # Extract structured tables via PyMuPDF find_tables()
                 try:
-                    tab_finder = page.find_tables()
-                    for table in tab_finder.tables:
+                    tab_finder = page.find_tables()  # type: ignore[attr-defined]
+                    # ✅ FIX: type: ignore en .tables
+                    for table in tab_finder.tables:  # type: ignore[union-attr]
                         raw_rows = table.extract()
                         if raw_rows and len(raw_rows) >= 2:
                             clean_rows = [
@@ -524,16 +468,9 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
                     logger.debug("find_tables() failed on page %d, skipping", index + 1)
 
         extracted_text = "\n\n".join(part for part in extracted_parts if part)
-
-        # Check text layer sufficiency BEFORE spending time on images
         has_text = _has_sufficient_text_layer(extracted_text)
 
         if has_text:
-            # Text layer is good — skip image rendering AND heavy parallel extractors.
-            # PyMuPDF find_tables() already ran per-page; only run pdfplumber when
-            # the text suggests the document contains structured tables (FACTURA/nómina).
-            # Personal docs (CURP, ACTA, INE, NSS, COMPROBANTE, CONSTANCIA) skip this
-            # for a significant speed boost.
             if _text_likely_has_tables(extracted_text):
                 table_pages = min(max_pages, 10)
                 loop = asyncio.get_event_loop()
@@ -549,11 +486,10 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
             logger.info("[PERF] text-layer shortcut: skipped image rendering for %d pages", max_pages)
             return [], extracted_text, text_layer_boxes, pdf_tables, []
 
-        # Phase 2: text layer insufficient — render page images for OCR
         with fitz.open(stream=content, filetype="pdf") as doc:  # type: ignore[attr-defined]
             for index in range(max_pages):
                 page = doc.load_page(index)
-                pix = page.get_pixmap(dpi=settings.pdf_render_dpi)
+                pix = page.get_pixmap(dpi=settings.pdf_render_dpi)  # type: ignore[attr-defined]
                 image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
                 image = ImageOps.autocontrast(image)
                 image = ImageEnhance.Contrast(image.convert("L")).enhance(2.0)
@@ -561,7 +497,6 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
                 image = image.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3)).convert("RGB")
                 images.append(image)
 
-        # ── Multi-source table extraction (parallel) ────────────────
         loop = asyncio.get_event_loop()
         plumber_fut = loop.run_in_executor(None, _extract_tables_pdfplumber, content, max_pages)
         img2t_fut = loop.run_in_executor(None, _extract_tables_img2table_pdf, content, max_pages)
@@ -574,17 +509,12 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
             logger.debug("img2table PDF found %d table(s)", len(img2t_tables))
             pdf_tables.extend(img2t_tables)
 
-        # Remove duplicates across extractors
         pdf_tables = _deduplicate_tables(pdf_tables)
         logger.debug("Total unique tables after multi-source merge: %d", len(pdf_tables))
-        # ────────────────────────────────────────────────────────────
 
         return images, extracted_text, text_layer_boxes, pdf_tables, []
 
     image = Image.open(io.BytesIO(content)).convert("RGB")
-    # Upscale small images so img2table and the OCR-box table reconstructor
-    # see pixel gaps large enough to distinguish table columns reliably.
-    # 2000 px minimum gives enough resolution for compact (Word-doc) tables.
     if image.width < 2000:
         width = max(image.width, 1)
         scale = 2000 / width
@@ -594,19 +524,13 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
     image = ImageEnhance.Sharpness(image).enhance(2.0)
     image = image.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3)).convert("RGB")
 
-    # ── Multi-source table extraction for images ────────────────────
-    # Run img2table image-mode (OpenCV structural) + img2table PDF mode
-    # (converts image to PDF wrapper and re-runs structural detection).
-    # PDF mode can catch tables that image-mode misses with faint grid lines.
     img_tables: list[list[list[str]]] = []
 
-    # img2table image-mode: OpenCV-based structural detection
     img2t_image_tables = _extract_tables_img2table_image(image)
     if img2t_image_tables:
         logger.debug("img2table image found %d table(s)", len(img2t_image_tables))
         img_tables.extend(img2t_image_tables)
 
-    # img2table PDF mode: convert image → PDF bytes and re-run structural detection
     try:
         pdf_bytes_from_img = _image_to_pdf_bytes(image)
         img2t_pdf_tables = _extract_tables_img2table_pdf(pdf_bytes_from_img, max_pages=1)
@@ -619,12 +543,8 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
     img_tables = _deduplicate_tables(img_tables)
     logger.debug("Total unique tables from image: %d", len(img_tables))
 
-    # 3) Extract img2table grid structure (cell bounding boxes)
-    #    This is used later to fill cell text from OCR boxes when img2table
-    #    didn't have an OCR engine to read cell contents.
     img_cell_grids = _extract_img2table_grid(image)
     if img_cell_grids:
         logger.debug("img2table detected %d grid(s) with cell bounding boxes", len(img_cell_grids))
-    # ────────────────────────────────────────────────────────────────
 
     return [image], "", [], img_tables, img_cell_grids

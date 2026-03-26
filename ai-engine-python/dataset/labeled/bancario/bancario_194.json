@@ -1,0 +1,21 @@
+{
+  "filename": "bancario_194.pdf",
+  "document_type": "DATOS_BANCARIOS",
+  "banco_origen": "SCOTIABANK",
+  "carpeta_origen": "scotianbank",
+  "nombre_original": "PAGO FIS BMPEI $342.75 SDR.pdf",
+  "added_date": "2026-03-25",
+  "labeled": true,
+  "notes": "REVISAR: corrige los campos incorrectos y cambia labeled a true",
+  "expected_fields": {
+    "clabe": "",
+    "cuenta": "80122978989",
+    "banco": "SCOTIABANK",
+    "titular": "",
+    "rfc": "",
+    "fecha_corte": "17/03/2026",
+    "periodo": ""
+  },
+  "prelabeled_date": "2026-03-25 11:31",
+  "prelabel_campos": "3/7"
+}

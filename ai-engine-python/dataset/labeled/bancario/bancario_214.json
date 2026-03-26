@@ -1,0 +1,20 @@
+{
+  "filename": "bancario_214.pdf",
+  "document_type": "DATOS_BANCARIOS",
+  "nombre_original": "PAGO FIS BMPEI RODRIGUEZ DOMINGUEZ CARLOS ROBERTO \\,000.00 BNT.pdf",
+  "added_date": "2026-03-25",
+  "labeled": true,
+  "notes": "REVISAR: corrige los campos incorrectos y cambia labeled a true",
+  "banco_origen": "BANORTE",
+  "expected_fields": {
+    "clabe": "000000001069485436",
+    "cuenta": "0438349034",
+    "banco": "BANORTE",
+    "titular": "",
+    "rfc": "",
+    "fecha_corte": "15/01/2026",
+    "periodo": ""
+  },
+  "prelabeled_date": "2026-03-25 11:31",
+  "prelabel_campos": "4/7"
+}

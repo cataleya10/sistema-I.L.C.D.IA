@@ -1,0 +1,21 @@
+{
+  "filename": "acta_nacimiento_001.pdf",
+  "document_type": "ACTA_NACIMIENTO",
+  "nombre_original": "Acta de nacimiento.pdf",
+  "added_date": "2026-03-25",
+  "labeled": true,
+  "notes": "REVISAR: corrige los campos incorrectos y cambia labeled a true",
+  "expected_fields": {
+    "nombre": "",
+    "sexo": "",
+    "fecha_nacimiento": "",
+    "lugar_nacimiento": "",
+    "folio": "",
+    "numero_acta": "",
+    "fecha_registro": "",
+    "municipio_registro": "",
+    "entidad_registro": ""
+  },
+  "prelabeled_date": "2026-03-25 11:29",
+  "prelabel_campos": "0/9"
+}

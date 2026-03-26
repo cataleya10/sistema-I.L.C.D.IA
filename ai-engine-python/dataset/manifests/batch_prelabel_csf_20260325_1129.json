@@ -1,0 +1,19 @@
+{
+  "tipo": "csf",
+  "fecha": "2026-03-25 11:29",
+  "total": 1,
+  "completos": 0,
+  "parciales": 1,
+  "sin_texto": 0,
+  "errores": 0,
+  "detalle_errores": [],
+  "documentos": [
+    {
+      "id": "csf_001",
+      "status": "parcial",
+      "detectados": 1,
+      "total": 4,
+      "filename": "csf_001.pdf"
+    }
+  ]
+}

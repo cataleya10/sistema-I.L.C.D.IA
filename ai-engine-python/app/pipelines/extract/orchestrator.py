@@ -638,6 +638,31 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
         labeled_clabe = _find_labeled_value(lines, "CLABE")
         if labeled_clabe:
             fields.append(_make_field("clabe", "CLABE", _normalize_numeric_field(labeled_clabe), ocr_boxes, confidence=0.8))
+
+        # FIX: extraer tabla de pagos para reportes de dispersion bancaria
+        payment_table = _extract_payment_table_payload(base_text_raw, ocr_boxes, pdf_tables)
+        payment_detail = _extract_payment_detail_payload(base_text_raw, payment_table)
+        payment_table = _enrich_payment_table_payload(payment_table, payment_detail)
+        if payment_table and payment_table.get("rows"):
+            fields.append(
+                _make_field(
+                    "tabla_celdas",
+                    "Tabla de beneficiarios",
+                    json.dumps(payment_table, ensure_ascii=False),
+                    ocr_boxes,
+                    confidence=0.92,
+                )
+            )
+        if payment_detail:
+            fields.append(
+                _make_field(
+                    "pago_detalle",
+                    "Pago detalle",
+                    json.dumps(payment_detail, ensure_ascii=False),
+                    ocr_boxes,
+                    confidence=0.9,
+                )
+            )
         return fields
 
     # Strict separation: never append payment tables to personal document types.
