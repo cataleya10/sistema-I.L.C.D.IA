@@ -663,7 +663,9 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                     confidence=0.9,
                 )
             )
-        return fields
+            cleaned = _postprocess_fields(document_type, fields)
+        contracted = _apply_field_contracts(document_type, cleaned)
+        return _dedupe_fields(contracted)
 
     # Strict separation: never append payment tables to personal document types.
     # Any fallback table extraction is reserved for FACTURA/PAGO only.

@@ -1,55 +1,131 @@
-.campo-card {
-  border: 1px solid #dcdcdc;
-  border-radius: 10px;
-  padding: 12px;
-  margin-bottom: 14px;
-  background: #f9f9f9;
+.resultado {
+  font-family: 'Inter', 'Segoe UI', sans-serif;
+  font-size: 14px;
+  color: #1a1a2e;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
 
-.estado-card {
+/* ── Cabecera ── */
+.cabecera {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid #e0e4ef;
+}
+.tipo {
+  font-weight: 700;
+  font-size: 15px;
+  background: #eef2ff;
+  color: #3730a3;
+  border-radius: 6px;
+  padding: 4px 12px;
+}
+.estado {
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 4px 12px;
+}
+.estado.ok    { background: #d1fae5; color: #065f46; }
+.estado.error { background: #fee2e2; color: #991b1b; }
+
+.mensaje {
+  font-size: 13px;
+  color: #6b7280;
+  margin: 0;
+}
+
+/* ── Títulos de sección ── */
+.titulo-seccion {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.badge {
+  font-size: 11px;
+  font-weight: 600;
+  background: #e0e7ff;
+  color: #3730a3;
+  border-radius: 20px;
+  padding: 2px 10px;
+}
+
+/* ── Resumen ── */
+.resumen-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+.resumen-item {
+  background: #f9fafb;
+  border: 1px solid #e0e4ef;
   border-radius: 8px;
   padding: 10px 14px;
-  margin-bottom: 16px;
+}
+.item-label {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: #9ca3af;
+  margin-bottom: 4px;
+}
+.item-value {
   font-size: 14px;
+  font-weight: 700;
+  color: #111827;
 }
 
-.estado-card.exito {
-  background: #e8f5e9;
-  border: 1px solid #a5d6a7;
-  color: #2e7d32;
-}
-
-.estado-card.error {
-  background: #ffebee;
-  border: 1px solid #ef9a9a;
-  color: #c62828;
-}
-
-.sin-datos {
-  color: #888;
-  font-style: italic;
-  margin-top: 12px;
-}
-
-.tabla-container {
+/* ── Tabla ── */
+.tabla-scroll {
   overflow-x: auto;
-  margin-top: 10px;
+  max-height: 500px;
+  overflow-y: auto;
+  border: 1px solid #e0e4ef;
+  border-radius: 10px;
 }
-
 table {
   width: 100%;
   border-collapse: collapse;
-  background: white;
+  font-size: 12px;
 }
-
-th, td {
-  border: 1px solid #cfcfcf;
-  padding: 8px;
-  text-align: left;
-  font-size: 14px;
+thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #3730a3;
+  color: #fff;
 }
-
 th {
-  background: #efefef;
-  font-weight: bold;
+  padding: 10px 14px;
+  text-align: left;
+  white-space: nowrap;
+  font-weight: 600;
+  letter-spacing: .03em;
+}
+td {
+  padding: 9px 14px;
+  border-bottom: 1px solid #f0f0f8;
+  vertical-align: top;
+  max-width: 220px;
+  word-break: break-word;
+}
+tr.par td  { background: #fafbff; }
+tr:hover td { background: #eef2ff; }
+td.vacia   { color: #9ca3af; }
+
+/* ── Sin datos ── */
+.sin-tabla,
+.sin-datos {
+  text-align: center;
+  padding: 30px;
+  color: #9ca3af;
+  font-size: 13px;
 }

@@ -1,74 +1,85 @@
-<div *ngIf="resultado">
-  <h2>Resultado de extracción</h2>
+<div class="resultado" *ngIf="resultado; else sinDatos">
 
-  <div class="estado-card" [class.exito]="resultado.success" [class.error]="!resultado.success">
-    <p><strong>Tipo documento:</strong> {{ resultado.tipoDocumento }}</p>
-    <p><strong>Estado:</strong> {{ resultado.message }}</p>
+  <!-- CABECERA -->
+  <div class="cabecera">
+    <span class="tipo">{{ resultado.document_type }}</span>
+    <span class="estado" [class.ok]="resultado.status === 'READY'" [class.review]="resultado.status === 'NEEDS_REVIEW'">
+      {{ resultado.status }}
+    </span>
   </div>
 
-  <div *ngIf="resultado.resumen" class="campo-card">
-    <h3>Resumen</h3>
-    <table>
-      <tbody>
-        <tr>
-          <th>Banco</th>
-          <td>{{ resultado.resumen.banco }}</td>
-        </tr>
-        <tr>
-          <th>Folio</th>
-          <td>{{ resultado.resumen.folio }}</td>
-        </tr>
-        <tr>
-          <th>Archivo</th>
-          <td>{{ resultado.resumen.nombreArchivo }}</td>
-        </tr>
-        <tr>
-          <th>Cantidad de movimientos</th>
-          <td>{{ resultado.resumen.cantidadMovimientos }}</td>
-        </tr>
-        <tr>
-          <th>Importe total</th>
-          <td>{{ resultado.resumen.importeTotal }}</td>
-        </tr>
-      </tbody>
-    </table>
+  <!-- RESUMEN -->
+  <div class="resumen" *ngIf="resumenItems.length > 0">
+    <h3 class="titulo-seccion">📋 Resumen</h3>
+    <div class="resumen-grid">
+      <div class="resumen-item" *ngFor="let item of resumenItems">
+        <span class="item-label">{{ item.label }}</span>
+        <span class="item-value">{{ item.value }}</span>
+      </div>
+    </div>
   </div>
 
-  <div *ngIf="resultado.beneficiarios?.length" class="campo-card">
-    <h3>Beneficiarios</h3>
-    <div class="tabla-container">
+  <!-- TABLA -->
+  <div class="seccion-tabla" *ngIf="tablas.length > 0">
+    <h3 class="titulo-seccion">
+      💳 Tabla extraída
+      <span class="badge">{{ tablas[tablaActiva]?.totalFilas }} filas</span>
+      <span class="badge banco" *ngIf="tablas[tablaActiva]?.banco">
+        {{ tablas[tablaActiva].banco }}
+      </span>
+    </h3>
+
+    <div class="tab-bar" *ngIf="tablas.length > 1">
+      <button
+        *ngFor="let t of tablas; let i = index"
+        class="tab-btn"
+        [class.active]="tablaActiva === i"
+        (click)="seleccionarTab(i)">
+        Tabla {{ i + 1 }} ({{ t.totalFilas }})
+      </button>
+    </div>
+
+    <div class="tabla-scroll" *ngIf="tablas[tablaActiva] as t">
       <table>
         <thead>
           <tr>
-            <th>Clave</th>
-            <th>Nombre</th>
-            <th>Importe</th>
-            <th>Fecha Aplicación</th>
-            <th>Referencia</th>
-            <th>Cuenta Beneficiario</th>
-            <th>Banco Receptor</th>
-            <th>Días Vigencia</th>
-            <th>Concepto de Pago</th>
+            <th *ngFor="let enc of t.encabezados">{{ enc }}</th>
           </tr>
         </thead>
         <tbody>
-          <tr *ngFor="let b of resultado.beneficiarios">
-            <td>{{ b.claveBeneficiario }}</td>
-            <td>{{ b.nombre }}</td>
-            <td>{{ b.importe }}</td>
-            <td>{{ b.fechaAplicacion }}</td>
-            <td>{{ b.referencia }}</td>
-            <td>{{ b.cuentaBeneficiario }}</td>
-            <td>{{ b.bancoReceptor }}</td>
-            <td>{{ b.diasVigencia }}</td>
-            <td>{{ b.conceptoPago }}</td>
+          <tr *ngFor="let fila of t.filas; let i = index" [class.par]="i % 2 === 0">
+            <td *ngFor="let celda of fila" [class.vacia]="celda === '' || celda === '—'">
+              {{ celda || '—' }}
+            </td>
+          </tr>
+          <tr *ngIf="t.filas.length === 0">
+            <td [attr.colspan]="t.encabezados.length" class="sin-datos">
+              Sin registros
+            </td>
           </tr>
         </tbody>
       </table>
     </div>
   </div>
 
-  <p *ngIf="resultado.success && !resultado.beneficiarios?.length" class="sin-datos">
-    No se encontraron beneficiarios en el documento.
-  </p>
+  <!-- SIN TABLA -->
+  <div class="sin-tabla" *ngIf="tablas.length === 0">
+    ℹ No se detectó tabla en este documento.
+  </div>
+
+  <!-- CAMPOS SIMPLES -->
+  <div class="seccion-campos" *ngIf="camposSimples.length > 0">
+    <h3 class="titulo-seccion">🏷 Campos extraídos</h3>
+    <div class="campos-grid">
+      <div class="campo-item" *ngFor="let c of camposSimples">
+        <span class="campo-label">{{ c.label }}</span>
+        <span class="campo-value" [title]="c.value">{{ c.value }}</span>
+      </div>
+    </div>
+  </div>
+
 </div>
+
+<ng-template #sinDatos>
+  <div class="sin-datos-wrap">Sin resultados que mostrar.</div>
+</ng-template>
