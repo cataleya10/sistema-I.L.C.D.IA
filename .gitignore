@@ -62,3 +62,11 @@ restore-diag.log
 app-restore-diag.log
 build-diag.log
 nul
+
+svc_err.txt
+svc_out.txt
+*.log
+out-tsc/
+dist/
+.tmp/
+dataset/cache/
