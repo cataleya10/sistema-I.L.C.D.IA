@@ -83,6 +83,7 @@ _rate_limit_store: dict[str, list[float]] = {}
 _RATE_LIMIT_MAX = int(settings.rate_limit_max)  # max requests per window
 _RATE_LIMIT_WINDOW = int(settings.rate_limit_window_seconds)  # seconds
 _RATE_LIMIT_EVICT_INTERVAL = 300  # evict stale IPs every 5 min
+_RATE_LIMIT_MAX_IPS = 10_000  # cap duro: máx IPs en memoria simultáneas
 _rate_limit_last_evict: float = 0.0
 
 
@@ -96,6 +97,13 @@ def _evict_stale_ips() -> None:
     stale = [ip for ip, hits in _rate_limit_store.items() if not hits or (now - hits[-1]) > _RATE_LIMIT_WINDOW]
     for ip in stale:
         _rate_limit_store.pop(ip, None)
+    # Si tras la evicción sigue por encima del cap, descartamos las IPs con hits
+    # más antiguos (FIFO aproximado para evitar crecimiento ilimitado bajo ataques)
+    if len(_rate_limit_store) > _RATE_LIMIT_MAX_IPS:
+        overflow = len(_rate_limit_store) - _RATE_LIMIT_MAX_IPS
+        oldest = sorted(_rate_limit_store.keys(), key=lambda ip: _rate_limit_store[ip][-1] if _rate_limit_store[ip] else 0)
+        for ip in oldest[:overflow]:
+            _rate_limit_store.pop(ip, None)
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):

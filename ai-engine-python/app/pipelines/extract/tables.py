@@ -1173,10 +1173,13 @@ def _extract_bbva_nomina_comprobante_rows_impl(raw_text: str) -> list[list[str]]
     folded = _ascii_fold(raw_text).upper()
     # Guard: must look like a BBVA "Dispersión de Nómina" document with comprobante pages
     if "NOMINA" not in folded:
+        logger.debug("[BBVA_COMPROBANTE] skip: no NOMINA")
         return []
     if "DISPERSION" not in folded and "DISPERSI" not in folded:
+        logger.debug("[BBVA_COMPROBANTE] skip: no DISPERSION")
         return []
-    if "DATOS DEL BENEFICIARIO" not in _ascii_fold(raw_text).upper():
+    if "DATOS DEL BENEFICIARIO" not in folded:
+        logger.info("[BBVA_COMPROBANTE] skip: no DATOS DEL BENEFICIARIO (folded[:200]=%s)", folded[:200])
         return []
 
     # Split text on "DATOS DEL BENEFICIARIO" to get one segment per employee
@@ -1273,6 +1276,253 @@ def _smart_split_narrow_line(line: str) -> list[str]:
     return cells if len(cells) >= 3 else [line]
 
 
+def _extract_santander_comprobante_individual_rows(raw_text: str) -> list[list[str]]:
+    """
+    Extrae filas de beneficiarios desde el formato SANTANDER de comprobantes individuales.
+
+    Este formato repite un bloque por cada empleado con la estructura:
+        Comprobante de la operación
+        Dispersión de Pago de Nómina
+        DATOS DEL CLIENTE PAGADOR
+        ...
+        DATOS DEL BENEFICIARIO
+        Número de cuenta de Abono: XXXX
+        Referencia: XXXX
+        Importe: $X.XX MXN
+        Estatus: Procesado
+        Concepto: Pago de Nómina
+        Nombre: XXX
+        Apellido paterno: XXX
+        Apellido materno: XXX
+
+    Returns:
+        Lista de filas [header, row1, row2, ...] con columnas canónicas.
+        Lista vacía si el formato no coincide.
+    """
+    if not raw_text:
+        return []
+    folded = _ascii_fold(raw_text).upper()
+    # Detectar el formato: requiere bloques "DATOS DEL BENEFICIARIO" + "NUMERO DE CUENTA DE ABONO"
+    if "DATOS DEL BENEFICIARIO" not in folded:
+        logger.info("[SDR_COMPROBANTE] skip: no DATOS DEL BENEFICIARIO")
+        return []
+    if "NUMERO DE CUENTA DE ABONO" not in folded and "NUM. DE CUENTA DE ABONO" not in folded:
+        logger.info("[SDR_COMPROBANTE] skip: no NUMERO DE CUENTA DE ABONO")
+        return []
+    # Solo aplicar para SANTANDER Dispersión (no BBVA)
+    if "CONTRATO ENLACE" not in folded and "NUMERO DE CONTRATO ENLACE" not in folded:
+        logger.info("[SDR_COMPROBANTE] skip: no CONTRATO ENLACE")
+        return []
+
+    _LABEL_CUENTA    = re.compile(r"N[uú]mero\s+de\s+cuenta\s+de\s+Abono\s*:\s*(\d+)", re.IGNORECASE)
+    _LABEL_REF       = re.compile(r"Referencia\s*:\s*(\S+)", re.IGNORECASE)
+    _LABEL_IMPORTE   = re.compile(r"Importe\s*:\s*(\$[\d,\.]+(?:\s*MXN)?)", re.IGNORECASE)
+    _LABEL_ESTATUS   = re.compile(r"Estatus\s*:\s*(\w+)", re.IGNORECASE)
+    _LABEL_CONCEPTO  = re.compile(r"Concepto\s*:\s*(.+?)(?:\n|$)", re.IGNORECASE)
+    _LABEL_NOMBRE    = re.compile(r"Nombre\s*:\s*(.+?)(?:\n|$)", re.IGNORECASE)
+    _LABEL_AP_PAT    = re.compile(r"Apellido\s+paterno\s*:\s*(.+?)(?:\n|$)", re.IGNORECASE)
+    _LABEL_AP_MAT    = re.compile(r"Apellido\s+materno\s*:\s*(.+?)(?:\n|$)", re.IGNORECASE)
+
+    # Dividir en bloques por "DATOS DEL BENEFICIARIO"
+    blocks = re.split(r"DATOS\s+DEL\s+BENEFICIARIO", raw_text, flags=re.IGNORECASE)
+    if len(blocks) < 2:
+        return []
+
+    header = ["cuenta", "referencia", "importe", "nombre", "apellido_paterno", "apellido_materno", "estatus", "concepto_pago"]
+    rows: list[list[str]] = [header]
+    seen: set[tuple] = set()
+
+    for block in blocks[1:]:  # primer bloque es encabezado del documento
+        # Tomar solo hasta el siguiente marcador de sección
+        chunk = re.split(r"DATOS\s+DEL\s+CLIENTE\s+PAGADOR|Comprobante\s+de\s+la\s+operaci", block, flags=re.IGNORECASE)[0]
+
+        cuenta_m    = _LABEL_CUENTA.search(chunk)
+        ref_m       = _LABEL_REF.search(chunk)
+        importe_m   = _LABEL_IMPORTE.search(chunk)
+        estatus_m   = _LABEL_ESTATUS.search(chunk)
+        concepto_m  = _LABEL_CONCEPTO.search(chunk)
+        nombre_m    = _LABEL_NOMBRE.search(chunk)
+        ap_pat_m    = _LABEL_AP_PAT.search(chunk)
+        ap_mat_m    = _LABEL_AP_MAT.search(chunk)
+
+        cuenta      = _normalize_text(cuenta_m.group(1))   if cuenta_m   else ""
+        referencia  = _normalize_text(ref_m.group(1))      if ref_m      else ""
+        importe     = _normalize_text(importe_m.group(1))  if importe_m  else ""
+        nombre      = _normalize_text(nombre_m.group(1))   if nombre_m   else ""
+        ap_pat      = _normalize_text(ap_pat_m.group(1))   if ap_pat_m   else ""
+        ap_mat      = _normalize_text(ap_mat_m.group(1))   if ap_mat_m   else ""
+        estatus     = _normalize_text(estatus_m.group(1))  if estatus_m  else ""
+        concepto    = _normalize_text(concepto_m.group(1)) if concepto_m else ""
+
+        if not cuenta and not referencia:
+            continue
+        key = (cuenta, referencia)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append([cuenta, referencia, importe, nombre, ap_pat, ap_mat, estatus, concepto])
+
+    return rows if len(rows) >= 2 else []
+
+
+def _extract_santander_nomina_report_rows(raw_text: str) -> list[list[str]]:
+    """
+    Parser para SANTANDER Reporte de Operaciones – Dispersión de Pago de Nómina.
+
+    Este formato es una tabla resumen (no comprobantes individuales) donde:
+    - Hay metadatos: NUMERO DE CONTRATO ENLACE, CUENTA CARGO, REPORTE DE OPERACIONES...
+    - Headers de columnas: ESTATUS / NOMBRE / IMPORTE / REFERENCIA / CUENTA / APELLIDOS / CONCEPTO
+      (puede estar todo en una línea o una columna por línea)
+    - Filas de datos: una línea por empleado o una línea por valor
+    """
+    if not raw_text:
+        return []
+    folded = _ascii_fold(raw_text).upper()
+    if ("DISPERSION" not in folded and "DISPERSI" not in folded) or "NOMINA" not in folded:
+        return []
+    if "CONTRATO ENLACE" not in folded and "NUMERO DE CONTRATO ENLACE" not in folded:
+        return []
+    try:
+        return _extract_santander_nomina_report_rows_impl(raw_text, folded)
+    except Exception:
+        logger.debug("_extract_santander_nomina_report_rows: error", exc_info=True)
+        return []
+
+
+def _extract_santander_nomina_report_rows_impl(raw_text: str, folded: str) -> list[list[str]]:
+    lines = [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
+    if not lines:
+        return []
+
+    _IS_CUENTA_ONLY = re.compile(r"^\d{10,18}$")
+    _IS_REF_ONLY    = re.compile(r"^\d{14,28}$")
+    _IS_IMPORTE_LN  = re.compile(r"^\$?[\d,]{1,15}\.\d{2}(?:\s*MXN)?$", re.IGNORECASE)
+    _IS_STATUS_LN   = re.compile(rf"^({_STATUS_WORDS_RE})$", re.IGNORECASE)
+    _IS_NAME_LN     = re.compile(r"^[A-Z\xc0-\xff][A-Z\xc0-\xff\s\.\']{1,60}$", re.UNICODE | re.IGNORECASE)
+
+    # ── Strategy A: tabular rows (one full row per line) ────────────────────
+    # Pattern: STATUS NOMBRE ... IMPORTE REFERENCIA CUENTA ...
+    _SDR_TAB_PAT = re.compile(
+        r"^(?P<estatus>PROCESADO|LIQUIDADO|RECHAZADO|EN\s+PROCESO(?:\s+DE\s+VALIDACION)?|PENDIENTE|"
+        r"APLICADO|DEPOSITADO|AUTORIZADO|TRANSMITIDO|DEVUELTO|CANCELADO|OPERADO|PAGADO)\s+"
+        r"(?P<nombre>[A-Z\xc0-\xff][A-Z\xc0-\xff\s\.\']{1,60}?)\s{2,}"
+        r"(?P<importe>\$?[\d,]{1,12}\.\d{2}(?:\s*MXN)?)\s+"
+        r"(?P<referencia>\d{10,28}(?:\s+\d{1,6})?)\s+"
+        r"(?P<cuenta>\d{10,18})",
+        re.IGNORECASE | re.UNICODE,
+    )
+    rows_a: list[list[str]] = []
+    seen_a: set[tuple] = set()
+    for line in lines:
+        m = _SDR_TAB_PAT.match(line)
+        if not m:
+            continue
+        estatus = _normalize_table_cell(m.group("estatus"))
+        nombre = _normalize_name(m.group("nombre").strip())
+        importe = _normalize_payment_amount(m.group("importe"))
+        referencia = re.sub(r"\s+", "", m.group("referencia"))
+        cuenta = _normalize_numeric_field(m.group("cuenta"))
+        if not cuenta or not importe:
+            continue
+        tail = line[m.end():].strip()
+        ap_pat, ap_mat, concepto = "", "", "PAGO DE NOMINA"
+        if tail:
+            parts = re.split(r"\s{2,}", tail, maxsplit=2)
+            if len(parts) >= 1:
+                ap_pat = _normalize_name(parts[0])
+            if len(parts) >= 2:
+                ap_mat = _normalize_name(parts[1])
+            if len(parts) >= 3:
+                concepto = _normalize_table_cell(parts[2]) or concepto
+        key = (cuenta, referencia)
+        if key in seen_a:
+            continue
+        seen_a.add(key)
+        rows_a.append([cuenta, referencia, importe, nombre, ap_pat, ap_mat, estatus, concepto])
+
+    if len(rows_a) >= 2:
+        logger.info("[SDR_REPORT] tabular: %d rows", len(rows_a))
+        return [_ADVANCED_NOMINA_TABLE_HEADER, *rows_a[:500]]
+
+    # ── Diagnostic: log lines around where data seems to start ───────────────
+    # Find index of last header keyword (CONCEPTO or CUENTA)
+    header_end_idx = -1
+    for idx in range(len(lines) - 1, -1, -1):
+        fl = _ascii_fold(lines[idx]).upper()
+        kws = sum(1 for kw in ("ESTATUS", "NOMBRE", "IMPORTE", "REFERENCIA", "CUENTA", "CONCEPTO") if fl == kw)
+        if kws >= 1:
+            header_end_idx = idx
+            break
+    logger.info("[SDR_REPORT] header_end_idx=%d, lines[header_end_idx:header_end_idx+12]=%s",
+                header_end_idx, lines[header_end_idx:header_end_idx + 12] if header_end_idx >= 0 else [])
+
+    # ── Strategy B: vertical blocks ─────────────────────────────────────────
+    # Each block = 7-8 consecutive lines forming one employee record.
+    # Try to identify the sequence starting from after the header section.
+    # Block start: a line that is CUENTA (10-18 digits) OR a STATUS word.
+    rows_b: list[list[str]] = []
+    seen_b: set[tuple] = set()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        folded_line = _ascii_fold(line).upper()
+        is_cuenta_start = bool(_IS_CUENTA_ONLY.match(line)) and not bool(_IS_REF_ONLY.match(line))
+        is_status_start = bool(_IS_STATUS_LN.match(folded_line))
+        if not is_cuenta_start and not is_status_start:
+            i += 1
+            continue
+        # Scan up to 10 lines for a complete employee block
+        block_lines = lines[i:i + 10]
+        kv: dict[str, str] = {}
+        consumed = 0
+        for bl in block_lines:
+            bl_f = _ascii_fold(bl).upper()
+            consumed += 1
+            if not kv.get("cuenta") and _IS_CUENTA_ONLY.match(bl) and not _IS_REF_ONLY.match(bl):
+                kv["cuenta"] = bl
+            elif not kv.get("referencia") and _IS_REF_ONLY.match(bl):
+                kv["referencia"] = bl
+            elif not kv.get("importe") and _IS_IMPORTE_LN.match(bl):
+                kv["importe"] = bl
+            elif not kv.get("estatus") and _IS_STATUS_LN.match(bl_f):
+                kv["estatus"] = bl
+            elif "nombre" not in kv and "ap_pat" not in kv and _IS_NAME_LN.match(bl):
+                kv["nombre"] = bl
+            elif "nombre" in kv and "ap_pat" not in kv and _IS_NAME_LN.match(bl):
+                kv["ap_pat"] = bl
+            elif "ap_pat" in kv and "ap_mat" not in kv and _IS_NAME_LN.match(bl):
+                kv["ap_mat"] = bl
+            # Stop when we have the minimum required fields
+            if kv.get("cuenta") and kv.get("importe") and kv.get("nombre"):
+                break
+
+        cuenta = _normalize_numeric_field(kv.get("cuenta", ""))
+        referencia = re.sub(r"\s+", "", kv.get("referencia", ""))
+        importe = _normalize_payment_amount(kv.get("importe", ""))
+        estatus = _normalize_table_cell(kv.get("estatus", "PROCESADO"))
+        nombre = _normalize_name(kv.get("nombre", ""))
+        ap_pat = _normalize_name(kv.get("ap_pat", ""))
+        ap_mat = _normalize_name(kv.get("ap_mat", ""))
+
+        if not cuenta or not importe:
+            i += 1
+            continue
+
+        key = (cuenta, referencia)
+        if key in seen_b:
+            i += consumed
+            continue
+        seen_b.add(key)
+        rows_b.append([cuenta, referencia, importe, nombre, ap_pat, ap_mat, estatus, "PAGO DE NOMINA"])
+        i += consumed
+
+    if len(rows_b) >= 2:
+        logger.info("[SDR_REPORT] vertical: %d rows", len(rows_b))
+        return [_ADVANCED_NOMINA_TABLE_HEADER, *rows_b[:500]]
+
+    return []
+
+
 def _extract_payment_table_rows_from_text(raw_text: str) -> list[list[str]]:
     if not raw_text:
         return []
@@ -1319,6 +1569,14 @@ def _extract_payment_table_rows_from_text(raw_text: str) -> list[list[str]]:
             return bbva_receipt_rows
     except Exception:
         logger.debug("_extract_payment_table_rows_from_text: bbva receipt failed", exc_info=True)
+
+    # SANTANDER individual comprobante format — last resort before generic splitter
+    try:
+        sdr_rows = _extract_santander_comprobante_individual_rows(raw_text)
+        if sdr_rows and len(sdr_rows) >= 2:
+            return sdr_rows
+    except Exception:
+        logger.debug("_extract_payment_table_rows_from_text: santander comprobante failed", exc_info=True)
 
     rows: list[list[str]] = []
     narrow_candidates: list[list[str]] = []
@@ -3136,21 +3394,14 @@ def _extract_payment_table_payload_impl(base_text_raw: str, ocr_boxes, pdf_table
     payload: dict[str, Any] = {
         "source": source,
         "rows": rows,
+        "row_count": len(rows) - 1 if len(rows) > 1 else 0,
     }
     # Refuerzo: si se detecta banco en encabezado, ese valor prevalece y se fuerza en todo el payload y filas dict
     _text_upper = (base_text_raw or "").upper()
-    bancos_prioridad = ["BBVA", "SANTANDER", "SCOTIA", "BANORTE", "HSBC", "INBURSA", "BANAMEX", "STP"]
-    banco_detectado = None
-    primeras_lineas = [line.strip().upper() for line in (base_text_raw or "").splitlines()[:10] if line.strip()]
-    for banco in bancos_prioridad:
-        if any(banco in linea for linea in primeras_lineas):
-            banco_detectado = banco
-            break
-    if not banco_detectado:
-        for banco in bancos_prioridad:
-            if banco in _text_upper:
-                banco_detectado = banco
-                break
+    # Use _payment_detect_bank for authoritative detection (handles format-based detection)
+    banco_detectado = _payment_detect_bank(base_text_raw) or None
+    if banco_detectado == "DESCONOCIDO":
+        banco_detectado = None
     # BBVA receipt rows: the source bank is always BBVA regardless of destination bank in text
     if _is_bbva_receipt_rows:
         banco_detectado = "BBVA"
@@ -3199,19 +3450,9 @@ def _extract_payment_table_payload_impl(base_text_raw: str, ocr_boxes, pdf_table
         elif selected_table_index and selected_table_index > 0:
             payload["primary_table_index"] = selected_table_index
     # Refuerzo global: forzar el banco detectado en encabezado en el payload final
-    _text_upper = (base_text_raw or "").upper()
-    bancos_prioridad = ["BBVA", "SANTANDER", "SCOTIA", "BANORTE", "HSBC", "INBURSA", "BANAMEX", "STP"]
-    banco_detectado = None
-    primeras_lineas = [line.strip().upper() for line in (base_text_raw or "").splitlines()[:10] if line.strip()]
-    for banco in bancos_prioridad:
-        if any(banco in linea for linea in primeras_lineas):
-            banco_detectado = banco
-            break
-    if not banco_detectado:
-        for banco in bancos_prioridad:
-            if banco in _text_upper:
-                banco_detectado = banco
-                break
+    banco_detectado = _payment_detect_bank(base_text_raw) or None
+    if banco_detectado == "DESCONOCIDO":
+        banco_detectado = None
     # BBVA receipt rows: source bank is always BBVA regardless of destination bank in text
     if _is_bbva_receipt_rows:
         banco_detectado = "BBVA"
@@ -3438,6 +3679,7 @@ def _enrich_payment_table_payload_impl(
                 canonical_rows_clean = rows
                 enriched["canonical_rows"] = rows
                 enriched["canonical_row_count"] = len(rows)
+                enriched["row_count"] = len(rows)
 
         # Propagate display_columns (original PDF header labels) to table payload
         display_columns = detail_table.get("display_columns")
@@ -3949,9 +4191,24 @@ def _merge_payment_rows_with_backup_impl(primary_rows: list[list[str]], backup_r
 
 def _payment_detect_bank(raw_text: str) -> str:
     text = _ascii_fold(str(raw_text or "")).upper()
+    # ── Step 1: unique document-format phrases (checked before bank-name mentions) ──
+    # These phrases uniquely identify the bank even when other bank names appear in the
+    # document as "BANCO DESTINO" or "BANCO ORDENANTE" (beneficiary/sender fields).
+    # BANORTE: "REPORTE DE TRANSMISION" is theirs unless BBVA is also explicitly named
+    if "REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS" in text and "BBVA" not in text:
+        return "BANORTE"
+    if (
+        "DESCARGA MASIVA EN PDF DE COMPROBANTE DE TRANSFERENCIAS" in text
+        or "NUMERO DE CONTRATO ENLACE" in text
+        or "CONTRATO ENLACE" in text
+        or "SUPERLINEA" in text  # SANTANDER's customer-service brand
+        or "CONSULTAS - MOVIMIENTOS OTROS BANCOS - DETALLE" in text
+    ):
+        return "SANTANDER"
     if "SCOTIABANK" in text or "SCOTIA BANK" in text:
         return "SCOTIABANK"
-    if "BBVA" in text or "BANCOMER" in text or "REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS" in text:
+    # ── Step 2: bank-name mentions ─────────────────────────────────────────────────
+    if "BBVA" in text or "BANCOMER" in text:
         return "BBVA"
     if (
         any(token in text for token in ("BNET", "FOLIO DE INTERNET", "RESULTADO DEL TRASPASO"))
@@ -3959,7 +4216,7 @@ def _payment_detect_bank(raw_text: str) -> str:
         and ("CUENTA DE DEPOSITO" in text or "CUENTA DESTINO" in text)
     ):
         return "BBVA"
-    if "SANTANDER" in text or "CONTRATO ENLACE" in text:
+    if "SANTANDER" in text:
         return "SANTANDER"
     if "BANORTE" in text or "IXE" in text:
         return "BANORTE"
@@ -3969,7 +4226,7 @@ def _payment_detect_bank(raw_text: str) -> str:
         return "HSBC"
     if "INBURSA" in text:
         return "INBURSA"
-    # Fallback: try to detect bank from CLABE prefix (first 3 digits)
+    # ── Step 3: CLABE prefix fallback ─────────────────────────────────────────────
     clabe_match = re.search(r"\b(\d{18})\b", text)
     if clabe_match:
         prefix = clabe_match.group(1)[:3]

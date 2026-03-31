@@ -17,6 +17,7 @@ from app.extractors import (
     nomina_extractor,
     bancario_extractor,
     generic_extractor,
+    cfdi_extractor,
 )
 
 # Registro de extractores por tipo de documento
@@ -28,6 +29,8 @@ _EXTRACTOR_REGISTRY = {
     "RECIBO_NOMINA":             nomina_extractor,   # alias
     "DATOS_BANCARIOS":           bancario_extractor,
     "ESTADO_CUENTA":             bancario_extractor, # alias
+    "CFDI":                      cfdi_extractor,
+    "FACTURA_XML":               cfdi_extractor,     # alias
     "GENERICO":                  generic_extractor,
     "UNKNOWN":                   generic_extractor,
 }
@@ -58,6 +61,7 @@ __all__ = [
     "nomina_extractor",
     "bancario_extractor",
     "generic_extractor",
+    "cfdi_extractor",
     "get_extractor",
     "list_supported_types",
 ]

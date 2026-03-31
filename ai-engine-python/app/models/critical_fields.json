@@ -44,7 +44,10 @@
   ],
   "DATOS_BANCARIOS": [
     "banco",
-    "clabe"
+    "clabe",
+    "cuenta",
+    "titular",
+    "fecha_corte"
   ],
   "FACTURA": [
     "tabla_celdas"

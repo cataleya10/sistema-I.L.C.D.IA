@@ -1,4 +1,5 @@
 import json
+import secrets
 
 from fastapi import APIRouter, UploadFile, File, Form, Header, HTTPException, Depends, Query, Response
 from app.schemas.process import ProcessResponse
@@ -18,8 +19,9 @@ router = APIRouter()
 
 
 async def verify_api_key(x_api_key: str | None = Header(None, alias="X-Api-Key")):
-    if settings.api_key and x_api_key != settings.api_key:
-        raise HTTPException(status_code=401, detail="Invalid API key")
+    if settings.api_key:
+        if not x_api_key or not secrets.compare_digest(x_api_key, settings.api_key):
+            raise HTTPException(status_code=401, detail="Invalid API key")
 
 @router.post("/process-document", dependencies=[Depends(verify_api_key)])
 async def process_document_endpoint(

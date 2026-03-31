@@ -19,10 +19,14 @@ Reglas específicas del documento bancario:
 Delega al motor interno _extract_financial_from_boxes.
 """
 
+import logging
+import re
 from typing import Any
 
 from app.pipelines.extract import extract_fields as _extract_fields
 from app.pipelines.extract.extractors import _extract_financial_from_boxes
+
+logger = logging.getLogger(__name__)
 
 # Campos que este extractor debe devolver
 EXPECTED_FIELDS = frozenset({
@@ -145,7 +149,6 @@ _CLABE_BANCO_MAP: dict[str, str] = {
     "743": "TRANSFER",
     "744": "TRANSFER",
     "745": "BIMBO NET",
-    "706": "ARCUS",
     "812": "CAJA SPEI",
     "814": "INDEVAL",
     "846": "STP",
@@ -158,15 +161,17 @@ async def extract(
     ocr_boxes: list[dict[str, Any]] | None = None,
     raw_text: str = "",
     filename: str | None = None,
+    pdf_tables: list[list[list[str]]] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Extrae campos de un Estado de Cuenta o Comprobante Bancario.
 
     Args:
-        ocr_text:  Texto completo resultado del OCR.
-        ocr_boxes: Lista de bounding boxes del OCR (mejora CLABE y cuenta).
-        raw_text:  Texto del layer nativo del PDF.
-        filename:  Nombre del archivo.
+        ocr_text:   Texto completo resultado del OCR.
+        ocr_boxes:  Lista de bounding boxes del OCR (mejora CLABE y cuenta).
+        raw_text:   Texto del layer nativo del PDF.
+        filename:   Nombre del archivo.
+        pdf_tables: Tablas detectadas por el preprocesador.
 
     Returns:
         Lista de campos extraídos. Campos esperados:
@@ -178,11 +183,15 @@ async def extract(
         ocr_boxes=ocr_boxes,
         raw_text=raw_text,
         filename=filename,
+        pdf_tables=pdf_tables,
     )
 
-    # Si el banco no fue detectado, intentar inferirlo desde la CLABE
+    # Enriquecimiento: inferir banco desde CLABE y completar campos con
+    # etiquetas específicas de banco (Santander, Banorte, BBVA, etc.)
     _enrich_banco_from_clabe(fields)
+    _enrich_bancario_fields(fields, ocr_text=ocr_text, raw_text=raw_text, ocr_boxes=ocr_boxes or [])
 
+    _log_coverage(fields, filename)
     return fields
 
 
@@ -228,6 +237,145 @@ def _enrich_banco_from_clabe(fields: list[dict[str, Any]]) -> None:
             else:
                 from app.pipelines.extract.common import _make_field
                 fields.append(_make_field("banco", "Banco", inferred, []))
+
+
+# ─── Patrones de enriquecimiento por etiqueta de banco ───────────────────────
+
+# Titular — etiquetas usadas por distintos bancos
+_TITULAR_PATTERNS: list[re.Pattern] = [
+    re.compile(r"(?:NOMBRE\s+DEL?\s+CLIENTE|CLIENTE|TITULAR|A\s+NOMBRE\s+DE|BENEFICIARIO)[:\s]+([A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ\s,\.]{4,80}?)(?:\n|\s{2,}|RFC|CLABE|CUENTA|$)", re.IGNORECASE),
+]
+
+# Fecha de corte — múltiples etiquetas
+_FECHA_CORTE_PATTERNS: list[re.Pattern] = [
+    re.compile(r"FECHA\s+DE\s+CORTE[:\s]+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", re.IGNORECASE),
+    re.compile(r"CORTE[:\s]+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", re.IGNORECASE),
+    re.compile(r"FECHA\s+CORTE[:\s]+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", re.IGNORECASE),
+    re.compile(r"AL\s+(\d{1,2}\s+DE\s+[A-ZÁÉÍÓÚÜÑ]{4,}\s+(?:DE\s+)?\d{4})", re.IGNORECASE),
+]
+
+# Periodo / rango del estado de cuenta
+_PERIODO_PATTERNS: list[re.Pattern] = [
+    re.compile(
+        r"PERIODO[:\s]+(?:DEL?\s+)?(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+(?:AL?|A)\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"DEL?\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+(?:AL?|A)\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(\d{1,2}\s+DE\s+[A-ZÁÉÍÓÚÜÑ]{4,}\s+(?:DE\s+)?\d{4})\s+(?:AL?|A)\s+(\d{1,2}\s+DE\s+[A-ZÁÉÍÓÚÜÑ]{4,}\s+(?:DE\s+)?\d{4})",
+        re.IGNORECASE,
+    ),
+]
+
+# Cuenta (etiquetas alternativas)
+_CUENTA_PATTERNS: list[re.Pattern] = [
+    re.compile(r"(?:N[UÚ]MERO\s+DE\s+CUENTA|NO[.:]?\s*DE\s*CUENTA|CUENTA)[:\s]+(\d{10,16})\b", re.IGNORECASE),
+    re.compile(r"CUENTA\s+SANTANDER[:\s]+(\d{10,16})\b", re.IGNORECASE),
+]
+
+# RFC del titular (persona física o moral)
+_RFC_PATTERNS: list[re.Pattern] = [
+    re.compile(r"\bRFC[:\s]+([A-Z&]{3,4}\d{6}[A-Z0-9]{3})\b", re.IGNORECASE),
+    re.compile(r"R\.F\.C\.[:\s]+([A-Z&]{3,4}\d{6}[A-Z0-9]{3})\b", re.IGNORECASE),
+]
+
+
+def _enrich_bancario_fields(
+    fields: list[dict[str, Any]],
+    ocr_text: str,
+    raw_text: str,
+    ocr_boxes: list[dict[str, Any]],
+) -> None:
+    """
+    Complementa campos bancarios que el pipeline de boxes puede no detectar
+    cuando las etiquetas varían por banco (Santander, Banorte, BBVA, etc.).
+    Opera in-place sobre fields.
+
+    Usa raw_text como fuente primaria (PDFs con capa de texto nativa).
+    """
+    from app.pipelines.extract.common import _make_field
+
+    # low_conf: campos que el orchestrator pudo haber añadido con confidence < 0.7
+    # → el enriquecimiento puede mejorarlos si encuentra un match más sólido.
+    _LOW_CONF_THRESHOLD = 0.7
+    existing: dict[str, dict] = {f.get("key"): f for f in fields if f.get("value")}
+    existing_keys = set(existing.keys())
+    primary = raw_text.strip() if raw_text and raw_text.strip() else ocr_text
+    secondary = ocr_text if primary is raw_text and ocr_text != raw_text else ""
+
+    def _try(patterns: list[re.Pattern], key: str, label: str, confidence: float = 0.78, group: int = 1) -> bool:
+        # Si ya existe con buena confianza, no tocar
+        if key in existing_keys and existing[key].get("confidence", 1.0) >= _LOW_CONF_THRESHOLD:
+            return False
+        for src in (primary, secondary):
+            if not src:
+                continue
+            for pat in patterns:
+                m = pat.search(src)
+                if m:
+                    val = m.group(group).strip()
+                    if val:
+                        if key in existing_keys:
+                            # Actualizar el campo existente de baja confianza
+                            existing[key]["value"] = val
+                            existing[key]["confidence"] = confidence
+                            logger.debug("bancario enrich (override): %s='%s'", key, val)
+                        else:
+                            fields.append(_make_field(key, label, val, ocr_boxes, confidence=confidence))
+                            existing_keys.add(key)
+                            logger.debug("bancario enrich: %s='%s'", key, val)
+                        return True
+        return False
+
+    _try(_TITULAR_PATTERNS, "titular", "Titular", confidence=0.78)
+    _try(_FECHA_CORTE_PATTERNS, "fecha_corte", "Fecha de corte", confidence=0.82)
+    _try(_CUENTA_PATTERNS, "cuenta", "Cuenta", confidence=0.80)
+    _try(_RFC_PATTERNS, "rfc", "RFC", confidence=0.82)
+
+    # Periodo — rango de fechas
+    _period_sufficient = (
+        "periodo" in existing_keys
+        and existing.get("periodo", {}).get("confidence", 1.0) >= _LOW_CONF_THRESHOLD
+    )
+    if not _period_sufficient:
+        for src in (primary, secondary):
+            if not src:
+                continue
+            for pat in _PERIODO_PATTERNS:
+                m = pat.search(src)
+                if m:
+                    if m.lastindex and m.lastindex >= 2:
+                        val = f"{m.group(1).strip()} al {m.group(2).strip()}"
+                    else:
+                        val = m.group(1).strip()
+                    if "periodo" in existing_keys:
+                        existing["periodo"]["value"] = val
+                        existing["periodo"]["confidence"] = 0.80
+                        logger.debug("bancario enrich (override): periodo='%s'", val)
+                    else:
+                        fields.append(_make_field("periodo", "Periodo", val, ocr_boxes, confidence=0.80))
+                        existing_keys.add("periodo")
+                        logger.debug("bancario enrich: periodo='%s'", val)
+                    break
+            if "periodo" in existing_keys:
+                break
+
+
+def _log_coverage(fields: list[dict[str, Any]], filename: str | None) -> None:
+    """Emite un log INFO con cobertura de campos encontrados."""
+    found = {f.get("key") for f in fields if f.get("value")}
+    missing = EXPECTED_FIELDS - found
+    pct = int(100 * len(found & EXPECTED_FIELDS) / len(EXPECTED_FIELDS))
+    if missing:
+        logger.info(
+            "bancario [%s] cobertura %d%% — faltan: %s",
+            filename or "?", pct, ", ".join(sorted(missing)),
+        )
+    else:
+        logger.info("bancario [%s] cobertura 100%%", filename or "?")
 
 
 def get_expected_fields() -> frozenset[str]:

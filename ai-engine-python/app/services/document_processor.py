@@ -73,6 +73,12 @@ SERVICE_FILENAME_HINTS = {
 }
 
 
+def _looks_like_xml(text: str) -> bool:
+    """True si el texto parece ser contenido XML (CFDI)."""
+    stripped = (text or "").lstrip()
+    return stripped.startswith("<?xml") or stripped.startswith("<cfdi:")
+
+
 def _looks_like_service_document(text: str, filename: str | None) -> bool:
     upper_text = (text or "").upper()
     upper_name = (filename or "").upper()
@@ -233,8 +239,9 @@ FASTPATH_REQUIRED_FIELDS: dict[str, list[str]] = {
     "ACTA_NACIMIENTO": ["nombre", "fecha_nacimiento", "folio", "numero_acta"],
     "COMPROBANTE_DOMICILIO": ["domicilio", "cp"],
     "NSS": ["nss", "nombre"],
-    "DATOS_BANCARIOS": ["clabe", "banco"],
+    "DATOS_BANCARIOS": ["clabe", "banco", "cuenta", "titular", "fecha_corte"],
     "FACTURA": ["tabla_celdas"],
+    "CFDI": ["uuid", "rfc_emisor", "rfc_receptor", "total"],
     "CONSTANCIA_SITUACION_FISCAL": ["rfc", "nombre", "domicilio"],
     "GENERICO": [],
     "UNKNOWN": [],
@@ -254,8 +261,9 @@ DEFAULT_CRITICAL_FIELDS: dict[str, list[str]] = {
     "ACTA_NACIMIENTO": ["nombre", "fecha_nacimiento", "folio", "numero_acta"],
     "COMPROBANTE_DOMICILIO": ["domicilio"],
     "NSS": ["nss"],
-    "DATOS_BANCARIOS": ["clabe", "banco"],
+    "DATOS_BANCARIOS": ["clabe", "banco", "cuenta", "titular", "fecha_corte"],
     "FACTURA": ["tabla_celdas"],
+    "CFDI": ["uuid", "rfc_emisor", "rfc_receptor", "total"],
     "CONSTANCIA_SITUACION_FISCAL": ["rfc"],
     "GENERICO": [],
 }
@@ -281,7 +289,9 @@ CRITICAL_KEY_ALIASES: dict[str, dict[str, list[str]]] = {
         "nombre": ["nombre", "nombres", "nombre_beneficiario", "nombre_asegurado", "nombre_titular", "titular"],
     },
     "DATOS_BANCARIOS": {
-        "titular": ["titular", "nombre", "nombre_completo", "nombre_titular"],
+        "titular": ["titular", "nombre", "nombre_completo", "nombre_titular", "nombre_beneficiario"],
+        "cuenta": ["cuenta", "numero_cuenta", "no_cuenta", "numero_de_cuenta"],
+        "fecha_corte": ["fecha_corte", "fecha_de_corte", "corte", "fecha"],
         "tabla_celdas": ["tabla_celdas", "tabla", "celdas"],
     },
     "FACTURA": {
@@ -818,7 +828,30 @@ async def process_document(file, document_id: str, source: str, options: str | N
             doc_confidence = max(doc_confidence, 0.85)
         extraction_boxes = ocr_boxes if ocr_boxes else text_layer_boxes
         t2 = time.time()
-        fields = await extract_fields(doc_type, ocr_text, extraction_boxes, extracted_text, file.filename, pdf_tables)
+        if doc_type == "CFDI":
+            # CFDI: llamar directamente al extractor con el contenido XML
+            from app.extractors.cfdi_extractor import extract as _cfdi_extract
+            fields = await _cfdi_extract(
+                ocr_text=ocr_text,
+                ocr_boxes=extraction_boxes,
+                raw_text=extracted_text,
+                filename=file.filename,
+                pdf_tables=pdf_tables,
+                xml_content=extracted_text if extracted_text and _looks_like_xml(extracted_text) else None,
+            )
+        else:
+            from app.extractors import get_extractor
+            _extractor = get_extractor(doc_type)
+            _kwargs: dict = {
+                "ocr_text": ocr_text,
+                "ocr_boxes": extraction_boxes,
+                "raw_text": extracted_text,
+                "filename": file.filename,
+                "pdf_tables": pdf_tables,
+            }
+            if doc_type in {"GENERICO", "UNKNOWN"}:
+                _kwargs["document_type"] = doc_type
+            fields = await _extractor.extract(**_kwargs)
         logger.info("[PERF] extract_fields (%s): %.1fms", doc_type, (time.time() - t2) * 1000)
         fields = await validate_fields(fields)
         fields = _normalize_fields(doc_type, fields)

@@ -105,6 +105,7 @@ _ALLOWED_FIELDS_BY_TYPE: dict[str, set[str]] = {
         "banco",
         "clabe",
         "cuenta",
+        "cliente_numero",
         "titular",
         "nombre_titular",
         "nombre_beneficiario",
@@ -125,6 +126,23 @@ _ALLOWED_FIELDS_BY_TYPE: dict[str, set[str]] = {
         "nombre",
         "regimen",
         "domicilio",
+    },
+    "CFDI": {
+        "uuid", "folio", "serie", "fecha", "tipo_comprobante",
+        "rfc_emisor", "nombre_emisor", "regimen_fiscal_emisor",
+        "rfc_receptor", "nombre_receptor", "uso_cfdi", "cp_receptor",
+        "subtotal", "descuento", "total", "moneda",
+        "forma_pago", "metodo_pago",
+        "total_iva", "total_retenciones",
+        "conceptos",
+        "no_certificado", "fecha_timbrado", "lugar_expedicion",
+        # Campos del complemento Nómina (TipoDeComprobante = N)
+        "nombre", "curp", "nss", "periodo", "fecha_pago",
+        "total_percepciones", "total_deducciones", "total_otros_pagos",
+        "tipo_nomina", "num_dias_pagados", "tipo_contrato", "tipo_regimen",
+        "num_empleado", "departamento", "puesto", "banco", "cuenta_bancaria",
+        "salario_base", "salario_diario", "periodicidad_pago",
+        "percepciones_detalle", "deducciones_detalle",
     },
 }
 

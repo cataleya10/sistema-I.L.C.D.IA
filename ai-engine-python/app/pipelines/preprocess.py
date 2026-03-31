@@ -425,6 +425,21 @@ async def preprocess(file: UploadFile) -> tuple[list[Image.Image], str, list[dic
     filename = str(file.filename or "")
     content_type = str(file.content_type or "")
 
+    # ── XML CFDI: devuelve el contenido como raw_text sin procesamiento de imagen
+    _is_xml = (
+        content_type in {"application/xml", "text/xml"}
+        or filename.lower().endswith(".xml")
+        or content[:5].lstrip(b"\xef\xbb\xbf").startswith(b"<?xml")
+        or content[:6].lstrip(b"\xef\xbb\xbf").startswith(b"<cfdi:")
+    )
+    if _is_xml:
+        try:
+            xml_text = content.decode("utf-8", errors="replace")
+        except Exception:
+            xml_text = content.decode("latin-1", errors="replace")
+        logger.info("preprocess: archivo XML detectado (%d bytes), omitiendo OCR", len(content))
+        return [], xml_text, [], [], []
+
     if content_type == "application/pdf" or filename.lower().endswith(".pdf"):
         extracted_parts: list[str] = []
         text_layer_boxes: list[dict[str, Any]] = []

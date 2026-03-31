@@ -616,9 +616,9 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
             if "rfc" in fin_box_values:
                 fields.append(_make_field("rfc", "RFC", _normalize_alnum(fin_box_values["rfc"]["value"]), ocr_boxes, confidence=0.7))
             if "fecha_corte" in fin_box_values:
-                fields.append(_make_field("fecha_corte", "Fecha de corte", _normalize_date_value(fin_box_values["fecha_corte"]["value"]), ocr_boxes, confidence=0.6))
+                fields.append(_make_field("fecha_corte", "Fecha de corte", _normalize_date_value(fin_box_values["fecha_corte"]["value"]), ocr_boxes, confidence=0.75))
             if "periodo" in fin_box_values:
-                fields.append(_make_field("periodo", "Periodo", _normalize_text(fin_box_values["periodo"]["value"]), ocr_boxes, confidence=0.6))
+                fields.append(_make_field("periodo", "Periodo", _normalize_text(fin_box_values["periodo"]["value"]), ocr_boxes, confidence=0.75))
         # Refuerzo: buscar CLABE explícitamente en líneas con la palabra 'CLABE'
         found_clabe = False
         for value in clabes:
@@ -663,7 +663,40 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                     confidence=0.9,
                 )
             )
-            cleaned = _postprocess_fields(document_type, fields)
+        # Fallback: si _extract_payment_table_payload no encontró tabla (p.ej.
+        # estados de cuenta Santander con columnas FECHA/CARGO/ABONO/SALDO que
+        # no coinciden con el esquema de dispersión nómina), usar pdf_tables
+        # directamente — igual que hace la ruta FACTURA.
+        if not any(f.get("key") == "tabla_celdas" for f in fields) and pdf_tables:
+            _generic = _pdf_tables_to_generic_payloads(pdf_tables)
+            _existing_tabla = False
+            _tabla_idx = 2
+            for _tbl in sorted(_generic, key=lambda t: t.get("row_count", 0), reverse=True):
+                if _tbl.get("row_count", 0) < 2:
+                    continue
+                if not _existing_tabla:
+                    fields.append(
+                        _make_field(
+                            "tabla_celdas",
+                            "Tabla estado de cuenta",
+                            json.dumps(_tbl, ensure_ascii=False),
+                            ocr_boxes,
+                            confidence=0.82,
+                        )
+                    )
+                    _existing_tabla = True
+                else:
+                    fields.append(
+                        _make_field(
+                            f"tabla_celdas_{_tabla_idx}",
+                            f"Tabla estado de cuenta #{_tabla_idx}",
+                            json.dumps(_tbl, ensure_ascii=False),
+                            ocr_boxes,
+                            confidence=0.78,
+                        )
+                    )
+                    _tabla_idx += 1
+        cleaned = _postprocess_fields(document_type, fields)
         contracted = _apply_field_contracts(document_type, cleaned)
         return _dedupe_fields(contracted)
 
@@ -1690,7 +1723,7 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
 
     # ── Universal tabla_celdas fallback ────────────────────────────────────────
     if (
-        document_type in {"FACTURA", "GENERICO", "UNKNOWN"}
+        document_type in {"FACTURA", "GENERICO", "UNKNOWN", "NOMINA"}
         and not any(str(f.get("key", "")) == "tabla_celdas" for f in fields)
     ):
         _uni_tables: list[dict] = []
@@ -1734,6 +1767,33 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                         logger.info("[DIAG-UNI] added table #%d rows=%d cols=%d source=%s",
                                     _uni_idx - 1, _uni_tbl.get("row_count", 0),
                                     _uni_tbl.get("column_count", 0), _uni_tbl.get("source", "?"))
+
+    # ── COMPROBANTE_DOMICILIO: tablas estructurales del PDF únicamente ──────────
+    # Solo usa pdf_tables (detección visual pdfplumber/img2table).
+    # No se usa detección por texto para evitar falsos positivos con datos de pago.
+    if (
+        document_type == "COMPROBANTE_DOMICILIO"
+        and pdf_tables
+        and not any(str(f.get("key", "")).startswith("tabla_celdas") for f in fields)
+    ):
+        _cd_tables = _pdf_tables_to_generic_payloads(pdf_tables)
+        _cd_idx = 1
+        for _cd_tbl in sorted(_cd_tables, key=lambda t: t.get("row_count", 0), reverse=True):
+            _cd_rows = _cd_tbl.get("rows", [])
+            if isinstance(_cd_rows, list) and len(_cd_rows) >= 2:
+                _cd_key = "tabla_celdas" if _cd_idx == 1 else f"tabla_celdas_{_cd_idx}"
+                fields.append(
+                    _make_field(
+                        _cd_key,
+                        f"Tabla detectada #{_cd_idx}",
+                        json.dumps(_cd_tbl, ensure_ascii=False),
+                        ocr_boxes,
+                        confidence=0.75,
+                    )
+                )
+                _cd_idx += 1
+                logger.info("[COMPROBANTE] tabla #%d rows=%d cols=%d",
+                            _cd_idx - 1, _cd_tbl.get("row_count", 0), _cd_tbl.get("column_count", 0))
 
     if base_text_raw:
         # Preserve line breaks for readable display; only collapse intra-line spaces

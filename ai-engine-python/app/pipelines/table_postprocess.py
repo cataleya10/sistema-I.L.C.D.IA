@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 _AMOUNT_COLUMNS = frozenset({
     "importe", "importe_detectado", "importe_total_movimientos",
     "importe_movimiento_altas", "importe_movimientos_bajas",
+    # Estado de cuenta: columnas de débito/crédito/saldo
+    "cargo", "cargos", "abono", "abonos", "saldo", "saldo_final",
+    "depositos", "retiros", "monto",
 })
 
 _ACCOUNT_COLUMNS = frozenset({
@@ -46,6 +49,12 @@ _NUMERIC_ID_COLUMNS = frozenset({
     "referencia", "numero_empleado", "folio_internet", "folio_firma",
     "folio_unico", "folio_operacion", "numero_lote", "codigo",
     "clave_rastreo",
+})
+
+# Columnas de fecha en estados de cuenta bancarios
+_DATE_COLUMNS = frozenset({
+    "fecha", "fecha_operacion", "fecha_valor", "fecha_aplicacion",
+    "fecha_movimiento",
 })
 
 _VALID_STATUSES = frozenset({
@@ -445,6 +454,8 @@ def postprocess_payment_table(
             df[col] = df[col].apply(_safe_apply(_clean_status))
         elif col_lower in _NUMERIC_ID_COLUMNS:
             df[col] = df[col].apply(_safe_apply(_clean_numeric_id))
+        elif col_lower in _DATE_COLUMNS:
+            df[col] = df[col].apply(lambda v: str(v or "").strip())
         else:
             # Generic: strip whitespace
             df[col] = df[col].apply(lambda v: str(v or "").strip())
