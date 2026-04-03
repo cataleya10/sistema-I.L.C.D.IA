@@ -19,6 +19,9 @@ on:
 permissions:
   contents: read
   packages: write
+  # SBOM attestation
+  id-token: write
+  attestations: write
 
 jobs:
   security:
@@ -110,17 +113,29 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: "pip"
           cache-dependency-path: ai-engine-python/requirements-dev.txt
       - name: Install dependencies
         working-directory: ai-engine-python
         run: pip install -r requirements-dev.txt
+      - name: Scan Python vulnerabilities (pip-audit)
+        working-directory: ai-engine-python
+        run: |
+          pip install pip-audit --quiet
+          pip-audit -r requirements.txt --progress-spinner off
       - name: Compile check
         run: python -m compileall ai-engine-python/app
-      - name: Run AI tests
+      - name: Run AI tests with coverage
         working-directory: ai-engine-python
-        run: python -m pytest tests -q
+        run: python -m pytest tests -q --cov=app --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-engine-coverage
+          path: ai-engine-python/coverage.xml
 
   bbva-e2e:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_bbva_e2e == 'true' }}
@@ -150,7 +165,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: "pip"
           cache-dependency-path: ai-engine-python/requirements-dev.txt
 
@@ -276,6 +291,7 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
@@ -284,3 +300,86 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ghcr.io/${{ github.repository }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+          artifact-name: sbom-${{ matrix.image }}.spdx.json
+          output-file: /tmp/sbom-${{ matrix.image }}.spdx.json
+
+      - name: Attest SBOM
+        uses: actions/attest-sbom@v2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}/${{ matrix.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: /tmp/sbom-${{ matrix.image }}.spdx.json
+          push-to-registry: true
+
+  # ─── CD: Deploy a producción via SSH ─────────────────────────────────────
+  # Requiere secrets en GitHub → Settings → Secrets:
+  #   DEPLOY_HOST        IP o hostname del servidor de producción
+  #   DEPLOY_USER        Usuario SSH (debe tener acceso a docker)
+  #   DEPLOY_SSH_KEY     Clave privada SSH (sin passphrase)
+  #
+  # APROBACIÓN MANUAL:
+  #   Ve a GitHub → Settings → Environments → production → Required reviewers
+  #   Agrega los revisores que deben aprobar cada deploy antes de ejecutarse.
+  #   Con esa configuración, este job espera aprobación antes de correr.
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [docker-images]
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DEPLOY_HOST:-}" ] || [ -z "${DEPLOY_USER:-}" ] || [ -z "${DEPLOY_SSH_KEY:-}" ]; then
+            echo "Secrets DEPLOY_HOST/DEPLOY_USER/DEPLOY_SSH_KEY no configurados — deploy omitido."
+            exit 0
+          fi
+          printf '%s\n' "${DEPLOY_SSH_KEY}" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+          ssh -i /tmp/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -o ConnectTimeout=15 \
+              "${DEPLOY_USER}@${DEPLOY_HOST}" \
+              "set -euo pipefail
+               cd /opt/ilcdia
+               export IMAGE_TAG='${IMAGE_TAG}'
+               docker compose -f docker-compose.production.yml pull
+               docker compose -f docker-compose.production.yml up -d --remove-orphans
+               docker image prune -f
+               echo 'Deploy aplicado: ${IMAGE_TAG}'"
+          rm -f /tmp/deploy_key
+
+      - name: Post-deploy health check
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          API_KEY: ${{ secrets.API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DEPLOY_HOST:-}" ] || [ -z "${DEPLOY_USER:-}" ] || [ -z "${DEPLOY_SSH_KEY:-}" ]; then
+            exit 0
+          fi
+          printf '%s\n' "${DEPLOY_SSH_KEY}" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+          ssh -i /tmp/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -o ConnectTimeout=15 \
+              "${DEPLOY_USER}@${DEPLOY_HOST}" \
+              "cd /opt/ilcdia && API_KEY='${API_KEY}' MAX_RETRIES=8 RETRY_SLEEP=15 bash scripts/health-check.sh"
+          rm -f /tmp/deploy_key

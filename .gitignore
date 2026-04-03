@@ -1,7 +1,11 @@
 .venv/
+.venv-linux/
+.venv312/
 .dotnet/
+.dotnet-cli/
 /node_modules/
 ai-engine-python/.venv312/
+ai-engine-python/.venv-linux/
 ai-engine-python/logs/
 ai-engine-python/app/**/__pycache__/
 frontend-angular/web/node_modules/
@@ -54,6 +58,12 @@ storage/
 *.crt
 .env.production
 .env.backend
+.env.save
+
+# Cobertura de tests
+coverage.xml
+.coverage
+htmlcov/
 
 # Claude Code temp artifacts
 **/tmpclaude-*-cwd/
