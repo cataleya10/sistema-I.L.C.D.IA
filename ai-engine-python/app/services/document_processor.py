@@ -30,7 +30,7 @@ import re
 from pathlib import Path
 import time
 import logging
-from app.schemas.process import ProcessResponse, DocumentField, ProcessMeta
+from app.schemas.process import ProcessResponse, DocumentField, ProcessMeta, ExtractedTable
 from app.core.config import settings
 from app.pipelines.preprocess import preprocess
 from app.pipelines.ocr import run_ocr
@@ -38,8 +38,166 @@ from app.pipelines.classify import classify_document
 from app.pipelines.extract import extract_fields
 from app.pipelines.validate import validate_fields
 from app.services.online_learning import learn_from_processed_document
+from app.utils.table_utils import to_canonical_rows, table_quality_score, remap_to_target_payment_schema
+from app.pipelines.table_postprocess import postprocess_payment_table
 
 logger = logging.getLogger(__name__)
+
+# Tipos donde se aplica normalización de importes en tablas
+_PAYMENT_DOC_TYPES = frozenset({
+    "DATOS_BANCARIOS", "COMPROBANTE_DE_PAGO", "NOMINA",
+    "ESTADO_DE_CUENTA", "FACTURA",
+})
+
+# Tipos donde además se aplica el remapeo al esquema bancario (BBVA/Santander/etc.)
+# NOMINA queda excluido: sus columnas son percepciones/deducciones, no clave_beneficiario
+_BANK_REMAP_DOC_TYPES = frozenset({
+    "DATOS_BANCARIOS", "COMPROBANTE_DE_PAGO", "ESTADO_DE_CUENTA", "FACTURA",
+})
+
+
+def _detect_bank_from_fields(fields: list[dict]) -> str | None:
+    """Detecta el banco a partir de los campos extraídos."""
+    for key in ("banco", "banco_receptor", "banco_destino", "institucion"):
+        for f in fields:
+            if f.get("key") == key and f.get("value"):
+                return str(f["value"]).upper()
+    return None
+
+
+def _table_content_sig(cols: list[str], rows: list[dict]) -> str:
+    """Huella de contenido para deduplicar tablas equivalentes."""
+    col_sig = "|".join(sorted(cols))
+    row_sigs = sorted(
+        "|".join(f"{k}={v}" for k, v in sorted(r.items()) if v)
+        for r in rows[:5]
+    )
+    return col_sig + "##" + "||".join(row_sigs)
+
+
+def _process_all_tables(
+    pdf_tables: list[list[list[str]]],
+    doc_type: str,
+    bank: str | None,
+    fields: list[dict],
+    ocr_boxes: list[dict] | None = None,
+) -> list[ExtractedTable]:
+    """
+    Procesa todas las tablas crudas del PDF y devuelve tablas canónicas limpias.
+
+    Pipeline:
+      1. Si es doc bancario Y hay ocr_boxes → geometric detector (Textract-like)
+         + extractor especializado por banco (Opción B).
+      2. Para el resto → canonicalización genérica + post-proceso + remapeo.
+    """
+    is_payment = doc_type in _PAYMENT_DOC_TYPES
+    is_bank = doc_type in _BANK_REMAP_DOC_TYPES
+    results: list[ExtractedTable] = []
+    seen_sigs: set[str] = set()
+
+    # ── Ruta 1: Geometric detector + extractor especializado por banco ─────────
+    if is_bank and ocr_boxes:
+        try:
+            from app.pipelines.extract.geometric_detector import detect_all_table_grids
+            from app.pipelines.extract.bank_extractors import get_bank_extractor
+
+            grids = detect_all_table_grids(ocr_boxes)
+            extractor = get_bank_extractor(bank)
+
+            for grid in grids:
+                if grid.n_rows < 2:
+                    continue
+                try:
+                    geo_cols, geo_rows = extractor.extract(grid)
+                except Exception:
+                    logger.debug("bank_extractor.extract falló", exc_info=True)
+                    geo_cols, geo_rows = [], []
+
+                if not geo_cols or not geo_rows:
+                    continue
+
+                quality_report = table_quality_score(geo_cols, geo_rows)
+                quality = float(
+                    quality_report.get("quality", 0)
+                    if isinstance(quality_report, dict) else quality_report
+                )
+                sig = _table_content_sig(geo_cols, geo_rows)
+                if sig in seen_sigs:
+                    continue
+                seen_sigs.add(sig)
+
+                results.append(ExtractedTable(
+                    columns=geo_cols,
+                    rows=geo_rows,
+                    quality=round(quality, 1),
+                    row_count=len(geo_rows),
+                    doc_type_hint=doc_type,
+                ))
+                logger.info(
+                    "[GEO+BANK] tabla bancaria extraída: banco=%s cols=%s filas=%d quality=%.1f",
+                    bank or "GENERICO", geo_cols, len(geo_rows), quality,
+                )
+
+            if results:
+                return results
+            # Si el detector geométrico no produjo resultados, continuar con ruta genérica
+            logger.info("[GEO+BANK] sin resultados del detector geométrico, usando ruta genérica")
+        except Exception:
+            logger.debug("Pipeline geométrico-bancario falló", exc_info=True)
+
+    # ── Ruta 2: Canonicalización genérica (documentos no bancarios o fallback) ─
+    if not pdf_tables:
+        return results
+
+    for raw_table in pdf_tables:
+        if not raw_table or len(raw_table) < 2:
+            continue
+        try:
+            canon_cols, canon_rows = to_canonical_rows(raw_table)
+        except Exception:
+            logger.debug("to_canonical_rows falló para tabla", exc_info=True)
+            continue
+
+        if not canon_cols or not canon_rows:
+            continue
+
+        # Post-proceso para documentos de pago (normalización de importes)
+        if is_payment:
+            try:
+                canon_cols, canon_rows = postprocess_payment_table(canon_cols, canon_rows, bank=bank or "")
+            except Exception:
+                logger.debug("postprocess_payment_table falló", exc_info=True)
+
+        # Remapeo al esquema bancario solo para dispersiones/transferencias, NO nómina
+        if is_bank:
+            try:
+                # remap devuelve (cols, rows, display_labels) — ignorar display_labels
+                canon_cols, canon_rows, _ = remap_to_target_payment_schema(canon_cols, canon_rows, bank=bank or "")
+            except Exception:
+                logger.debug("remap_to_target_payment_schema falló", exc_info=True)
+
+        # Quality gate
+        quality_report = table_quality_score(canon_cols, canon_rows)
+        quality = float(quality_report.get("quality", 0) if isinstance(quality_report, dict) else quality_report)
+        if quality < 15 and len(canon_rows) < 2:
+            logger.debug("Tabla descartada: quality=%.1f rows=%d", quality, len(canon_rows))
+            continue
+
+        # Dedup por contenido
+        sig = _table_content_sig(canon_cols, canon_rows)
+        if sig in seen_sigs:
+            continue
+        seen_sigs.add(sig)
+
+        results.append(ExtractedTable(
+            columns=canon_cols,
+            rows=canon_rows,
+            quality=round(quality, 1),
+            row_count=len(canon_rows),
+            doc_type_hint=doc_type,
+        ))
+
+    return results
 
 SERVICE_TEXT_HINTS = {
     "TELMEX",
@@ -96,6 +254,55 @@ def _looks_like_csf_document(text: str) -> bool:
     return False
 
 
+# Campos clave que señalan fuertemente un tipo de documento
+_TYPE_SIGNAL_FIELDS: dict[str, frozenset[str]] = {
+    "DATOS_BANCARIOS":  frozenset({"clabe", "cuenta", "banco", "titular", "fecha_corte"}),
+    "NOMINA":           frozenset({"nss", "curp", "total_percepciones", "total_deducciones", "neto_pagar"}),
+    "INE":              frozenset({"clave_elector", "curp", "seccion", "folio_credencial"}),
+    "CURP":             frozenset({"curp", "entidad_registro", "anio_registro"}),
+    "NSS":              frozenset({"nss", "fecha_inicio_cotizacion"}),
+    "CONSTANCIA_SITUACION_FISCAL": frozenset({"rfc", "id_cif", "cp", "regimen"}),
+    "ACTA_NACIMIENTO":  frozenset({"numero_acta", "libro", "tomo", "registro_civil"}),
+    "COMPROBANTE_DOMICILIO": frozenset({"linea_captura", "periodo", "referencia_unica"}),
+}
+
+_MIN_SIGNAL_MATCH = 2  # mínimo de campos señal para reclasificar
+
+
+def _correct_doc_type_from_fields(
+    doc_type: str,
+    fields: list[dict],
+    confidence: float,
+) -> tuple[str, float, str | None]:
+    """
+    Corrige el tipo de documento si los campos extraídos señalan claramente
+    un tipo distinto al clasificado.
+
+    Solo actúa sobre GENERICO, UNKNOWN y tipos de baja confianza (< 0.75).
+    Retorna (nuevo_tipo, nueva_confianza, warning_or_None).
+    """
+    if doc_type not in {"GENERICO", "UNKNOWN"} and confidence >= 0.75:
+        return doc_type, confidence, None
+
+    extracted_keys = {f.get("key") for f in fields if f.get("value")}
+    best_type = doc_type
+    best_score = 0
+
+    for candidate_type, signal_keys in _TYPE_SIGNAL_FIELDS.items():
+        score = len(extracted_keys & signal_keys)
+        if score > best_score and score >= _MIN_SIGNAL_MATCH:
+            best_score = score
+            best_type = candidate_type
+
+    if best_type != doc_type:
+        new_conf = min(0.82, 0.60 + best_score * 0.07)
+        warning = f"Tipo corregido {doc_type}→{best_type} por campos extraídos (señales={best_score})."
+        logger.info(warning)
+        return best_type, new_conf, warning
+
+    return doc_type, confidence, None
+
+
 def _maybe_override_doc_type(doc_type: str, text: str, filename: str | None) -> tuple[str, str | None]:
     if doc_type == "CONSTANCIA_SITUACION_FISCAL":
         if _looks_like_service_document(text, filename) and not _looks_like_csf_document(text):
@@ -103,7 +310,11 @@ def _maybe_override_doc_type(doc_type: str, text: str, filename: str | None) -> 
     return doc_type, None
 
 
-ALLOWED_FORCED_DOC_TYPES = {"FACTURA", "GENERICO"}
+ALLOWED_FORCED_DOC_TYPES = {
+    "CFDI", "FACTURA", "DATOS_BANCARIOS", "COMPROBANTE_DE_PAGO",
+    "NOMINA", "INE", "CURP", "NSS", "ACTA_NACIMIENTO",
+    "COMPROBANTE_DOMICILIO", "CONSTANCIA_SITUACION_FISCAL", "GENERICO",
+}
 
 
 def _resolve_forced_document_type(options_data: dict) -> str | None:
@@ -241,6 +452,7 @@ FASTPATH_REQUIRED_FIELDS: dict[str, list[str]] = {
     "NSS": ["nss", "nombre"],
     "DATOS_BANCARIOS": ["clabe", "banco", "cuenta", "titular", "fecha_corte"],
     "FACTURA": ["tabla_celdas"],
+    "NOMINA": ["nombre", "periodo", "neto_pagar"],
     "CFDI": ["uuid", "rfc_emisor", "rfc_receptor", "total"],
     "CONSTANCIA_SITUACION_FISCAL": ["rfc", "nombre", "domicilio"],
     "GENERICO": [],
@@ -263,6 +475,7 @@ DEFAULT_CRITICAL_FIELDS: dict[str, list[str]] = {
     "NSS": ["nss"],
     "DATOS_BANCARIOS": ["clabe", "banco", "cuenta", "titular", "fecha_corte"],
     "FACTURA": ["tabla_celdas"],
+    "NOMINA": ["nombre", "periodo", "neto_pagar", "total_percepciones", "total_deducciones"],
     "CFDI": ["uuid", "rfc_emisor", "rfc_receptor", "total"],
     "CONSTANCIA_SITUACION_FISCAL": ["rfc"],
     "GENERICO": [],
@@ -411,7 +624,7 @@ def _extract_payroll_canonical_table(fields: list[dict]) -> tuple[list[str], lis
 
 
 def _evaluate_payroll_strict(fields: list[dict], doc_type: str) -> tuple[list[str], bool]:
-    if doc_type != "FACTURA" or not settings.payroll_strict_mode:
+    if doc_type not in {"FACTURA", "NOMINA"} or not settings.payroll_strict_mode:
         return [], False
 
     extracted = _extract_payroll_canonical_table(fields)
@@ -732,6 +945,7 @@ async def process_document(file, document_id: str, source: str, options: str | N
     text_layer_boxes: list[dict] = []
     pdf_tables: list[list[list[str]]] = []
     table_cell_grids: list = []
+    extraction_boxes: list[dict] = []  # se actualiza tras OCR; disponible para _process_all_tables
     if isinstance(preprocess_result, tuple) and len(preprocess_result) >= 5:
         images, extracted_text, text_layer_boxes, pdf_tables, table_cell_grids = preprocess_result
     elif isinstance(preprocess_result, tuple) and len(preprocess_result) >= 4:
@@ -815,6 +1029,21 @@ async def process_document(file, document_id: str, source: str, options: str | N
             if grid_tables:
                 logger.info("Filled %d grid table(s) from OCR boxes", len(grid_tables))
                 pdf_tables = pdf_tables + grid_tables
+        # ────────────────────────────────────────────────────────────
+
+        # ── Fallback: reconstruir tablas desde OCR (PDF escaneado) ──
+        # Cuando preprocess no encontró estructura de tabla (PDF imagen
+        # puro), intentar reconstruir tablas desde los bounding boxes
+        # del OCR o desde el texto con detección de columnas.
+        if not pdf_tables and (ocr_boxes or ocr_text):
+            from app.pipelines.extract.table_from_ocr import extract_fallback_tables
+            _fallback = extract_fallback_tables(ocr_text or "", ocr_boxes or [])
+            if _fallback:
+                pdf_tables = _fallback
+                logger.info(
+                    "OCR table fallback: %d tabla(s) reconstruida(s) para doc_id=%s",
+                    len(_fallback), document_id,
+                )
         # ────────────────────────────────────────────────────────────
 
         first_image = images[0] if images else None
@@ -905,6 +1134,22 @@ async def process_document(file, document_id: str, source: str, options: str | N
                 doc_type, document_id,
             )
 
+    # === CORRECCIÓN DE TIPO POR CAMPOS EXTRAÍDOS ============================
+    doc_type, doc_confidence, type_correction_warning = _correct_doc_type_from_fields(
+        doc_type, fields, doc_confidence
+    )
+    if type_correction_warning:
+        # Re-run postprocessing con el tipo corregido
+        fields = _postprocess_fields(doc_type, fields)
+
+    # === EXTRACCIÓN Y POST-PROCESO DE TABLAS ================================
+    detected_bank = _detect_bank_from_fields(fields)
+    extracted_tables = _process_all_tables(
+        pdf_tables, doc_type, detected_bank, fields,
+        ocr_boxes=extraction_boxes,
+    )
+    # ========================================================================
+
     if doc_type == "ACTA_NACIMIENTO":
         fields, acta_guard_warnings = _apply_acta_sanity_guards(fields)
 
@@ -927,6 +1172,8 @@ async def process_document(file, document_id: str, source: str, options: str | N
         warnings.append(f"Tipo forzado manualmente: {forced_doc_type}.")
     if doc_type_warning:
         warnings.append(doc_type_warning)
+    if type_correction_warning:
+        warnings.append(type_correction_warning)
     if acta_guard_warnings:
         warnings.extend(acta_guard_warnings)
     include_ocr_text = bool(options_data.get("return_ocr_text"))
@@ -1010,25 +1257,28 @@ async def process_document(file, document_id: str, source: str, options: str | N
     except Exception:
         logger.exception("Online learning failed for document_id=%s", document_id)
 
+    def _build_doc_field(field: dict) -> DocumentField:
+        source = field.get("source")
+        if source and source.get("bbox"):
+            bbox_pts = source["bbox"]
+            source = {
+                **source,
+                "bbox": [
+                    min(int(round(p[0])) for p in bbox_pts),
+                    min(int(round(p[1])) for p in bbox_pts),
+                    max(int(round(p[0])) for p in bbox_pts),
+                    max(int(round(p[1])) for p in bbox_pts),
+                ],
+            }
+        return DocumentField(**{**field, "source": source})
+
     response = ProcessResponse(
         document_id=document_id,
         status=status,
         document_type=doc_type,
         confidence=doc_confidence,
-        fields=[
-            DocumentField(**{
-                **field,
-                "source": {
-                    **field.get("source", {}),
-                    "bbox": [
-                        min(int(round(point[0])) for point in field.get("source", {}).get("bbox", [])),
-                        min(int(round(point[1])) for point in field.get("source", {}).get("bbox", [])),
-                        max(int(round(point[0])) for point in field.get("source", {}).get("bbox", [])),
-                        max(int(round(point[1])) for point in field.get("source", {}).get("bbox", [])),
-                    ] if field.get("source", {}).get("bbox") else None
-                } if field.get("source") else None
-            }) for field in fields
-        ],
+        fields=[_build_doc_field(f) for f in fields],
+        tables=extracted_tables,
         warnings=warnings,
         errors=[],
         meta=ProcessMeta(
@@ -1037,6 +1287,7 @@ async def process_document(file, document_id: str, source: str, options: str | N
             pipeline_version=settings.pipeline_version,
             model_version=settings.model_version,
             processing_ms=processing_ms,
+            tables_found=len(extracted_tables),
         ),
         ocr_text=ocr_text if include_ocr_text else None,
         ocr_boxes=(ocr_boxes if ocr_boxes else text_layer_boxes) if include_boxes else None,
