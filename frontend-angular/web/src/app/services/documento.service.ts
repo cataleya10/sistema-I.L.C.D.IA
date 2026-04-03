@@ -83,7 +83,7 @@ export class DocumentoService {
       message: this.buildMessage(response),
       documentId: response.document_id,
       resumen: this.buildResumen(uploaded, paymentDetail),
-      beneficiarios: paymentDetail
+      beneficiarios: paymentDetail && paymentDetail.canonicalRows.length
         ? this.buildBeneficiarios(paymentDetail.canonicalColumns, paymentDetail.canonicalRows)
         : this.buildBeneficiarios(fallbackTable?.headerRows[0] ?? [], fallbackTable?.bodyRows ?? [])
     };

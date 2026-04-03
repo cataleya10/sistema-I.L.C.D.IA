@@ -641,7 +641,7 @@ import { ReplicaCalibrationPanelComponent } from '../../../shared/components/rep
 export class DocumentsResultsPage implements OnInit {
   private static readonly REPLICA_TUNING_STORAGE_KEY = 'documents.replicaPresetTuning.v1';
   private static readonly HIDDEN_FIELD_KEYS = new Set(['pago_detalle', 'texto_detectado']);
-  private static readonly TABLE_VISIBLE_TYPES = new Set(['GENERICO', 'FACTURA', 'PAGO']);
+  private static readonly TABLE_VISIBLE_TYPES = new Set(['GENERICO', 'FACTURA', 'PAGO', 'DATOS_BANCARIOS', 'NOMINA', 'COMPROBANTE_DE_PAGO']);
   document: DocumentDetail | null = null;
   displayFields: DocumentField[] = [];
   search = '';

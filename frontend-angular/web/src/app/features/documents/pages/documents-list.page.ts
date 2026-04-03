@@ -120,9 +120,25 @@ const TYPE_OPTIONS: Array<{ value: string; label: string }> = [
               <td>{{ confidenceLabel(document) }}</td>
               <td>{{ document.uploaded_at | date: 'medium' }}</td>
               <td>{{ document.processed_at ? (document.processed_at | date: 'medium') : 'Pendiente' }}</td>
-              <td>
+              <td class="actions-cell">
                 <button type="button" class="ghost" (click)="verDetalleDocumento(document)">
                   Ver detalle
+                </button>
+                <button
+                  type="button"
+                  class="ghost btn-reprocesar"
+                  [disabled]="reprocesando()[document.id]"
+                  (click)="reprocesarDocumento(document.id, $event)"
+                >
+                  {{ reprocesando()[document.id] ? 'Procesando...' : 'Reprocesar' }}
+                </button>
+                <button
+                  type="button"
+                  class="ghost btn-eliminar"
+                  [disabled]="eliminando()[document.id]"
+                  (click)="eliminarDocumento(document.id, $event)"
+                >
+                  {{ eliminando()[document.id] ? 'Eliminando...' : 'Eliminar' }}
                 </button>
               </td>
             </tr>
@@ -429,6 +445,33 @@ const TYPE_OPTIONS: Array<{ value: string; label: string }> = [
         color: #334155;
       }
 
+      .actions-cell {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+
+      .btn-reprocesar {
+        background: #dbeafe;
+        color: #1d4ed8;
+      }
+
+      .btn-reprocesar:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      .btn-eliminar {
+        background: #fee2e2;
+        color: #b91c1c;
+      }
+
+      .btn-eliminar:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
       .section-head {
         display: flex;
         justify-content: space-between;
@@ -514,6 +557,8 @@ export class DocumentsListPage implements OnInit {
   readonly page = signal(1);
   readonly hasMore = signal(false);
   readonly pageSize = 20;
+  readonly reprocesando = signal<Record<string, boolean>>({});
+  readonly eliminando = signal<Record<string, boolean>>({});
 
   searchTerm = '';
   selectedStatus = '';
@@ -586,6 +631,46 @@ export class DocumentsListPage implements OnInit {
   cerrarDetalle(): void {
     this.documentoSeleccionado.set(null);
     this.detalleDocumento.set(null);
+  }
+
+  reprocesarDocumento(id: string, event: Event): void {
+    event.stopPropagation();
+    if (this.reprocesando()[id]) return;
+    this.reprocesando.update((r) => ({ ...r, [id]: true }));
+    this.documentsService.reprocess(id).subscribe({
+      next: () => {
+        this.reprocesando.update((r) => ({ ...r, [id]: false }));
+        this.fetchDocuments();
+        if (this.documentoSeleccionado()?.id === id) {
+          this.detalleDocumento.set(null);
+        }
+      },
+      error: () => {
+        this.reprocesando.update((r) => ({ ...r, [id]: false }));
+        alert('No se pudo reprocesar el documento. Intenta de nuevo.');
+      }
+    });
+  }
+
+  eliminarDocumento(id: string, event: Event): void {
+    event.stopPropagation();
+    if (this.eliminando()[id]) return;
+    if (!confirm('¿Eliminar este documento? Esta acción no se puede deshacer.')) return;
+    this.eliminando.update((r) => ({ ...r, [id]: true }));
+    this.documentsService.delete(id).subscribe({
+      next: () => {
+        this.eliminando.update((r) => ({ ...r, [id]: false }));
+        if (this.documentoSeleccionado()?.id === id) {
+          this.documentoSeleccionado.set(null);
+          this.detalleDocumento.set(null);
+        }
+        this.fetchDocuments();
+      },
+      error: () => {
+        this.eliminando.update((r) => ({ ...r, [id]: false }));
+        alert('No se pudo eliminar el documento. Intenta de nuevo.');
+      }
+    });
   }
 
   typeLabel(type: DocumentSummary['document_type']): string {
