@@ -103,7 +103,7 @@ def extract_tables_from_ocr_boxes(
         text = str(box.get("text", "") or "").strip()
         if not text:
             continue
-        rect = _bbox_to_rect(box.get("bbox", []))
+        rect = _bbox_to_rect(box.get("bbox") or box.get("rect") or [])
         if rect is None:
             continue
         x1, y1, x2, y2 = rect

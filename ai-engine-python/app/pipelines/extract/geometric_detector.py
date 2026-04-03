@@ -133,16 +133,51 @@ class KeyValuePair:
 # ─── Utilidades internas ──────────────────────────────────────────────────────
 
 def _safe_rect(box: dict) -> tuple[float, float, float, float] | None:
+    """
+    Extrae (x1, y1, x2, y2) de un OCR box.
+
+    Soporta TODOS los formatos de salida de los motores OCR del sistema:
+      - PaddleOCR / RapidOCR: bbox = [[x1,y1],[x2,y1],[x2,y2],[x1,y2]] (polígono)
+      - text_layer / pdfplumber: rect = [x1, y1, x2, y2] (flat)
+      - img2table fill:  rect = [x1, y1, x2, y2] (flat)
+    """
+    # 1. Intentar campo 'rect' primero (formato flat nativo)
     rect = box.get("rect")
-    if not isinstance(rect, (list, tuple)) or len(rect) < 4:
-        return None
-    try:
-        x1, y1, x2, y2 = float(rect[0]), float(rect[1]), float(rect[2]), float(rect[3])
-        if x2 < x1: x1, x2 = x2, x1
-        if y2 < y1: y1, y2 = y2, y1
-        return x1, y1, x2, y2
-    except (TypeError, ValueError):
-        return None
+    if isinstance(rect, (list, tuple)) and len(rect) >= 4:
+        try:
+            vals = rect[:4]
+            # ¿Es flat [x1,y1,x2,y2]?
+            if not isinstance(vals[0], (list, tuple)):
+                x1, y1, x2, y2 = (float(v) for v in vals)
+                if x2 < x1: x1, x2 = x2, x1
+                if y2 < y1: y1, y2 = y2, y1
+                return x1, y1, x2, y2
+            # ¿Es polígono [[x,y], ...]?
+            xs = [float(p[0]) for p in vals]
+            ys = [float(p[1]) for p in vals]
+            return min(xs), min(ys), max(xs), max(ys)
+        except (TypeError, ValueError, IndexError):
+            pass
+
+    # 2. Intentar campo 'bbox' (RapidOCR / PaddleOCR: polígono o flat)
+    bbox = box.get("bbox")
+    if isinstance(bbox, (list, tuple)) and len(bbox) >= 2:
+        try:
+            # Polígono: [[x,y], [x,y], ...]
+            if isinstance(bbox[0], (list, tuple)):
+                xs = [float(p[0]) for p in bbox]
+                ys = [float(p[1]) for p in bbox]
+                return min(xs), min(ys), max(xs), max(ys)
+            # Flat: [x1, y1, x2, y2]
+            if len(bbox) >= 4:
+                x1, y1, x2, y2 = (float(v) for v in bbox[:4])
+                if x2 < x1: x1, x2 = x2, x1
+                if y2 < y1: y1, y2 = y2, y1
+                return x1, y1, x2, y2
+        except (TypeError, ValueError, IndexError):
+            pass
+
+    return None
 
 
 def _median(values: list[float]) -> float:

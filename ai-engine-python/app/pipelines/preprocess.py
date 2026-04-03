@@ -246,16 +246,22 @@ def fill_grid_tables_from_ocr_boxes(
 
     box_data: list[tuple[float, float, str]] = []
     for box in ocr_boxes:
-        bbox = box.get("bbox")
         text = str(box.get("text", "")).strip()
-        if not text or not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
+        if not text:
             continue
-        if isinstance(bbox[0], (list, tuple)):
-            xs = [p[0] for p in bbox]
-            ys = [p[1] for p in bbox]
-        else:
-            xs = [bbox[0], bbox[2]]
-            ys = [bbox[1], bbox[3]]
+        # Soportar bbox (polígono/flat RapidOCR/PaddleOCR) y rect (flat text-layer)
+        raw = box.get("bbox") or box.get("rect")
+        if not isinstance(raw, (list, tuple)) or len(raw) < 2:
+            continue
+        try:
+            if isinstance(raw[0], (list, tuple)):
+                xs = [float(p[0]) for p in raw]
+                ys = [float(p[1]) for p in raw]
+            else:
+                xs = [float(raw[0]), float(raw[2] if len(raw) > 2 else raw[0])]
+                ys = [float(raw[1]), float(raw[3] if len(raw) > 3 else raw[1])]
+        except (TypeError, ValueError, IndexError):
+            continue
         cx = sum(xs) / len(xs)
         cy = sum(ys) / len(ys)
         box_data.append((cx, cy, text))

@@ -816,16 +816,46 @@ def _label_match(line_text: str, label: str) -> bool:
 
 
 def _bbox_to_rect(bbox):
+    """Convierte bbox (polígono o flat) a (x1, y1, x2, y2)."""
     if not bbox:
         return None
-    xs = [point[0] for point in bbox]
-    ys = [point[1] for point in bbox]
-    return min(xs), min(ys), max(xs), max(ys)
+    try:
+        if isinstance(bbox[0], (list, tuple)):
+            # Polígono: [[x,y], ...]
+            xs = [float(p[0]) for p in bbox]
+            ys = [float(p[1]) for p in bbox]
+            return min(xs), min(ys), max(xs), max(ys)
+        if len(bbox) >= 4:
+            # Flat: [x1, y1, x2, y2]
+            x1, y1, x2, y2 = float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])
+            if x2 < x1: x1, x2 = x2, x1
+            if y2 < y1: y1, y2 = y2, y1
+            return x1, y1, x2, y2
+    except (TypeError, ValueError, IndexError):
+        pass
+    return None
 
 
 def _boxes_with_rect(ocr_boxes):
+    """
+    Normaliza OCR boxes a formato con campo 'rect' = (x1, y1, x2, y2).
+
+    Soporta todos los motores:
+      - RapidOCR/PaddleOCR: bbox = [[x,y],[x,y],[x,y],[x,y]] (polígono)
+      - text-layer/pdfplumber: rect = [x1, y1, x2, y2] (flat)
+    """
     boxed = []
     for box in ocr_boxes or []:
+        # Priorizar rect si ya existe y es válido (text-layer)
+        existing = box.get("rect")
+        if isinstance(existing, (list, tuple)) and len(existing) >= 4:
+            try:
+                x1, y1, x2, y2 = (float(v) for v in existing[:4])
+                boxed.append({**box, "rect": (x1, y1, x2, y2)})
+                continue
+            except (TypeError, ValueError):
+                pass
+        # Convertir bbox (RapidOCR/PaddleOCR)
         rect = _bbox_to_rect(box.get("bbox", []))
         if rect is None:
             continue
