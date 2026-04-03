@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 class FieldSource(BaseModel):
     page: int
@@ -8,11 +8,19 @@ class FieldSource(BaseModel):
 class DocumentField(BaseModel):
     key: str
     label: str
-    value: Optional[str]
+    value: Optional[Any] = None
     confidence: float
     valid: bool
     validation_errors: List[str] = Field(default_factory=list)
     source: Optional[FieldSource] = None
+
+class ExtractedTable(BaseModel):
+    """Tabla estructurada extraída del documento."""
+    columns: List[str]
+    rows: List[Dict[str, Any]]
+    quality: float = 0.0
+    row_count: int = 0
+    doc_type_hint: Optional[str] = None
 
 class ProcessMeta(BaseModel):
     pages_processed: int
@@ -20,6 +28,7 @@ class ProcessMeta(BaseModel):
     pipeline_version: str
     model_version: str
     processing_ms: int
+    tables_found: int = 0
 
 class ProcessResponse(BaseModel):
     document_id: str
@@ -27,6 +36,7 @@ class ProcessResponse(BaseModel):
     document_type: str
     confidence: float
     fields: List[DocumentField]
+    tables: List[ExtractedTable] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
     errors: List[str] = Field(default_factory=list)
     meta: ProcessMeta

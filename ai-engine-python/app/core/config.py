@@ -36,7 +36,7 @@ class Settings(BaseModel):
     enable_text_layer_short_circuit: bool = _env_bool("ENABLE_TEXT_LAYER_SHORT_CIRCUIT", True)
     text_layer_fastpath_types: list[str] = _env_csv_upper(
         "TEXT_LAYER_FASTPATH_TYPES",
-        "INE,CURP,ACTA_NACIMIENTO,COMPROBANTE_DOMICILIO,NSS,DATOS_BANCARIOS,FACTURA,CONSTANCIA_SITUACION_FISCAL",
+        "INE,CURP,ACTA_NACIMIENTO,COMPROBANTE_DOMICILIO,NSS,DATOS_BANCARIOS,FACTURA,NOMINA,CONSTANCIA_SITUACION_FISCAL",
     )
     llm_fallback_enabled: bool = _env_bool("LLM_FALLBACK_ENABLED", False)
     anthropic_api_key: str | None = os.getenv("ANTHROPIC_API_KEY")
@@ -55,5 +55,8 @@ class Settings(BaseModel):
     required_python_max_exclusive: str = os.getenv("REQUIRED_PYTHON_MAX_EXCLUSIVE", "3.13")
     require_ocr_backend: bool = _env_bool("REQUIRE_OCR_BACKEND", True)
     acta_sanity_guards_enabled: bool = _env_bool("ACTA_SANITY_GUARDS_ENABLED", True)
+    # Ruta base permitida para el endpoint /diagnostics/audit-folder.
+    # Peticiones con folder_path fuera de este directorio son rechazadas.
+    audit_base_path: str = os.getenv("AUDIT_BASE_PATH", "storage")
 
 settings = Settings()

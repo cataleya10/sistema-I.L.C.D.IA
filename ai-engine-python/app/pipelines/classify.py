@@ -153,6 +153,43 @@ def _rule_matches(rule: _Rule, text: str, compact: str, name: str) -> bool:
 _BANK_NAMES = (
     "BBVA", "BANAMEX", "BANCOMER", "SANTANDER", "SCOTIABANK", "HSBC", "BANORTE",
 )
+
+_NOMINA_TEXT = (
+    "RECIBO DE NOMINA",
+    "RECIBO DE PAGO DE NOMINA",
+    "COMPROBANTE DE NOMINA",
+    "COMPROBANTE DE PAGO DE NOMINA",
+    "DESGLOSE DE NOMINA",
+    "TOTAL PERCEPCIONES",
+    "TOTAL DEDUCCIONES",
+    "NETO A PAGAR",
+    "NETO PAGAR",
+    "SUELDO BASE",
+    "SUELDO DIARIO",
+    "DIAS TRABAJADOS",
+    "DIAS HABILES",
+    "INFONAVIT",
+    "FONACOT",
+    "QUINCENA",
+)
+_NOMINA_COMPACT = (
+    "RECIBODENOMINA",
+    "RECIBODEPAGODEDOMINA",
+    "COMPROBANTEDENOMINA",
+    "TOTALPERCEPCIONES",
+    "TOTALDEDUCCIONES",
+    "NETOAPAGAR",
+    "NETOPAGAR",
+    "SUELDOBASE",
+    "SUELDOMENSUAL",
+    "DIASTRABAJOS",
+    "INFONAVIT",
+    "FONACOT",
+)
+_NOMINA_FILENAME = (
+    "RECIBO DE NOMINA", "RECIBO NOMINA", "RECIBODENOMINA",
+    "COMPROBANTE PAGO NOMINA", "COMPROBANTE NOMINA",
+)
 _DISPERSION_FILENAME = (
     "DISPERSION", "ARCHIVO DE PAGOS", "REPORTE DE TRANSMISION", "REPORTE TRANSMISION",
 )
@@ -175,6 +212,15 @@ _DISPERSION_TEXT = (
     "RESULTADO DE ARCHIVO DE PAGOS",
     "REPORTE DE DISPERSION",
     "REPORTE DE TRANSMISION",
+    # Scotiabank: "Transferencia de Archivos" / "Transferencia de Archivo de Pagos"
+    "TRANSFERENCIA DE ARCHIVOS",
+    "TRANSFERENCIA DE ARCHIVO DE PAGOS",
+    "TRANSFERENCIA DE ARCHIVO DE PAGO",
+    # Banorte / genérico
+    "PAGO DE NOMINA MASIVO",
+    "PAGO MASIVO",
+    "LAYOUT DE PAGOS",
+    "LAYOUT DE DISPERSION",
 )
 _DISPERSION_COMPACT = (
     "REPORTEDETRANSMISIONDEARCHIVODEPAGOS",
@@ -186,6 +232,15 @@ _DISPERSION_COMPACT = (
     "RESULTADODEARCHIVODEPAGOS",
     "REPORTEDEDISPERSION",
     "REPORTEDETRANSMISION",
+    # Scotiabank
+    "TRANSFERENCIADEARCHIVOS",
+    "TRANSFERENCIADEARCHIVODEPAGOS",
+    "TRANSFERENCIADEARCHIVODEPAGO",
+    # Genérico
+    "PAGONOMASIVOMASIVO",
+    "PAGOMASIVO",
+    "LAYOUTDEPAGOS",
+    "LAYOUTDEDISPERSION",
 )
 _PAYMENT_TEXT = (
     "PAGO DE NOMINA",
@@ -361,6 +416,7 @@ _RULES: list[_Rule] = [
     )),
 
     # ── Filename rules (alta precisión) ───────────────────────────────────────
+    _Rule("NOMINA",                    0.92, name_any=_NOMINA_FILENAME),
     _Rule("INE",                       0.90, name_any=("INE", "ELECTOR")),
     _Rule("ACTA_NACIMIENTO",           0.88, name_any=("ACTA", "NACIMIENTO")),
     _Rule("CURP",                      0.90, name_any=("CURP",)),
@@ -403,6 +459,9 @@ _RULES: list[_Rule] = [
         "ACTADENACIMIENTO",
         "REGISTROCIVIL",
     )),
+
+    # ── Contenido: nómina (antes de FACTURA para evitar falsos positivos) ────────
+    _Rule("NOMINA", 0.90, text_any=_NOMINA_TEXT, compact_any=_NOMINA_COMPACT),
 
     # ── Contenido: documentos bancarios y fiscales ────────────────────────────
     _Rule("DATOS_BANCARIOS", 0.92, text_any=_DISPERSION_TEXT, compact_any=_DISPERSION_COMPACT),
@@ -461,6 +520,16 @@ _HARD_MARKERS: dict[str, list[str]] = {
         "ARCHIVO DE PAGOS", "REPORTE DE DISPERSION",
         "REPORTEDETRANSMISIONDEARCHIVODEPAGOS",
         "DISPERSIONDENOMINA", "ARCHIVODEPAGOS",
+        # Scotiabank
+        "TRANSFERENCIA DE ARCHIVOS", "TRANSFERENCIADEARCHIVOS",
+        "TRANSFERENCIA DE ARCHIVO DE PAGOS",
+    ],
+    "NOMINA": [
+        "RECIBO DE NOMINA", "COMPROBANTE DE NOMINA", "TOTAL PERCEPCIONES",
+        "TOTAL DEDUCCIONES", "NETO A PAGAR", "NETO PAGAR",
+        "SUELDO BASE", "DIAS TRABAJADOS", "INFONAVIT",
+        "RECIBODENOMINA", "TOTALPERCEPCIONES", "TOTALDEDUCCIONES",
+        "NETOAPAGAR", "SUELDOBASE", "INFONAVIT",
     ],
     "FACTURA": [
         "PAGO DE NOMINA", "DISPERSION DE NOMINA", "TRANSFERENCIA SPEI", "SPEI",

@@ -1,5 +1,7 @@
 import json
+import os
 import secrets
+from pathlib import Path
 
 from fastapi import APIRouter, UploadFile, File, Form, Header, HTTPException, Depends, Query, Response
 from app.schemas.process import ProcessResponse
@@ -23,6 +25,8 @@ async def verify_api_key(x_api_key: str | None = Header(None, alias="X-Api-Key")
         if not x_api_key or not secrets.compare_digest(x_api_key, settings.api_key):
             raise HTTPException(status_code=401, detail="Invalid API key")
 
+_DOCUMENT_ID_RE = __import__("re").compile(r"^[a-zA-Z0-9_\-]{1,64}$")
+
 @router.post("/process-document", dependencies=[Depends(verify_api_key)])
 async def process_document_endpoint(
     file: UploadFile = File(...),
@@ -31,8 +35,18 @@ async def process_document_endpoint(
     options: str | None = Form(None),
     original_filename: str | None = Form(None),
 ) -> ProcessResponse:
+    # Validar document_id: solo alfanumérico + guiones, máx 64 chars
+    if not _DOCUMENT_ID_RE.match(document_id):
+        raise HTTPException(status_code=422, detail="document_id inválido: solo letras, números, guiones y guiones bajos (máx 64 chars)")
+    # Validar options: debe ser JSON válido si se proporciona
+    if options is not None:
+        if len(options) > 2048:
+            raise HTTPException(status_code=422, detail="options excede el tamaño permitido (máx 2048 chars)")
+        try:
+            json.loads(options)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=422, detail="options debe ser JSON válido")
     # Use original filename from .NET so filename-based classification works
-    # (file.filename arrives as a temp path like a GUID otherwise)
     if original_filename:
         file.filename = original_filename
     payload = await process_document(file, document_id=document_id, source=source, options=options)
@@ -41,9 +55,20 @@ async def process_document_endpoint(
 
 @router.post("/diagnostics/audit-folder", dependencies=[Depends(verify_api_key)], response_model=AuditFolderResponse)
 async def audit_folder_endpoint(payload: AuditFolderRequest):
+    # Path traversal guard: folder_path must stay inside AUDIT_BASE_PATH.
+    base = Path(settings.audit_base_path).resolve()
+    req = Path(payload.folder_path)
+    target = req if req.is_absolute() else (base / req)
+    try:
+        target = target.resolve()
+        target.relative_to(base)  # raises ValueError if outside base
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Acceso denegado: ruta fuera del directorio permitido")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Ruta inválida")
     try:
         return await run_audit_folder(
-            payload.folder_path,
+            str(target),
             recurse=payload.recurse,
             limit=payload.limit,
             issues_only=payload.issues_only,

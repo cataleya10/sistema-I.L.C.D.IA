@@ -72,8 +72,9 @@ if _cors_origins:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type", "X-Api-Key", "X-Correlation-Id", "Authorization"],
+        allow_credentials=False,
     )
 
 # ---------------------------------------------------------------------------
@@ -174,6 +175,15 @@ async def validate_runtime_security():
         weak = (not api_key) or ("CHANGE_ME" in api_key.upper()) or (len(api_key) < 24)
         if weak:
             raise RuntimeError("API_KEY insegura o no definida para APP_ENV=production.")
+
+        # Si LLM fallback está activo en producción, la API key de Anthropic es obligatoria
+        llm_enabled = str(settings.llm_fallback_enabled).lower() in {"1", "true", "yes"}
+        if llm_enabled:
+            anthropic_key = (settings.anthropic_api_key or "").strip()
+            if not anthropic_key or "CHANGE_ME" in anthropic_key.upper():
+                raise RuntimeError(
+                    "LLM_FALLBACK_ENABLED=true pero ANTHROPIC_API_KEY no está definida o es inválida."
+                )
     elif not (settings.api_key or "").strip():
         logger.warning("API_KEY is empty — all endpoints are unprotected. Set API_KEY env var.")
 
@@ -192,3 +202,15 @@ async def _preload_ocr_models():
 
 
 app.include_router(router)
+
+# ---------------------------------------------------------------------------
+# Prometheus metrics — endpoint protegido por API key
+# Expone métricas de proceso (CPU, memoria, threads, GC) en formato estándar.
+# Consumible por Prometheus/Grafana: GET /internal/metrics
+# ---------------------------------------------------------------------------
+from app.api.routes import verify_api_key as _verify_api_key  # noqa: E402
+
+@app.get("/internal/metrics", include_in_schema=False, dependencies=[__import__("fastapi").Depends(_verify_api_key)])
+async def prometheus_metrics_endpoint():
+    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)

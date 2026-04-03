@@ -1690,11 +1690,13 @@ def _extract_scotia_transfer_rows_impl(lines: list[str]) -> list[list[str]]:
         joined = " ".join(block)
         amount_match = re.search(r"\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})", joined)
         date_match = re.search(r"\b\d{2}/\d{2}/\d{4}\b", joined)
-        clave_match = re.search(r"\b[A-Z]\d{2,6}\b", joined)
-        cuenta_match = re.search(r"\b\d{18,24}\b", joined)
-        concepto_match = re.search(r"\bPAG[O0]\s*0?\d{1,4}\b", joined)
+        clave_match = re.search(r"\b[A-Z0-9]\d{2,10}\b", joined)
+        # Soporte para cuentas de 10+ dígitos (no solo CLABE de 18-24)
+        cuenta_match = re.search(r"\b\d{10,24}\b", joined)
+        concepto_match = re.search(r"\bPAG[O0]\s*0?\d{1,4}\b|\bPAGO\b", joined)
         movimiento_match = re.search(r"\b\d{2}\s+ABONO\s+EN\s+CUENTA\b", joined)
-        referencia_match = re.search(r"\b([0-9OIL]{1,8})\b(?=\s+\d{18,24})", joined)
+        # Referencia: ya no requiere CLABE de 18 dígitos después
+        referencia_match = re.search(r"\b([0-9OIL]{1,12})\b(?=\s+\d{10,24})", joined)
 
         cuenta = cuenta_match.group(0) if cuenta_match else ""
         banco = ""
@@ -1735,11 +1737,11 @@ def _extract_scotia_transfer_rows_impl(lines: list[str]) -> list[list[str]]:
                 continue
             if re.fullmatch(r"\d{1,3}", candidate):
                 continue
-            if re.fullmatch(r"\d{18,24}(?:\s+\d{1,2})?(?:\s+\d)?", candidate):
+            if re.fullmatch(r"\d{10,24}(?:\s+\d{1,2})?(?:\s+\d)?", candidate):
                 continue
             if re.search(r"\$", candidate) or re.search(r"\d{2}/\d{2}/\d{4}", candidate):
                 continue
-            if re.fullmatch(r"[A-Z]\d{2,6}", candidate):
+            if re.fullmatch(r"[A-Z0-9]\d{2,10}", candidate):
                 continue
             if re.fullmatch(r"PAG[O0]\d{1,4}", candidate):
                 continue
@@ -1765,9 +1767,12 @@ def _extract_scotia_transfer_rows_impl(lines: list[str]) -> list[list[str]]:
             vigencia,
             _normalize_table_cell(concepto_match.group(0) if concepto_match else ""),
         ]
-        # Dedup key includes importe + clave + cuenta + concepto for precision
+        # Dedup key includes importe + clave + cuenta + concepto para precisión.
+        # La condición acepta filas aunque cuenta esté vacía, siempre que haya
+        # importe o fecha o concepto (soporta cuentas de 10 dígitos y formatos
+        # Scotiabank sin CLABE de 18 dígitos).
         dedup_key = (row[2], row[4], row[7], row[10])
-        if row[7] and (row[2] or row[3] or row[10]) and dedup_key not in seen_keys:
+        if (row[7] or row[2] or row[3]) and (row[2] or row[3] or row[10]) and dedup_key not in seen_keys:
             seen_keys.add(dedup_key)
             rows.append(row)
         i = j
@@ -3173,6 +3178,35 @@ def _extract_payment_table_rows_from_pdf_tables_impl(pdf_tables: list[list[list[
     if not cleaned_tables:
         return [], []
 
+    # Step 1b: split tables at internal payment headers (e.g. Scotiabank, BBVA)
+    # Some PDFs merge multiple logical tables into one — detect internal header rows
+    # that score better than the current header and split there.
+    def _row_payment_score(row: list[str]) -> int:
+        """Score a single row as a potential payment table header."""
+        joined = " ".join(str(c or "").upper() for c in row)
+        return sum(1 for tok in _PAYMENT_TABLE_HEADER_TOKENS if tok in joined)
+
+    split_tables: list[list[list[str]]] = []
+    for tbl in cleaned_tables:
+        if len(tbl) < 3:
+            split_tables.append(tbl)
+            continue
+        first_score = _row_payment_score(tbl[0])
+        split_points = [0]
+        for i in range(1, len(tbl) - 1):
+            row_score = _row_payment_score(tbl[i])
+            if row_score > first_score and row_score >= 3:
+                split_points.append(i)
+        if len(split_points) == 1:
+            split_tables.append(tbl)
+        else:
+            for k, start in enumerate(split_points):
+                end = split_points[k + 1] if k + 1 < len(split_points) else len(tbl)
+                sub = tbl[start:end]
+                if len(sub) >= 2:
+                    split_tables.append(sub)
+    cleaned_tables = split_tables
+
     # Step 2: group tables with identical header structure (multi-page merge)
     def _header_sig(header: list[str]) -> str:
         return "|".join(_normalize_keyword(h).lower() for h in header)
@@ -3352,18 +3386,13 @@ def _extract_payment_table_payload_impl(base_text_raw: str, ocr_boxes, pdf_table
         elif source == "text_lines":
             rows = _merge_payment_rows_with_backup(rows, rows_ocr)
         elif source == "pdf_structure":
-            # PDF structural tables are authoritative; only merge backup when
-            # column count matches to avoid corrupting table structure.
+            # PDF structural tables are authoritative; merge backup para rellenar
+            # celdas vacías. El merge es semántico (por nombre de columna) por lo
+            # que funciona aunque el conteo de columnas difiera (p.ej. Scotiabank
+            # PDF = 9 cols, extractor de texto = 11 cols).
             backup = rows_ocr if len(rows_ocr) >= 2 else rows_text
-            pdf_cols = len(rows[0]) if rows else 0
-            backup_cols = len(backup[0]) if backup else 0
-            if len(backup) >= 2 and pdf_cols > 0 and backup_cols == pdf_cols:
+            if len(backup) >= 2 and rows:
                 rows = _merge_payment_rows_with_backup(rows, backup)
-            elif len(backup) >= 2 and pdf_cols > 0 and backup_cols != pdf_cols:
-                logger.debug(
-                    "Skipping backup merge: pdf_cols=%d backup_cols=%d (incompatible)",
-                    pdf_cols, backup_cols,
-                )
         else:
             rows = _merge_payment_rows_with_backup(rows, rows_ocr)
 
@@ -3689,25 +3718,45 @@ def _enrich_payment_table_payload_impl(
 
         # Build a clean table view for advanced payroll exports so column order
         # matches the source PDF and ghost/composite headers are hidden.
-        nomina_required = {
+        # Check uses post-remap column names (nombre_beneficiario, cuenta_beneficiario)
+        # OR pre-remap names (nombre, cuenta) to support both paths.
+        nomina_required_remapped = {
+            "nombre_beneficiario", "cuenta_beneficiario", "referencia", "importe", "concepto_pago",
+        }
+        nomina_required_raw = {
             "cuenta", "referencia", "importe", "nombre",
             "apellido_paterno", "apellido_materno", "estatus", "concepto_pago",
         }
-        if canonical_columns_clean and canonical_rows_clean and nomina_required.issubset(set(canonical_columns_clean)):
-            preferred_order = [
-                "cuenta",
-                "referencia",
-                "importe",
-                "nombre",
-                "apellido_paterno",
-                "apellido_materno",
-                "estatus",
-                "concepto_pago",
-            ]
+        _cols_set = set(canonical_columns_clean)
+        _use_remapped = nomina_required_remapped.issubset(_cols_set)
+        _use_raw = nomina_required_raw.issubset(_cols_set)
+        if canonical_columns_clean and canonical_rows_clean and (_use_remapped or _use_raw):
+            if _use_remapped:
+                preferred_order = [
+                    "nombre_beneficiario",
+                    "cuenta_beneficiario",
+                    "referencia",
+                    "importe",
+                    "estatus",
+                    "concepto_pago",
+                ]
+            else:
+                preferred_order = [
+                    "cuenta",
+                    "referencia",
+                    "importe",
+                    "nombre",
+                    "apellido_paterno",
+                    "apellido_materno",
+                    "estatus",
+                    "concepto_pago",
+                ]
             ordered_cols = [col for col in preferred_order if col in canonical_columns_clean]
             ordered_cols.extend([col for col in canonical_columns_clean if col not in ordered_cols])
 
             label_fallback = {
+                "nombre_beneficiario": "Nombre",
+                "cuenta_beneficiario": "Cuenta",
                 "cuenta": "Cuenta",
                 "referencia": "REFERENCIA",
                 "importe": "IMPORTE",
@@ -4882,6 +4931,425 @@ def _extract_santander_payment_metadata(raw_text: str) -> dict[str, str]:
     return out
 
 
+def _fix_bbva_canonical_rows(canonical_rows: list[dict], text: str) -> None:
+    """Fix BBVA rows. Handles two BBVA comprobante formats:
+
+    Format A — Pagar Nómina (multi-beneficiary):
+      Has "Detalle de Operaciones" section with rows:
+      <seq> <cuenta_abono> $<importe> <NOMBRE> OP ABONO OK
+
+    Format B — Traspaso a otros bancos / individual SPEI:
+      Has labeled fields: "Nombre: ...", "Cuenta de depósito: ...", "Importe: ..."
+      No "Detalle de Operaciones". Often produces duplicate rows from the pipeline.
+
+    In both cases we also deduplicate identical rows.
+    """
+    import re as _re
+
+    schema_keys = list(canonical_rows[0].keys()) if canonical_rows else [
+        "nombre_beneficiario", "cuenta_beneficiario", "importe", "concepto_pago"
+    ]
+
+    new_rows: list[dict] = []
+
+    # --- Format A: Detalle de Operaciones ---
+    detalle_start = _re.search(r"Detalle de Operaciones", text, _re.IGNORECASE)
+    if detalle_start:
+        detalle_text = text[detalle_start.start():]
+        # Row: <seq>  <cuenta 10-18d>  $<importe>  <NOMBRE>  [OP] ABONO
+        row_pat = _re.compile(
+            r"(\d{1,3})\s+(\d{10,18})\s+\$?([\d,]+\.?\d*)\s+"
+            r"([A-ZÁÉÍÓÚÜÑA-Za-záéíóúüñ][A-ZÁÉÍÓÚÜÑA-Za-záéíóúüñ\s]{2,60}?)\s+"
+            r"(?:OP\s+)?ABONO",
+            _re.IGNORECASE,
+        )
+        for m in row_pat.finditer(detalle_text):
+            nombre = m.group(4).strip().upper()
+            cuenta = m.group(2).strip()
+            importe = m.group(3).strip().replace(",", "")
+            row: dict = {k: "" for k in schema_keys}
+            row["nombre_beneficiario"] = nombre
+            row["cuenta_beneficiario"] = cuenta
+            row["importe"] = importe
+            new_rows.append(row)
+
+    # --- Format B: labeled individual traspaso / SPEI ---
+    # Only if Format A found nothing
+    # --- Format C: BBVA Net Cash "Pago Mismo Banco" (multi-page, one beneficiary per page) ---
+    # Each page: "Cuenta de depósito: ACCOUNT" and
+    # "Titular de la cuenta: SENDER  Titular de la cuenta: BENEFICIARY"
+    if not new_rows:
+        is_net_cash = bool(_re.search(r"Pago Mismo Banco|Grupo Pago|Net Cash", text, _re.IGNORECASE))
+        if is_net_cash:
+            # Extract all accounts and beneficiary names (titulares pair per page)
+            cuentas = [m.group(1) for m in _re.finditer(r"Cuenta de dep[oó]sito:\s*(\d{7,18})", text, _re.IGNORECASE)]
+            # "Titular de la cuenta: SENDER  Titular de la cuenta: BENEFICIARY"
+            # Find all "Titular de la cuenta: NAME" matches — odd-indexed = beneficiary
+            titulares = [m.group(1).strip() for m in _re.finditer(
+                r"Titular de la cuenta:\s*([A-ZÁÉÍÓÚÜÑA-Za-záéíóúüñ][^\n]+?)(?=\s+Titular|\n|$)",
+                text, _re.IGNORECASE,
+            )]
+            importes = [m.group(1) for m in _re.finditer(
+                r"Importe:\s*([\d,]+\.?\d*)", text, _re.IGNORECASE
+            )]
+            motivos = [m.group(1) for m in _re.finditer(
+                r"Motivo de pago:\s*(.+?)(?:\n|$)", text, _re.IGNORECASE
+            )]
+            # Titulares come in pairs (sender, beneficiary) — pick even indices (0,2,4...) as beneficiaries
+            # because on each text line: "Titular...SENDER  Titular...BENEFICIARY"
+            # The regex above returns: [SENDER, BENEFICIARY, SENDER, BENEFICIARY, ...]
+            beneficiarios = titulares[1::2]  # every 2nd one starting from index 1
+            for i, nombre in enumerate(beneficiarios):
+                row = {k: "" for k in schema_keys}
+                row["nombre_beneficiario"] = nombre.strip().upper()
+                if i < len(cuentas):
+                    row["cuenta_beneficiario"] = cuentas[i]
+                if i < len(importes):
+                    row["importe"] = importes[i].replace(",", "")
+                if i < len(motivos):
+                    row["concepto_pago"] = motivos[i].strip().upper()
+                new_rows.append(row)
+
+    # --- Format B: individual traspaso / SPEI ---
+    if not new_rows:
+        nombre_m = _re.search(r"Nombre:\s*([A-ZÁÉÍÓÚÜÑA-Za-záéíóúüñ][^\n]{2,60}?)(?:\n|$)", text, _re.IGNORECASE)
+        cuenta_m = _re.search(r"Cuenta de dep[oó]sito:\s*(\d{10,18})", text, _re.IGNORECASE)
+        importe_m = _re.search(r"Importe:\s*\$?\s*([\d,]+\.?\d*)", text, _re.IGNORECASE)
+        concepto_m = _re.search(r"Concepto de pago:\s*(.+?)(?:\n|$)", text, _re.IGNORECASE)
+        referencia_m = _re.search(r"Clave de rastreo:\s*(\S+)", text, _re.IGNORECASE)
+
+        if nombre_m:
+            row = {k: "" for k in schema_keys}
+            row["nombre_beneficiario"] = nombre_m.group(1).strip().upper()
+            if cuenta_m:
+                row["cuenta_beneficiario"] = cuenta_m.group(1).strip()
+            if importe_m:
+                row["importe"] = importe_m.group(1).strip().replace(",", "")
+            if concepto_m:
+                row["concepto_pago"] = concepto_m.group(1).strip().upper()
+            if referencia_m and "referencia" in schema_keys:
+                row["referencia"] = referencia_m.group(1).strip()
+            new_rows.append(row)
+
+    # --- Deduplicate and replace ---
+    if new_rows:
+        seen: set = set()
+        deduped: list[dict] = []
+        for r in new_rows:
+            key = (r.get("cuenta_beneficiario", ""), r.get("importe", ""), r.get("nombre_beneficiario", ""))
+            if key not in seen:
+                seen.add(key)
+                deduped.append(r)
+        canonical_rows.clear()
+        canonical_rows.extend(deduped)
+        logger.debug("BBVA fixup: %d rows (format %s)", len(deduped), "A" if detalle_start else "B")
+    else:
+        # Even if no fixup, deduplicate whatever the pipeline extracted
+        seen = set()
+        deduped = []
+        for r in canonical_rows:
+            key = (r.get("cuenta_beneficiario", ""), r.get("importe", ""), r.get("nombre_beneficiario", ""))
+            if key not in seen:
+                seen.add(key)
+                deduped.append(r)
+        if len(deduped) < len(canonical_rows):
+            canonical_rows.clear()
+            canonical_rows.extend(deduped)
+            logger.debug("BBVA fixup: deduplicated to %d rows", len(deduped))
+
+
+def _fix_banorte_canonical_rows(canonical_rows: list[dict], text: str) -> None:
+    """Fix Banorte rows where the text extractor loses importe/cuenta columns.
+
+    Banorte 'Reporte de Transmisión' has a compact table in the PDF but the raw
+    text collapses headers: "No. EmpleadoNombre Tipo CuentaNo. de Cuenta Importe..."
+    causing wrong column alignment. We re-extract from text using a regex that
+    knows the Banorte row structure:
+      <10d_empleado> <NOMBRE> <tipo_2d> <18d_cuenta> $<importe> <APLICADO|ACEPTADO>
+
+    Also removes footer text rows (e.g. 'clave_beneficiario'='Operación real').
+    """
+    import re as _re
+
+    # Detect if rows have footer text (sign of bad text extraction)
+    bad_keys = {"operación real", "ciudad de méxi", "para el caso de", "lapso no may", "monterrey"}
+    has_bad = any(
+        str(r.get("clave_beneficiario") or "").lower()[:14] in bad_keys
+        for r in canonical_rows
+    )
+
+    schema_keys = list(canonical_rows[0].keys()) if canonical_rows else [
+        "clave_beneficiario", "nombre_beneficiario", "cuenta_beneficiario", "importe", "referencia", "concepto_pago"
+    ]
+
+    # Banorte row in raw text:
+    # 0000000001 ANTONIO USCANGA CRUZ 01 000000001098769154$1,940.42APLICADO 00 ACEPTADO [CLAVERASTREO]
+    row_pat = _re.compile(
+        r"(\d{6,12})\s+"                          # empleado/clave (6-12 dígitos, flexible)
+        r"([A-ZÁÉÍÓÚÜÑA-Za-záéíóúüñ][A-ZÁÉÍÓÚÜÑA-Za-záéíóúüñ\s]{4,60}?)\s+"  # nombre
+        r"(\d{2})\s+"                             # tipo cuenta (2 dígitos)
+        r"(\d{10,18})"                            # cuenta
+        r"\s*\$?\s*([\d,]+\.?\d*)"                # importe
+        r"\s*(APLICADO|ACEPTADO|RECHAZADO|PROCESADO|TRANSMITIDO)"  # estatus
+        r"(?:\s+\d{2}(?:\s+[A-Z]+)?)?"           # codigo + descripcion (skip)
+        r"(?:\s+([A-Z0-9]{8,50}))?",              # clave rastreo (grupo 7, opcional)
+        _re.IGNORECASE,
+    )
+
+    new_rows: list[dict] = []
+    for m in row_pat.finditer(text):
+        row = {k: "" for k in schema_keys}
+        row["clave_beneficiario"] = m.group(1).strip()
+        row["nombre_beneficiario"] = m.group(2).strip().upper()
+        row["cuenta_beneficiario"] = m.group(4).strip()
+        row["importe"] = "$" + m.group(5).strip()
+        row["concepto_pago"] = m.group(6).strip().upper()
+        row["referencia"] = m.group(7).strip() if m.group(7) else ""
+        new_rows.append(row)
+
+    if new_rows or has_bad:
+        if new_rows:
+            # Deduplicate by (clave, cuenta, importe)
+            seen: set = set()
+            deduped: list[dict] = []
+            for r in new_rows:
+                key = (r.get("clave_beneficiario", ""), r.get("cuenta_beneficiario", ""), r.get("importe", ""))
+                if key not in seen:
+                    seen.add(key)
+                    deduped.append(r)
+            canonical_rows.clear()
+            canonical_rows.extend(deduped)
+            logger.debug("Banorte fixup: %d rows extracted from text", len(deduped))
+        else:
+            # Remove bad footer rows even if we couldn't extract good ones
+            clean = [r for r in canonical_rows
+                     if str(r.get("clave_beneficiario") or "").lower()[:14] not in bad_keys]
+            orig_count = len(canonical_rows)
+            if len(clean) < orig_count:
+                canonical_rows.clear()
+                canonical_rows.extend(clean)
+                logger.debug("Banorte fixup: removed %d footer rows", orig_count - len(clean))
+
+
+def _fix_santander_canonical_rows(canonical_rows: list[dict], text: str) -> None:
+    """Fix Santander rows. Handles two Santander comprobante formats:
+
+    Format A — Dispersión de Nómina (multi-row table):
+      Name split across 3 columns: Nombre | Primer apellido | Segundo apellido
+      Comprobante page has labeled fields:
+        Nombre:NORMA DEL SOCORRO
+        Primer apellido:PECH
+        Segundo apellido:CHAN
+
+    Format B — Comprobante de Operación / individual SPEI (Santander2/3):
+      Labeled fields with:
+        Cuenta Abono: 002804904910194160 - WALTER LUIS LOPEZ GARCIA
+        Importe: $ 5,781.02 MXN
+        Concepto: PAGO NM
+        Banco Destino: BANAMEX
+    """
+    import re as _re
+
+    schema_keys = list(canonical_rows[0].keys()) if canonical_rows else [
+        "nombre_beneficiario", "cuenta_beneficiario", "importe", "concepto_pago"
+    ]
+
+    # --- Format A: SDR "Comprobante de la operación" per-beneficiary sections ---
+    # Each comprobante page has a "DATOS DEL BENEFICIARIO" block with:
+    #   Número de cuenta de Abono:XXXXXXXX
+    #   Importe:$X,XXX.XX MXN
+    #   Nombre:FIRSTNAME   Primer apellido:PATERNAL   Segundo apellido:MATERNAL
+    # This format covers single AND multi-beneficiary SDR files.
+    if "DATOS DEL BENEFICIARIO" in text.upper():
+        sections = _re.split(r"DATOS DEL BENEFICIARIO", text, flags=_re.IGNORECASE)
+        new_rows: list[dict] = []
+        _cuenta_s = _re.compile(r"Número de cuenta de Abono:[ \t]*(\d{10,18})", _re.IGNORECASE)
+        _importe_s = _re.compile(r"Importe:[ \t]*\$?([\d,]+\.?\d*)[ \t]*MXN", _re.IGNORECASE)
+        _nombre_s = _re.compile(r"Nombre:[ \t]*([A-ZÁÉÍÓÚÜÑA-Za-záéíóúüñ][^\n]{1,60}?)(?:\n|$)", _re.IGNORECASE)
+        _paterno_s = _re.compile(r"Primer apellido:[ \t]*([A-ZÁÉÍÓÚÜÑA-Za-záéíóúüñ][^\n]{1,40}?)(?:\n|$)", _re.IGNORECASE)
+        _materno_s = _re.compile(r"Segundo apellido:[ \t]*([A-ZÁÉÍÓÚÜÑA-Za-záéíóúüñ][^\n]{0,40}?)(?:\n|$)", _re.IGNORECASE)
+        _estatus_s = _re.compile(r"Estatus:[ \t]*(\w+)", _re.IGNORECASE)
+
+        for section in sections[1:]:
+            chunk = section[:600]
+            m_est = _estatus_s.search(chunk)
+            if m_est and m_est.group(1).upper() in {"RECHAZADO", "CANCELADO", "ERROR"}:
+                continue  # skip rejected
+            m_nom = _nombre_s.search(chunk)
+            if not m_nom:
+                continue
+            nombre = m_nom.group(1).strip().upper()
+            m_pat2 = _paterno_s.search(chunk)
+            m_mat2 = _materno_s.search(chunk)
+            paterno = m_pat2.group(1).strip().upper() if m_pat2 else ""
+            materno = m_mat2.group(1).strip().upper() if m_mat2 else ""
+            full_name = " ".join(filter(None, [nombre, paterno, materno]))
+            if not full_name:
+                continue
+            row: dict = {k: "" for k in schema_keys}
+            row["nombre_beneficiario"] = full_name
+            m_cta = _cuenta_s.search(chunk)
+            if m_cta and "cuenta_beneficiario" in schema_keys:
+                row["cuenta_beneficiario"] = m_cta.group(1).strip()
+            m_imp = _importe_s.search(chunk)
+            if m_imp:
+                row["importe"] = m_imp.group(1).strip().replace(",", "")
+            new_rows.append(row)
+
+        if new_rows:
+            seen: set = set()
+            deduped: list[dict] = []
+            for r in new_rows:
+                key = (r.get("cuenta_beneficiario", ""), r.get("importe", ""), r.get("nombre_beneficiario", ""))
+                if key not in seen:
+                    seen.add(key)
+                    deduped.append(r)
+            canonical_rows.clear()
+            canonical_rows.extend(deduped)
+            logger.debug("Santander fixup A (SDR comprobante): %d beneficiarios", len(deduped))
+            return
+
+    # --- Format B: individual SPEI "Comprobante de Operación" ---
+    # Santander2: "Cuenta Abono: 002804904910194160 - WALTER LUIS LOPEZ GARCIA"
+    # Santander3: "Cuenta de abono:012790015040879584 - MATA LOPEZ SELENE DELLANIRA"
+    cuenta_abono_pat = _re.compile(
+        r"Cuenta\s+(?:de\s+)?[Aa]bono[:\s]+(\d{10,18})\s*-\s*([A-ZÁÉÍÓÚÜÑA-Za-záéíóúüñ][^\n]{2,60}?)(?:\n|$)",
+        _re.IGNORECASE,
+    )
+    importe_pat = _re.compile(r"Importe:[ \t]*\$?[ \t]*([\d,]+\.?\d*)[ \t]*(?:MXN)?", _re.IGNORECASE)
+    concepto_pat = _re.compile(r"(?:Concepto|Prop[oó]sito):[ \t]*(.+?)(?:\n|$)", _re.IGNORECASE)
+    banco_pat = _re.compile(r"Banco\s*[Dd]estino:[ \t]*(.+?)(?:\n|$)", _re.IGNORECASE)
+    referencia_pat = _re.compile(r"Clave de [Rr]astreo:[ \t]*(\S+)", _re.IGNORECASE)
+
+    m_cuenta = cuenta_abono_pat.search(text)
+    if m_cuenta:
+        cuenta = m_cuenta.group(1).strip()
+        nombre = m_cuenta.group(2).strip().upper()
+        m_imp = importe_pat.search(text)
+        # Fallback for "labels then values" format (Santander3): value on its own line
+        if not (m_imp and m_imp.group(1).strip().replace(",", "").replace(".", "")):
+            m_imp = _re.search(r"(?:^|\n)\$([\d,]+\.\d+)[ \t]*MXN", text, _re.MULTILINE)
+        m_con = concepto_pat.search(text)
+        m_ban = banco_pat.search(text)
+        m_ref = referencia_pat.search(text)
+        # Fallback for clave de rastreo on its own line (Santander3)
+        if not (m_ref and m_ref.group(1).strip() and m_ref.group(1).strip() != "RFC"):
+            m_ref = _re.search(r"(?:^|\n)([A-Z0-9]{20,40})(?:\n|$)", text, _re.MULTILINE)
+
+        row: dict = {k: "" for k in schema_keys}
+        row["nombre_beneficiario"] = nombre
+        row["cuenta_beneficiario"] = cuenta
+        if m_imp:
+            row["importe"] = m_imp.group(1).strip().replace(",", "")
+        if m_con and "concepto_pago" in schema_keys:
+            row["concepto_pago"] = m_con.group(1).strip().upper()
+        if m_ban and "banco_receptor" in schema_keys:
+            row["banco_receptor"] = m_ban.group(1).strip().upper()
+        if m_ref and "referencia" in schema_keys:
+            row["referencia"] = m_ref.group(1).strip()
+
+        canonical_rows.clear()
+        canonical_rows.append(row)
+        logger.debug("Santander fixup B (SPEI): '%s' cuenta=%s", nombre, cuenta)
+
+
+def _extract_banorte_payment_metadata(raw_text: str) -> dict[str, str]:
+    """Extrae metadatos del encabezado del 'Reporte de Transmisión de Archivo de Pagos' de Banorte.
+
+    Campos típicos en el encabezado Banorte:
+      EMPRESA / NOMBRE DE EMPRESA, NUMERO DE EMPRESA, NUMERO DE LOTE,
+      FECHA DE PROCESO, HORA DE PROCESO, USUARIO DEL SISTEMA,
+      TOTAL DE REGISTROS, TOTAL IMPORTE.
+    """
+    text = _ascii_fold(str(raw_text or "")).upper()
+    out: dict[str, str] = {}
+
+    # Empresa / nombre de empresa
+    for pat in [
+        r"NOMBRE\s+DE\s+EMPRESA\s*:?\s*([A-Z0-9 .,&_\-]{3,80})",
+        r"EMPRESA\s*:?\s*([A-Z0-9 .,&_\-]{3,80})",
+    ]:
+        m = re.search(pat, text)
+        if m:
+            out.setdefault("nombre_empresa", _normalize_text(m.group(1)))
+            break
+
+    # Número de empresa / contrato
+    for pat in [
+        r"NUMERO\s+DE\s+EMPRESA\s*:?\s*([0-9OIL]{3,12})",
+        r"NO\.?\s+DE\s+EMPRESA\s*:?\s*([0-9OIL]{3,12})",
+    ]:
+        m = re.search(pat, text)
+        if m:
+            out.setdefault("numero_empresa", _normalize_numeric_field(m.group(1)))
+            break
+
+    # Número de lote
+    for pat in [
+        r"NUMERO\s+DE\s+LOTE\s*:?\s*([0-9OIL]{1,10})",
+        r"NO\.?\s+DE\s+LOTE\s*:?\s*([0-9OIL]{1,10})",
+        r"LOTE\s*:?\s*([0-9OIL]{1,10})",
+    ]:
+        m = re.search(pat, text)
+        if m:
+            out.setdefault("numero_lote", _normalize_numeric_field(m.group(1)))
+            break
+
+    # Fecha de proceso
+    for pat in [
+        r"FECHA\s+DE\s+PROCESO\s*:?\s*(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})",
+        r"FECHA\s+DE\s+APLICACION\s*:?\s*(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})",
+        r"FECHA\s*:?\s*(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})",
+    ]:
+        m = re.search(pat, text)
+        if m:
+            normalized = _normalize_date_value(m.group(1))
+            if normalized:
+                out.setdefault("fecha_proceso", normalized)
+            break
+
+    # Hora de proceso
+    m = re.search(r"HORA\s*(?:DE\s+PROCESO)?\s*:?\s*(\d{2}:\d{2}(?::\d{2})?)", text)
+    if m:
+        out["hora_proceso"] = m.group(1)
+
+    # Usuario del sistema
+    for pat in [
+        r"USUARIO\s+DEL\s+SISTEMA\s*:?\s*([A-Z0-9._\- ]{3,60})",
+        r"USUARIO\s*:?\s*([A-Z0-9._\- ]{3,60})",
+    ]:
+        m = re.search(pat, text)
+        if m:
+            out.setdefault("usuario_sistema", _normalize_text(m.group(1)))
+            break
+
+    # Total de registros
+    for pat in [
+        r"TOTAL\s+DE\s+REGISTROS\s*:?\s*([0-9OIL]{1,6})",
+        r"TOTAL\s+REGISTROS\s*:?\s*([0-9OIL]{1,6})",
+        r"REGISTROS\s+PROCESADOS\s*:?\s*([0-9OIL]{1,6})",
+    ]:
+        m = re.search(pat, text)
+        if m:
+            out.setdefault("total_registros", _normalize_payment_count(m.group(1)))
+            break
+
+    # Total importe
+    for pat in [
+        r"TOTAL\s+IMPORTE\s*:?\s*\$?\s*([\d,]+\.?\d*)",
+        r"IMPORTE\s+TOTAL\s*:?\s*\$?\s*([\d,]+\.?\d*)",
+        r"MONTO\s+TOTAL\s*:?\s*\$?\s*([\d,]+\.?\d*)",
+    ]:
+        m = re.search(pat, text)
+        if m:
+            normalized = _normalize_payment_amount(m.group(1))
+            if normalized:
+                out.setdefault("importe_total", normalized)
+            break
+
+    return out
+
+
 def _extract_generic_bank_payment_metadata(raw_text: str, bank: str) -> dict[str, str]:
     """Extract metadata for banks without a dedicated handler (HSBC, BANAMEX, INBURSA, BANREGIO, BAJIO).
 
@@ -5799,6 +6267,22 @@ def _extract_payment_detail_payload_impl(base_text_raw: str, table_payload: dict
                 if crow.get(col):
                     crow[col] = crow[col].upper()
         display_columns = _build_display_columns_map(rows, bank)
+        # Remapear al esquema del banco detectado
+        try:
+            from app.utils.table_utils import remap_to_target_payment_schema
+            canonical_columns, canonical_rows, display_columns = remap_to_target_payment_schema(
+                canonical_columns, canonical_rows, bank=bank,
+            )
+        except Exception:
+            logger.warning("remap_to_target_payment_schema failed (early path)", exc_info=True)
+
+        # Bank-specific post-processing fixups
+        if bank == "BBVA":
+            _fix_bbva_canonical_rows(canonical_rows, text)
+        elif bank == "BANORTE" and canonical_rows:
+            _fix_banorte_canonical_rows(canonical_rows, text)
+        elif bank == "SANTANDER" and canonical_rows:
+            _fix_santander_canonical_rows(canonical_rows, text)
 
         # Use canonical keys for rows in table_out (matches what callers expect)
         _header_keys = _payment_header_keys_from_cells(rows[0]) if rows else []
@@ -5873,6 +6357,8 @@ def _extract_payment_detail_payload_impl(base_text_raw: str, table_payload: dict
         metadata.update(_extract_bbva_payment_metadata(text))
     elif bank == "SANTANDER":
         metadata.update(_extract_santander_payment_metadata(text))
+    elif bank == "BANORTE":
+        metadata.update(_extract_banorte_payment_metadata(text))
     else:
         # Generic metadata extraction for HSBC, BANAMEX, INBURSA, BANREGIO, etc.
         metadata.update(_extract_generic_bank_payment_metadata(text, bank))
@@ -5979,6 +6465,24 @@ def _extract_payment_detail_payload_impl(base_text_raw: str, table_payload: dict
         )
     except Exception:
         logger.warning("postprocess_payment_table failed, using raw table data", exc_info=True)
+
+    # --- Remapear al esquema del banco detectado ---
+    try:
+        from app.utils.table_utils import remap_to_target_payment_schema
+        canonical_columns, canonical_rows, display_columns = remap_to_target_payment_schema(
+            canonical_columns, canonical_rows, bank=bank,
+        )
+    except Exception:
+        logger.warning("remap_to_target_payment_schema failed, using raw columns", exc_info=True)
+
+    # Bank-specific post-processing fixups (late path)
+    logger.debug("bank_fixup_late_path bank=%s rows=%d", bank, len(canonical_rows))
+    if bank == "BBVA":
+        _fix_bbva_canonical_rows(canonical_rows, text)
+    elif bank == "BANORTE" and canonical_rows:
+        _fix_banorte_canonical_rows(canonical_rows, text)
+    elif bank == "SANTANDER" and canonical_rows:
+        _fix_santander_canonical_rows(canonical_rows, text)
 
     # --- BBVA "Grupo Pago Mismo Banco": split multi-payment into separate tables ---
     text_upper = _ascii_fold(text).upper() if text else ""
