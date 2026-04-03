@@ -1,5 +1,5 @@
 # ─── .NET Backend API ───
-FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
 # Restore
@@ -28,6 +28,6 @@ ENV ASPNETCORE_URLS=http://+:5000
 EXPOSE 5000
 
 HEALTHCHECK --interval=15s --timeout=10s --retries=3 \
-    CMD dotnet --list-runtimes > /dev/null && wget -q --spider http://localhost:5000/health || exit 1
+    CMD curl -f http://localhost:5000/health || exit 1
 
 ENTRYPOINT ["dotnet", "Api.dll"]
