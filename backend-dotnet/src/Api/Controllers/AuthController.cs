@@ -43,7 +43,7 @@ public class AuthController : ControllerBase
         }
 
         var normalizedUsername = request.Username.Trim();
-        _logger.LogInformation($"Intento de login para usuario: {normalizedUsername}");
+        _logger.LogInformation("Intento de login para usuario: {Username}", normalizedUsername);
 
         // 1) Check hardcoded users first
         var user = _options.Users.FirstOrDefault(u =>
@@ -51,7 +51,7 @@ public class AuthController : ControllerBase
 
         if (user is not null && VerifyPassword(user, request.Password))
         {
-            _logger.LogInformation($"Login exitoso (hardcoded) para usuario: {user.Username}");
+            _logger.LogInformation("Login exitoso (hardcoded) para usuario: {Username}", user.Username);
             return IssueLoginResponse(user.Username, user.Role);
         }
 
@@ -59,11 +59,11 @@ public class AuthController : ControllerBase
         if (_localUsers.VerifyPassword(normalizedUsername, request.Password))
         {
             var localUser = _localUsers.FindByEmail(normalizedUsername)!;
-            _logger.LogInformation($"Login exitoso (local) para usuario: {localUser.Email}");
+            _logger.LogInformation("Login exitoso (local) para usuario: {Email}", localUser.Email);
             return IssueLoginResponse(localUser.Email, localUser.Role);
         }
 
-        _logger.LogWarning($"Login fallido para usuario: {normalizedUsername}");
+        _logger.LogWarning("Login fallido para usuario: {Username}", normalizedUsername);
         return Unauthorized();
     }
 
@@ -113,7 +113,7 @@ public class AuthController : ControllerBase
         }
 
         var refreshToken = request.RefreshToken.Trim();
-        _logger.LogInformation($"Intento de refresh con token: {refreshToken.Substring(0, Math.Min(8, refreshToken.Length))}... (ocultado) ");
+        _logger.LogInformation("Intento de refresh con token: {TokenPrefix}... (ocultado)", refreshToken[..Math.Min(8, refreshToken.Length)]);
         if (!_refreshTokens.TryUseToken(refreshToken, out var entry))
         {
             _logger.LogWarning("Refresh fallido: refreshToken inválido o expirado");
@@ -126,7 +126,7 @@ public class AuthController : ControllerBase
             entry.Role,
             TimeSpan.FromMinutes(_options.RefreshTokenExpirationMinutes));
 
-        _logger.LogInformation($"Refresh exitoso para usuario: {entry.Username}");
+        _logger.LogInformation("Refresh exitoso para usuario: {Username}", entry.Username);
         return Ok(new LoginResponse(
             token,
             refresh.Token,
@@ -142,7 +142,7 @@ public class AuthController : ControllerBase
         if (!string.IsNullOrWhiteSpace(request?.RefreshToken))
         {
             _refreshTokens.RevokeToken(request.RefreshToken.Trim());
-            _logger.LogInformation($"Logout: refreshToken revocado para token: {request.RefreshToken.Substring(0, Math.Min(8, request.RefreshToken.Length))}... (ocultado)");
+            _logger.LogInformation("Logout: refreshToken revocado para token: {TokenPrefix}... (ocultado)", request.RefreshToken[..Math.Min(8, request.RefreshToken.Length)]);
         }
         else
         {

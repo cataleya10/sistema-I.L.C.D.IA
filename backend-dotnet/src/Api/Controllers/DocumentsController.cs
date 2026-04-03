@@ -19,17 +19,20 @@ public class DocumentsController : ControllerBase
     private readonly IPythonAiClient _pythonAiClient;
     private readonly IDocumentExportService _exportService;
     private readonly UploadOptions _uploadOptions;
+    private readonly ILogger<DocumentsController> _logger;
 
     public DocumentsController(
         IDocumentService documentService,
         IPythonAiClient pythonAiClient,
         IDocumentExportService exportService,
-        IOptions<UploadOptions> uploadOptions)
+        IOptions<UploadOptions> uploadOptions,
+        ILogger<DocumentsController> logger)
     {
         _documentService = documentService;
         _pythonAiClient = pythonAiClient;
         _exportService = exportService;
         _uploadOptions = uploadOptions.Value;
+        _logger = logger;
     }
 
     [HttpPost("upload")]
@@ -120,7 +123,8 @@ public class DocumentsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(string.IsNullOrWhiteSpace(ex.Message) ? "La solicitud de auditoria es invalida." : ex.Message);
+            _logger.LogWarning(ex, "AuditFolder: solicitud invalida");
+            return BadRequest("La solicitud de auditoria es invalida.");
         }
         catch (HttpRequestException)
         {

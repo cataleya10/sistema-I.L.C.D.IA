@@ -259,6 +259,27 @@ if (!app.Environment.IsDevelopment() && usesExternalDb && dbConnectionInsecure)
     throw new InvalidOperationException("ConnectionStrings:Default insegura o no definida para proveedor de base de datos persistente.");
 }
 
+// Validar que ningún usuario tiene el hash placeholder CHANGE_ME en producción
+if (!app.Environment.IsDevelopment())
+{
+    var jwtOptions = app.Configuration.GetSection("Jwt:Users").Get<List<dynamic>>();
+    var usersSection = app.Configuration.GetSection("Jwt:Users");
+    var usersWithPlaceholder = new List<string>();
+    foreach (var child in usersSection.GetChildren())
+    {
+        var username = child["Username"] ?? "(sin nombre)";
+        var hash = child["PasswordHash"] ?? string.Empty;
+        if (hash.Contains("CHANGE_ME", StringComparison.OrdinalIgnoreCase))
+            usersWithPlaceholder.Add(username);
+    }
+    if (usersWithPlaceholder.Count > 0)
+    {
+        throw new InvalidOperationException(
+            $"Jwt:Users contiene hashes de contraseña no configurados (CHANGE_ME): {string.Join(", ", usersWithPlaceholder)}. " +
+            "Define Jwt__Users__0__PasswordHash, Jwt__Users__1__PasswordHash, etc. como variables de entorno.");
+    }
+}
+
 if (app.Environment.IsDevelopment() && weakJwtKey)
 {
     app.Logger.LogWarning("Jwt:SigningKey de desarrollo es insegura. Define Jwt__SigningKey en .env antes de desplegar.");
