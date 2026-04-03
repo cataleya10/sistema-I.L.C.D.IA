@@ -138,7 +138,8 @@ class ExtractPipelineTests(unittest.TestCase):
         fields = _run_sync(extract_fields("DATOS_BANCARIOS", ocr_text, ocr_boxes))
         data = _field_map(fields)
 
-        self.assertNotIn("tabla_celdas", data)
+        # DATOS_BANCARIOS ahora extrae tabla_celdas en reportes de dispersión bancaria
+        self.assertIn("tabla_celdas", data)
         self.assertEqual(data.get("cuenta"), "56551346133")
 
     def test_extract_factura_payment_table_from_fragmented_boxes(self):
@@ -295,7 +296,8 @@ class ExtractPipelineTests(unittest.TestCase):
         fields = _run_sync(extract_fields("DATOS_BANCARIOS", ocr_text, None))
         data = _field_map(fields)
 
-        self.assertNotIn("tabla_celdas", data)
+        # DATOS_BANCARIOS ahora extrae tabla_celdas en reportes de dispersión bancaria
+        self.assertIn("tabla_celdas", data)
 
     def test_extract_unknown_payment_table_from_text_lines(self):
         ocr_text = "\n".join(
@@ -2670,18 +2672,18 @@ class TestClassifyBbvaTransferMarkers(unittest.TestCase):
     """BBVA Pago Mismo Banco / transfer docs should be classified as FACTURA."""
 
     def test_pago_mismo_banco_classified_as_factura(self):
-        from app.pipelines.classify import _keyword_override
+        from app.pipelines.classify import _apply_rules
         text = "BBVA NET CASH OPERACION AUTORIZADA DATOS DE LA OPERACION PAGO MISMO BANCO IMPORTE 1537 35"
         compact = text.replace(" ", "")
-        doc_type, conf = _keyword_override(text, compact, "")
+        doc_type, conf = _apply_rules(text, compact, "")
         self.assertEqual(doc_type, "FACTURA")
         self.assertGreaterEqual(conf, 0.9)
 
     def test_folio_de_firma_classified_as_factura(self):
-        from app.pipelines.classify import _keyword_override
+        from app.pipelines.classify import _apply_rules
         text = "DATOS DE CONFIRMACION DE LA TRANSFERENCIA FOLIO DE FIRMA 7748662779"
         compact = text.replace(" ", "")
-        doc_type, conf = _keyword_override(text, compact, "")
+        doc_type, conf = _apply_rules(text, compact, "")
         self.assertEqual(doc_type, "FACTURA")
 
 

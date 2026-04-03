@@ -2,7 +2,7 @@
 import json
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.services import document_processor as dp
 
@@ -33,11 +33,14 @@ class DocumentProcessorTests(unittest.TestCase):
         options: str | None = None,
     ):
         fake_file = SimpleNamespace(filename="doc.png")
+        # Mock del extractor: get_extractor devuelve un módulo ficticio cuyo extract() retorna los campos dados
+        _mock_extractor_module = MagicMock()
+        _mock_extractor_module.extract = AsyncMock(return_value=fields)
         with patch.object(dp, "CRITICAL_FIELDS", critical_fields or {"INE": ["curp", "nombre"]}):
             with patch("app.services.document_processor.preprocess", AsyncMock(return_value=([object()], ""))):
                 with patch("app.services.document_processor.run_ocr", AsyncMock(return_value=(ocr_text, []))):
                     with patch("app.services.document_processor.classify_document", AsyncMock(return_value=(doc_type, 0.9))):
-                        with patch("app.services.document_processor.extract_fields", AsyncMock(return_value=fields)):
+                        with patch("app.extractors.get_extractor", return_value=_mock_extractor_module):
                             with patch("app.services.document_processor.validate_fields", AsyncMock(side_effect=lambda x: x)):
                                 with patch("app.services.document_processor.learn_from_processed_document") as learn_mock:
                                     response = asyncio.run(

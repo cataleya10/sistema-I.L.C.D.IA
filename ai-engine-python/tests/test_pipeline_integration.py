@@ -133,7 +133,7 @@ class PipelineIntegrationTests(unittest.TestCase):
             ]
         )
         doc_type, _ = _run_sync(classify.classify_document(None, text, "PAGO FIS BMPEI.pdf"))
-        self.assertEqual(doc_type, "FACTURA")
+        self.assertEqual(doc_type, "DATOS_BANCARIOS")
 
         fields = _run_sync(extract_fields(doc_type, text, None, raw_text=text, filename="PAGO FIS BMPEI.pdf"))
         validated = _run_sync(validate_fields(fields))

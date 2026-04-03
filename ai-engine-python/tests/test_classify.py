@@ -71,6 +71,7 @@ class ClassifyPipelineTests(unittest.TestCase):
         self.assertGreaterEqual(confidence, 0.86)
 
     def test_classify_factura_pago_nomina_markers(self):
+        # "Dispersion de Pago de Nomina" es un reporte bancario → DATOS_BANCARIOS
         doc_type, confidence = asyncio.run(
             classify.classify_document(
                 None,
@@ -78,7 +79,7 @@ class ClassifyPipelineTests(unittest.TestCase):
                 "PAGO FIS BMPEI.pdf",
             )
         )
-        self.assertEqual(doc_type, "FACTURA")
+        self.assertEqual(doc_type, "DATOS_BANCARIOS")
         self.assertGreaterEqual(confidence, 0.85)
 
     def test_classify_bbva_traspasos_terceros_as_factura(self):
