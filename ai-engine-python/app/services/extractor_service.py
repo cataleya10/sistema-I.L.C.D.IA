@@ -128,12 +128,18 @@ _PAYMENT_DOC_TYPES: frozenset[str] = frozenset({
     "ESTADO_DE_CUENTA",
 })
 
-# Tipos bancarios donde aplica el geometric detector + extractor especializado
-_BANK_REMAP_DOC_TYPES: frozenset[str] = frozenset({
+# Tipos que usan el motor geométrico + extractor especializado
+_GEO_EXTRACT_DOC_TYPES: frozenset[str] = frozenset({
     "DATOS_BANCARIOS",
     "COMPROBANTE_DE_PAGO",
     "ESTADO_DE_CUENTA",
+    "NOMINA",
+    "CFDI",
+    "FACTURA",
 })
+
+# Alias por compatibilidad con código existente
+_BANK_REMAP_DOC_TYPES = _GEO_EXTRACT_DOC_TYPES
 
 
 def _detect_bank_from_fields(fields: list[dict]) -> str:
@@ -183,18 +189,17 @@ def _process_all_tables(
       {index, columns, display_columns, rows, canonical_rows, row_count, quality, avg_fill_rate}
     """
     is_payment = doc_type in _PAYMENT_DOC_TYPES
-    is_bank = doc_type in _BANK_REMAP_DOC_TYPES
     results: list[dict[str, Any]] = []
     seen_sigs: set[str] = set()
 
-    # ── Ruta 1: Geometric detector + extractor por banco ─────────────────────
-    if is_bank and ocr_boxes:
+    # ── Ruta 1: Geometric detector + extractor especializado por doc_type/banco ─
+    if doc_type in _GEO_EXTRACT_DOC_TYPES and ocr_boxes:
         try:
             from app.pipelines.extract.geometric_detector import detect_all_table_grids
-            from app.pipelines.extract.bank_extractors import get_bank_extractor
+            from app.pipelines.extract.bank_extractors import get_doc_extractor
 
             grids = detect_all_table_grids(ocr_boxes)
-            extractor = get_bank_extractor(bank)
+            extractor = get_doc_extractor(doc_type, bank)
 
             for grid in grids:
                 if grid.n_rows < 2:

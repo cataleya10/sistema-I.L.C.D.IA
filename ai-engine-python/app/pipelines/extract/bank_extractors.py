@@ -430,6 +430,115 @@ class GenericBankExtractor(BankExtractorBase):
         return row
 
 
+# ─── Nómina ───────────────────────────────────────────────────────────────────
+
+class NominaExtractor(BankExtractorBase):
+    """
+    Extractor especializado para recibos de nómina mexicanos.
+
+    Los PDFs de nómina tienen dos secciones típicas:
+      PERCEPCIONES: CLAVE | CONCEPTO | IMPORTE GRAVADO | IMPORTE EXENTO | IMPORTE
+      DEDUCCIONES:  CLAVE | CONCEPTO | IMPORTE
+
+    El detector geométrico unifica ambas secciones en una grilla.
+    Este extractor mapea las columnas correctamente y normaliza importes.
+    """
+    BANK_NAME = "NOMINA"
+    SCHEMA = [
+        ("clave",           ["CLAVE", "CVE", "NUM", "NUMERO", "NO", "ID"]),
+        ("concepto",        ["CONCEPTO", "DESCRIPCION", "DETALLE", "PERCEPCION",
+                             "DEDUCCION", "PERCEPCIONES", "DEDUCCIONES", "MOTIVO"]),
+        ("importe_gravado", ["IMPORTE GRAVADO", "IMP GRAVADO", "GRAVADO", "GRAVABLE"]),
+        ("importe_exento",  ["IMPORTE EXENTO", "IMP EXENTO", "EXENTO"]),
+        ("importe",         ["IMPORTE", "MONTO", "CANTIDAD", "TOTAL", "IMPORTE TOTAL"]),
+    ]
+
+    def _postprocess_row(self, row: dict) -> dict:
+        for key in ("importe_gravado", "importe_exento", "importe"):
+            val = row.get(key, "")
+            if val:
+                val = re.sub(r"\s", "", val)
+                val = re.sub(r"(\d),(\d{3})", r"\1\2", val)
+                val = val.replace(",", ".")
+                row[key] = val
+        return row
+
+    def _filter_rows(self, rows: list[dict]) -> list[dict]:
+        """En nómina excluimos filas de totales pero mantenemos conceptos clave."""
+        _TOTAL_KEYWORDS = {"TOTAL", "SUBTOTAL", "NETO", "GRAN TOTAL"}
+        result = []
+        for row in rows:
+            values = [v.strip() for v in row.values()]
+            if not any(values):
+                continue
+            concepto = _norm(row.get("concepto", ""))
+            # Mantener filas de total de percepciones/deducciones como referencia
+            if any(kw in concepto for kw in {"TOTAL PERCEPCIONES", "TOTAL DEDUCCIONES", "NETO A PAGAR"}):
+                result.append(row)
+                continue
+            # Descartar filas de totales genéricos sin concepto específico
+            first_val = _norm(values[0]) if values else ""
+            if any(kw == first_val for kw in _TOTAL_KEYWORDS):
+                continue
+            result.append(row)
+        return result
+
+
+# ─── CFDI / Factura ───────────────────────────────────────────────────────────
+
+class CFDIExtractor(BankExtractorBase):
+    """
+    Extractor especializado para facturas CFDI mexicanas (SAT).
+
+    Tabla de conceptos típica:
+      CANTIDAD | UNIDAD | CLAVE PROD/SERV | NO IDENTIFICACION |
+      DESCRIPCION | VALOR UNITARIO | DESCUENTO | IMPORTE
+
+    También maneja facturas simplificadas (sin clave SAT):
+      CANT | DESCRIPCION | PRECIO UNIT | IMPORTE
+    """
+    BANK_NAME = "CFDI"
+    SCHEMA = [
+        ("cantidad",        ["CANTIDAD", "CANT", "UNIDADES", "PZA", "PIEZAS", "QTY"]),
+        ("clave_unidad",    ["CLAVE UNIDAD", "UNIDAD", "UM", "U/M", "UNID"]),
+        ("clave_prod_serv", ["CLAVE PROD SERV", "CLAVEPRODSERV", "CLAVE SAT",
+                             "CLAVE PRODUCTO", "CLAVE"]),
+        ("no_identificacion",["NO IDENTIFICACION", "NO IDENT", "NO PARTE",
+                              "CODIGO", "SKU", "CLAVE INTERNA"]),
+        ("descripcion",     ["DESCRIPCION", "CONCEPTO", "DETALLE", "PRODUCTO",
+                             "SERVICIO", "BIEN O SERVICIO"]),
+        ("valor_unitario",  ["VALOR UNITARIO", "PRECIO UNITARIO", "PRECIO UNIT",
+                             "P UNITARIO", "PRECIO", "P.U.", "V.U."]),
+        ("descuento",       ["DESCUENTO", "DESC", "DSCTO"]),
+        ("importe",         ["IMPORTE", "TOTAL", "MONTO", "SUBTOTAL", "IMPORTE TOTAL"]),
+    ]
+
+    def _postprocess_row(self, row: dict) -> dict:
+        for key in ("valor_unitario", "descuento", "importe", "cantidad"):
+            val = row.get(key, "")
+            if val:
+                val = re.sub(r"\s", "", val)
+                val = re.sub(r"(\d),(\d{3})", r"\1\2", val)
+                val = val.replace(",", ".")
+                row[key] = val
+        return row
+
+    def _filter_rows(self, rows: list[dict]) -> list[dict]:
+        """En CFDI eliminamos filas de subtotal/IVA/total que no son conceptos."""
+        _SUMMARY_KEYWORDS = {"SUBTOTAL", "IVA", "TOTAL", "DESCUENTO TOTAL", "ISR"}
+        result = []
+        for row in rows:
+            values = [v.strip() for v in row.values()]
+            if not any(values):
+                continue
+            desc = _norm(row.get("descripcion", ""))
+            # Filas de resumen fiscal → descartar
+            if any(kw == desc for kw in _SUMMARY_KEYWORDS):
+                continue
+            result.append(row)
+        return result
+
+
 # ─── Router ───────────────────────────────────────────────────────────────────
 
 _EXTRACTOR_MAP: dict[str, type[BankExtractorBase]] = {
@@ -446,6 +555,13 @@ _EXTRACTOR_MAP: dict[str, type[BankExtractorBase]] = {
     "SCOTIABANK": ScotiabankExtractor,
     "INBURSA": InbursaExtractor,
     "GFINBURSA": InbursaExtractor,
+}
+
+# Mapa por tipo de documento (independiente del banco)
+_DOC_TYPE_EXTRACTOR_MAP: dict[str, type[BankExtractorBase]] = {
+    "NOMINA":   NominaExtractor,
+    "CFDI":     CFDIExtractor,
+    "FACTURA":  CFDIExtractor,
 }
 
 
@@ -474,4 +590,39 @@ def get_bank_extractor(bank_name: str | None) -> BankExtractorBase:
             return cls()
 
     logger.info("[BANK_EXTRACTOR] banco='%s' no reconocido → GenericBankExtractor", bank_name)
+    return GenericBankExtractor()
+
+
+def get_doc_extractor(doc_type: str, bank_name: str | None = None) -> BankExtractorBase:
+    """
+    Router principal — devuelve el extractor correcto según tipo de documento y banco.
+
+    Prioridad:
+      1. Si el doc_type tiene extractor propio (NOMINA, CFDI, FACTURA) → úsalo
+      2. Si es doc bancario → enrutar por banco (get_bank_extractor)
+      3. Fallback → GenericBankExtractor
+
+    Ejemplos:
+      get_doc_extractor("NOMINA")              → NominaExtractor
+      get_doc_extractor("CFDI")                → CFDIExtractor
+      get_doc_extractor("FACTURA")             → CFDIExtractor
+      get_doc_extractor("DATOS_BANCARIOS", "SANTANDER") → SantanderExtractor
+      get_doc_extractor("ESTADO_DE_CUENTA", "BBVA")     → BBVAExtractor
+      get_doc_extractor("DATOS_BANCARIOS", None)        → GenericBankExtractor
+    """
+    norm_type = (doc_type or "").upper().strip()
+
+    # 1. Extractor por tipo de documento
+    if norm_type in _DOC_TYPE_EXTRACTOR_MAP:
+        cls = _DOC_TYPE_EXTRACTOR_MAP[norm_type]
+        logger.info("[DOC_EXTRACTOR] doc_type='%s' → %s", doc_type, cls.__name__)
+        return cls()
+
+    # 2. Extractor por banco para documentos bancarios
+    bank_doc_types = {"DATOS_BANCARIOS", "COMPROBANTE_DE_PAGO", "ESTADO_DE_CUENTA"}
+    if norm_type in bank_doc_types:
+        return get_bank_extractor(bank_name)
+
+    # 3. Fallback genérico
+    logger.info("[DOC_EXTRACTOR] doc_type='%s' sin extractor especializado → GenericBankExtractor", doc_type)
     return GenericBankExtractor()

@@ -49,8 +49,14 @@ _PAYMENT_DOC_TYPES = frozenset({
     "ESTADO_DE_CUENTA", "FACTURA",
 })
 
-# Tipos donde además se aplica el remapeo al esquema bancario (BBVA/Santander/etc.)
-# NOMINA queda excluido: sus columnas son percepciones/deducciones, no clave_beneficiario
+# Tipos que usan el motor geométrico + extractor especializado (get_doc_extractor).
+# Incluye bancarios, nómina y CFDI/factura.
+_GEO_EXTRACT_DOC_TYPES = frozenset({
+    "DATOS_BANCARIOS", "COMPROBANTE_DE_PAGO", "ESTADO_DE_CUENTA",
+    "NOMINA", "CFDI", "FACTURA",
+})
+
+# Tipos bancarios que además aplican remapeo de esquema (alias por compatibilidad)
 _BANK_REMAP_DOC_TYPES = frozenset({
     "DATOS_BANCARIOS", "COMPROBANTE_DE_PAGO", "ESTADO_DE_CUENTA", "FACTURA",
 })
@@ -91,18 +97,17 @@ def _process_all_tables(
       2. Para el resto → canonicalización genérica + post-proceso + remapeo.
     """
     is_payment = doc_type in _PAYMENT_DOC_TYPES
-    is_bank = doc_type in _BANK_REMAP_DOC_TYPES
     results: list[ExtractedTable] = []
     seen_sigs: set[str] = set()
 
-    # ── Ruta 1: Geometric detector + extractor especializado por banco ─────────
-    if is_bank and ocr_boxes:
+    # ── Ruta 1: Geometric detector + extractor especializado por doc_type/banco ─
+    if doc_type in _GEO_EXTRACT_DOC_TYPES and ocr_boxes:
         try:
             from app.pipelines.extract.geometric_detector import detect_all_table_grids
-            from app.pipelines.extract.bank_extractors import get_bank_extractor
+            from app.pipelines.extract.bank_extractors import get_doc_extractor
 
             grids = detect_all_table_grids(ocr_boxes)
-            extractor = get_bank_extractor(bank)
+            extractor = get_doc_extractor(doc_type, bank)
 
             for grid in grids:
                 if grid.n_rows < 2:
@@ -134,16 +139,15 @@ def _process_all_tables(
                     doc_type_hint=doc_type,
                 ))
                 logger.info(
-                    "[GEO+BANK] tabla bancaria extraída: banco=%s cols=%s filas=%d quality=%.1f",
-                    bank or "GENERICO", geo_cols, len(geo_rows), quality,
+                    "[GEO+DOC] tabla extraída: doc_type=%s banco=%s cols=%s filas=%d quality=%.1f",
+                    doc_type, bank or "N/A", geo_cols, len(geo_rows), quality,
                 )
 
             if results:
                 return results
-            # Si el detector geométrico no produjo resultados, continuar con ruta genérica
-            logger.info("[GEO+BANK] sin resultados del detector geométrico, usando ruta genérica")
+            logger.info("[GEO+DOC] sin resultados del detector geométrico, usando ruta genérica")
         except Exception:
-            logger.debug("Pipeline geométrico-bancario falló", exc_info=True)
+            logger.debug("Pipeline geométrico falló, usando ruta genérica", exc_info=True)
 
     # ── Ruta 2: Canonicalización genérica (documentos no bancarios o fallback) ─
     if not pdf_tables:
