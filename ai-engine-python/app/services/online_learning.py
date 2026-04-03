@@ -14,6 +14,42 @@ logger = logging.getLogger(__name__)
 
 _LOCK = threading.Lock()
 
+# Campos que nunca deben usarse como etiquetas de entrenamiento
+# (son JSONs grandes o texto crudo — no aportan señal útil al modelo)
+_SKIP_LABEL_KEYS: frozenset[str] = frozenset({
+    "texto_detectado",
+    "tabla_celdas",
+    "pago_detalle",
+    "replica_pdf_texto",
+    "replica_pdf_layout",
+})
+
+# Configuración de entrenamiento por tipo de documento.
+# Permite umbrales más bajos para tipos complejos donde la confianza
+# promedio es estructuralmente menor (FACTURA, DATOS_BANCARIOS, PAGO).
+_TYPE_TRAINING_CONFIG: dict[str, dict] = {
+    "DATOS_BANCARIOS": {
+        "min_field_confidence": 0.60,
+        "min_doc_confidence":   0.70,
+        "key_fields": {"banco", "clabe", "cuenta", "titular", "rfc", "fecha_corte", "periodo"},
+    },
+    "FACTURA": {
+        "min_field_confidence": 0.65,
+        "min_doc_confidence":   0.72,
+        "key_fields": {"rfc_emisor", "rfc_receptor", "total", "folio", "fecha", "emisor", "receptor", "subtotal"},
+    },
+    "PAGO": {
+        "min_field_confidence": 0.65,
+        "min_doc_confidence":   0.72,
+        "key_fields": {"banco", "clabe", "cuenta", "importe", "referencia", "beneficiario", "concepto"},
+    },
+    "COMPROBANTE_DE_PAGO": {
+        "min_field_confidence": 0.65,
+        "min_doc_confidence":   0.72,
+        "key_fields": {"banco", "clabe", "cuenta", "importe", "referencia", "beneficiario"},
+    },
+}
+
 _STOPWORDS = {
     "DE",
     "DEL",
@@ -328,14 +364,18 @@ def _is_reasonable_alias(alias: str) -> bool:
     return token not in {"ES", "PAGO", "CP", "NSS"}
 
 
-def _best_labels(fields: list[dict[str, Any]]) -> dict[str, str]:
-    min_conf = float(os.getenv("ONLINE_TRAINING_MIN_FIELD_CONFIDENCE", "0.9"))
+def _best_labels(fields: list[dict[str, Any]], doc_type: str = "") -> dict[str, str]:
+    type_cfg = _TYPE_TRAINING_CONFIG.get(str(doc_type or "").upper(), {})
+    default_min_conf = float(os.getenv("ONLINE_TRAINING_MIN_FIELD_CONFIDENCE", "0.9"))
+    min_conf = type_cfg.get("min_field_confidence", default_min_conf)
+    key_fields: set[str] = type_cfg.get("key_fields", set())
+
     best: dict[str, tuple[float, str]] = {}
     for field in fields or []:
         if not bool(field.get("valid", True)):
             continue
         key = _normalize_key(str(field.get("key", "")))
-        if not key or key == "texto_detectado":
+        if not key or key in _SKIP_LABEL_KEYS:
             continue
         value = field.get("value")
         if value is None:
@@ -347,7 +387,9 @@ def _best_labels(fields: list[dict[str, Any]]) -> dict[str, str]:
         if len(str(value)) > 200:
             continue
         confidence = float(field.get("confidence", 0) or 0)
-        if confidence < min_conf:
+        # Para campos clave del tipo, aplicar umbral reducido adicional (0.5 mínimo absoluto)
+        effective_min = max(0.5, min_conf - 0.15) if key in key_fields else min_conf
+        if confidence < effective_min:
             continue
         current = best.get(key)
         if current is None or confidence >= current[0]:
@@ -668,7 +710,14 @@ def learn_from_processed_document(
                 field_coverage=_field_coverage,
             )
         return {"trained": False, "reason": "unknown_document_type"}
-    if str(status or "").upper() != "READY":
+    status_upper = str(status or "").upper()
+    # Documentos en NEEDS_REVIEW todavía pueden entrenar el clasificador de tipo
+    # (solo necesitamos texto + tipo, independiente de si los campos validaron).
+    # Para el modelo de aliases de campos sí requerimos READY.
+    _needs_review = status_upper == "NEEDS_REVIEW"
+    _classifier_only = _needs_review  # solo actualiza NB, no aliases
+
+    if status_upper not in {"READY", "NEEDS_REVIEW"}:
         with _LOCK:
             _update_stats_unlocked(
                 stats_path,
@@ -684,8 +733,13 @@ def learn_from_processed_document(
             )
         return {"trained": False, "reason": "status_not_ready"}
 
-    min_doc_conf = float(os.getenv("ONLINE_TRAINING_MIN_DOC_CONFIDENCE", "0.85"))
-    if float(confidence or 0) < min_doc_conf:
+    default_doc_conf = float(os.getenv("ONLINE_TRAINING_MIN_DOC_CONFIDENCE", "0.85"))
+    type_cfg = _TYPE_TRAINING_CONFIG.get(doc_type, {})
+    min_doc_conf = type_cfg.get("min_doc_confidence", default_doc_conf)
+    # Para NEEDS_REVIEW aplicamos umbral 10% más bajo (ya sabemos el tipo, solo
+    # queremos reforzar el clasificador)
+    effective_min_doc_conf = min_doc_conf * 0.90 if _needs_review else min_doc_conf
+    if float(confidence or 0) < effective_min_doc_conf:
         with _LOCK:
             _update_stats_unlocked(
                 stats_path,
@@ -718,9 +772,31 @@ def learn_from_processed_document(
             )
         return {"trained": False, "reason": "insufficient_text"}
 
-    labels = _best_labels(fields)
-    if not labels:
+    labels = _best_labels(fields, doc_type=doc_type)
+
+    # Documentos en NEEDS_REVIEW: entrenamos solo el clasificador de tipo (NB)
+    # aunque no haya labels de campos confiables.
+    if _classifier_only:
         with _LOCK:
+            _update_doc_type_model(_doc_model_path(), doc_type, clean_text)
+            _update_stats_unlocked(
+                stats_path,
+                document_id=document_id,
+                document_type=doc_type,
+                status=status,
+                confidence=confidence,
+                trained=True,
+                reason="trained_classifier_only",
+                labels=len(labels),
+                processing_ms=processing_ms,
+                field_coverage=_field_coverage,
+            )
+        return {"trained": True, "classifier_only": True, "labels": len(labels)}
+
+    if not labels:
+        # Para READY sin labels: aún actualizamos el clasificador de tipo
+        with _LOCK:
+            _update_doc_type_model(_doc_model_path(), doc_type, clean_text)
             _update_stats_unlocked(
                 stats_path,
                 document_id=document_id,
