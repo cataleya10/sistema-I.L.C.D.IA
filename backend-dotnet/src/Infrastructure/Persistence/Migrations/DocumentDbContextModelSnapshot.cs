@@ -180,6 +180,46 @@ namespace Infrastructure.Persistence.Migrations
                     b.ToTable("model_versions", (string)null);
                 });
 
+            modelBuilder.Entity("Domain.Entities.DocumentTable", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string[]>("Columns")
+                        .IsRequired()
+                        .HasColumnType("text[]");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DocTypeHint")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<float>("Quality")
+                        .HasColumnType("real");
+
+                    b.Property<int>("RowCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RowsJson")
+                        .IsRequired()
+                        .HasDefaultValue("[]")
+                        .HasColumnType("jsonb");
+
+                    b.Property<int>("TableIndex")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DocumentId");
+
+                    b.ToTable("document_tables", (string)null);
+                });
+
             modelBuilder.Entity("Domain.Entities.ProcessingLog", b =>
                 {
                     b.Property<Guid>("Id")
@@ -233,11 +273,24 @@ namespace Infrastructure.Persistence.Migrations
                     b.Navigation("Document");
                 });
 
+            modelBuilder.Entity("Domain.Entities.DocumentTable", b =>
+                {
+                    b.HasOne("Domain.Entities.Document", "Document")
+                        .WithMany("Tables")
+                        .HasForeignKey("DocumentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Document");
+                });
+
             modelBuilder.Entity("Domain.Entities.Document", b =>
                 {
                     b.Navigation("Fields");
 
                     b.Navigation("ProcessingLogs");
+
+                    b.Navigation("Tables");
                 });
 #pragma warning restore 612, 618
         }

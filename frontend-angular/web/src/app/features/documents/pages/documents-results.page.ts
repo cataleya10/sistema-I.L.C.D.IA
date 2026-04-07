@@ -266,6 +266,28 @@ import { ReplicaCalibrationPanelComponent } from '../../../shared/components/rep
         </div>
       </section>
 
+      <section class="extracted-tables-panel" *ngIf="document.tables?.length">
+        <h3>Tablas extraidas ({{ document.tables.length }})</h3>
+        <div class="extracted-table-block" *ngFor="let table of document.tables; let i = index; trackBy: trackByIndex">
+          <p class="extracted-table-meta">
+            Tabla {{ i + 1 }}
+            <span *ngIf="table.doc_type_hint"> — {{ table.doc_type_hint }}</span>
+            &nbsp;·&nbsp;{{ table.row_count }} filas&nbsp;·&nbsp;calidad {{ (table.quality / 100) | percent:'1.0-0' }}
+          </p>
+          <div class="cells-table-wrap">
+            <table class="cells-table">
+              <thead>
+                <tr><th *ngFor="let col of table.columns; trackBy: trackByIndex">{{ col }}</th></tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let row of table.rows; let ri = index; trackBy: trackByIndex" [class.alt]="ri % 2 === 1">
+                  <td *ngFor="let col of table.columns; trackBy: trackByIndex">{{ row[col] ?? '' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
 
     </section>
 
@@ -628,6 +650,29 @@ import { ReplicaCalibrationPanelComponent } from '../../../shared/components/rep
         color: #111827;
       }
       .empty {
+        font-size: 12px;
+        color: #6b7280;
+      }
+      .extracted-tables-panel {
+        display: grid;
+        gap: 16px;
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 16px;
+      }
+      .extracted-tables-panel h3 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 600;
+        color: #111827;
+      }
+      .extracted-table-block {
+        display: grid;
+        gap: 8px;
+      }
+      .extracted-table-meta {
+        margin: 0;
         font-size: 12px;
         color: #6b7280;
       }

@@ -3367,6 +3367,13 @@ def _extract_payment_table_payload_impl(base_text_raw: str, ocr_boxes, pdf_table
         source = "generic_table_payload"
         selected_table_index = int(fallback_table.get("table_index", 0) or 0)
 
+    if source == "pdf_structure":
+        rows, secondary_pdf_tables = _merge_scotia_secondary_pdf_tables(
+            rows,
+            secondary_pdf_tables,
+            base_text_raw,
+        )
+
     # Detect if the winning rows come from a BBVA vertical key-value receipt.
     # These are self-contained and must NOT be merged with generic text/pdf
     # sources, which would add junk columns and duplicate rows.
@@ -3404,7 +3411,14 @@ def _extract_payment_table_payload_impl(base_text_raw: str, ocr_boxes, pdf_table
     if len(rows) >= 2:
         _expected_cols = len(rows[0])
         clean = [rows[0]]
+        skip_next_summary_values = False
         for data_row in rows[1:]:
+            if skip_next_summary_values:
+                skip_next_summary_values = False
+                continue
+            if _is_summary_row(data_row):
+                skip_next_summary_values = True
+                continue
             if not _is_metadata_row(data_row, expected_cols=_expected_cols):
                 clean.append(data_row)
         rows = clean
@@ -3805,6 +3819,25 @@ def _enrich_payment_table_payload_impl(
     if mapped_fields:
         enriched["mapped_fields"] = mapped_fields
 
+    rows_for_validation = enriched.get("rows")
+    if isinstance(rows_for_validation, list) and len(rows_for_validation) >= 2:
+        refreshed_warnings: list[str] = []
+        try:
+            refreshed_warnings.extend(_validate_payment_table_cells(rows_for_validation))
+        except Exception:
+            logger.debug("table payload enrichment: cell validation refresh failed", exc_info=True)
+        try:
+            refreshed_warnings.extend(_validate_payment_table_coherence(rows_for_validation))
+        except Exception:
+            logger.debug("table payload enrichment: coherence validation refresh failed", exc_info=True)
+
+        if refreshed_warnings:
+            enriched["validation_warnings"] = refreshed_warnings
+        else:
+            enriched.pop("validation_warnings", None)
+    else:
+        enriched.pop("validation_warnings", None)
+
     return enriched
 
 
@@ -3829,6 +3862,101 @@ def _append_scotia_summary_rows_to_table(rows: list[list[str]], raw_text: str) -
         appended.append(row)
         existing.add(signature)
     return appended
+
+
+def _looks_like_scotia_continuation_table(
+    table_rows: list[list[str]],
+    *,
+    expected_cols: int,
+) -> bool:
+    if not table_rows or expected_cols <= 0:
+        return False
+
+    first_row = [str(cell or "").strip() for cell in table_rows[0]]
+    if len(first_row) != expected_cols or not any(first_row):
+        return False
+
+    joined = " ".join(_ascii_fold(_normalize_text(cell)).upper() for cell in first_row if _normalize_text(cell))
+    if any(
+        token in joined
+        for token in (
+            "TIPO DE REGISTRO",
+            "CUENTA DE CARGO",
+            "REFERENCIA DE CARGO",
+            "NOMBRE DEL BENEFICIARIO",
+            "NO. CUENTA BENEFICIARIO",
+        )
+    ):
+        return False
+
+    first_cell = _ascii_fold(_normalize_text(first_row[0])).upper()
+    amount_cell = first_row[2] if len(first_row) >= 3 else ""
+    date_cell = first_row[3] if len(first_row) >= 4 else ""
+    amount_pat = re.compile(r"\$?\s*[0-9OIL]{1,3}(?:[.,][0-9OIL]{3})*(?:[.,][0-9OIL]{2})")
+
+    return (
+        first_cell.startswith(("DA ALTA", "DA BAJA"))
+        and bool(amount_pat.search(amount_cell))
+        and bool(re.search(r"\d{2}/\d{2}/\d{4}", date_cell))
+    )
+
+
+def _merge_scotia_secondary_pdf_tables(
+    rows: list[list[str]],
+    secondary_pdf_tables: list[list[list[str]]] | None,
+    raw_text: str,
+) -> tuple[list[list[str]], list[list[list[str]]]]:
+    if len(rows) < 2 or not secondary_pdf_tables:
+        return rows, list(secondary_pdf_tables or [])
+    if _payment_detect_bank(raw_text) != "SCOTIABANK":
+        return rows, list(secondary_pdf_tables)
+
+    expected_cols = len(rows[0]) if rows and rows[0] else 0
+    if expected_cols <= 0:
+        return rows, list(secondary_pdf_tables)
+
+    merged_rows = list(rows)
+    remaining_tables: list[list[list[str]]] = []
+    existing_signatures = {
+        "|".join(_normalize_table_cell(cell) for cell in row)
+        for row in merged_rows
+        if isinstance(row, list)
+    }
+    header_signature = "|".join(_normalize_table_cell(cell) for cell in rows[0])
+
+    for sec_table in secondary_pdf_tables:
+        normalized_table = [
+            [str(cell or "") for cell in row]
+            for row in sec_table
+            if isinstance(row, list)
+        ]
+        if not normalized_table:
+            continue
+
+        data_rows: list[list[str]] | None = None
+        if _looks_like_scotia_continuation_table(normalized_table, expected_cols=expected_cols):
+            data_rows = normalized_table
+        elif (
+            len(normalized_table) >= 2
+            and len(normalized_table[0]) == expected_cols
+            and "|".join(_normalize_table_cell(cell) for cell in normalized_table[0]) == header_signature
+        ):
+            data_rows = normalized_table[1:]
+
+        if data_rows is None:
+            remaining_tables.append(normalized_table)
+            continue
+
+        for row in data_rows:
+            if not any(_normalize_table_cell(cell) for cell in row):
+                continue
+            signature = "|".join(_normalize_table_cell(cell) for cell in row)
+            if signature in existing_signatures:
+                continue
+            merged_rows.append(row)
+            existing_signatures.add(signature)
+
+    return merged_rows, remaining_tables
 
 
 def _payment_rows_look_low_quality(rows: list[list[str]]) -> bool:
@@ -5107,6 +5235,14 @@ def _fix_banorte_canonical_rows(canonical_rows: list[dict], text: str) -> None:
         row["referencia"] = m.group(7).strip() if m.group(7) else ""
         new_rows.append(row)
 
+    def _existing_row_quality(row: dict) -> bool:
+        cuenta = _normalize_text(str(row.get("cuenta_beneficiario") or ""))
+        importe = _normalize_text(str(row.get("importe") or ""))
+        nombre = _normalize_text(str(row.get("nombre_beneficiario") or ""))
+        return bool(cuenta and importe and nombre)
+
+    existing_good_rows = sum(1 for row in canonical_rows if isinstance(row, dict) and _existing_row_quality(row))
+
     if new_rows or has_bad:
         if new_rows:
             # Deduplicate by (clave, cuenta, importe)
@@ -5117,9 +5253,16 @@ def _fix_banorte_canonical_rows(canonical_rows: list[dict], text: str) -> None:
                 if key not in seen:
                     seen.add(key)
                     deduped.append(r)
-            canonical_rows.clear()
-            canonical_rows.extend(deduped)
-            logger.debug("Banorte fixup: %d rows extracted from text", len(deduped))
+            if len(deduped) >= existing_good_rows:
+                canonical_rows.clear()
+                canonical_rows.extend(deduped)
+                logger.debug("Banorte fixup: %d rows extracted from text", len(deduped))
+            else:
+                logger.debug(
+                    "Banorte fixup skipped replacement: extracted_rows=%d existing_good_rows=%d",
+                    len(deduped),
+                    existing_good_rows,
+                )
         else:
             # Remove bad footer rows even if we couldn't extract good ones
             clean = [r for r in canonical_rows
@@ -5153,6 +5296,33 @@ def _fix_santander_canonical_rows(canonical_rows: list[dict], text: str) -> None
     schema_keys = list(canonical_rows[0].keys()) if canonical_rows else [
         "nombre_beneficiario", "cuenta_beneficiario", "importe", "concepto_pago"
     ]
+
+    def _existing_row_quality(row: dict) -> bool:
+        cuenta = _normalize_text(str(row.get("cuenta_beneficiario") or ""))
+        importe = _normalize_text(str(row.get("importe") or ""))
+        nombre = _normalize_text(str(row.get("nombre_beneficiario") or row.get("nombre") or ""))
+        return bool(cuenta and importe and nombre)
+
+    existing_good_rows = sum(
+        1 for row in canonical_rows if isinstance(row, dict) and _existing_row_quality(row)
+    )
+
+    def _row_set_score(rows: list[dict]) -> tuple[int, int, int, int, int]:
+        score_rows = [row for row in rows if isinstance(row, dict)]
+        return (
+            sum(1 for row in score_rows if _existing_row_quality(row)),
+            sum(1 for row in score_rows if _normalize_text(str(row.get("referencia") or ""))),
+            sum(1 for row in score_rows if _normalize_text(str(row.get("estatus") or ""))),
+            sum(1 for row in score_rows if _normalize_text(str(row.get("concepto_pago") or ""))),
+            sum(
+                1
+                for row in score_rows
+                for key in row
+                if _normalize_text(str(row.get(key) or ""))
+            ),
+        )
+
+    existing_score = _row_set_score(canonical_rows)
 
     # --- Format A: SDR "Comprobante de la operación" per-beneficiary sections ---
     # Each comprobante page has a "DATOS DEL BENEFICIARIO" block with:
@@ -5204,9 +5374,17 @@ def _fix_santander_canonical_rows(canonical_rows: list[dict], text: str) -> None
                 if key not in seen:
                     seen.add(key)
                     deduped.append(r)
-            canonical_rows.clear()
-            canonical_rows.extend(deduped)
-            logger.debug("Santander fixup A (SDR comprobante): %d beneficiarios", len(deduped))
+            candidate_score = _row_set_score(deduped)
+            if candidate_score > existing_score:
+                canonical_rows.clear()
+                canonical_rows.extend(deduped)
+                logger.debug("Santander fixup A (SDR comprobante): %d beneficiarios", len(deduped))
+            else:
+                logger.debug(
+                    "Santander fixup A skipped replacement: candidate_score=%s existing_score=%s",
+                    candidate_score,
+                    existing_score,
+                )
             return
 
     # --- Format B: individual SPEI "Comprobante de Operación" ---
@@ -5248,9 +5426,53 @@ def _fix_santander_canonical_rows(canonical_rows: list[dict], text: str) -> None
         if m_ref and "referencia" in schema_keys:
             row["referencia"] = m_ref.group(1).strip()
 
+        candidate_score = _row_set_score([row])
+        if candidate_score > existing_score:
+            canonical_rows.clear()
+            canonical_rows.append(row)
+            logger.debug("Santander fixup B (SPEI): '%s' cuenta=%s", nombre, cuenta)
+        else:
+            logger.debug(
+                "Santander fixup B skipped replacement: candidate_score=%s existing_score=%s",
+                candidate_score,
+                existing_score,
+            )
+
+
+def _fix_scotiabank_canonical_rows(canonical_rows: list[dict], text: str) -> None:
+    del text
+    if not canonical_rows:
+        return
+
+    identifier_keys = (
+        "clave_beneficiario",
+        "nombre_beneficiario",
+        "cuenta_beneficiario",
+        "referencia",
+        "concepto_pago",
+    )
+    seen: set[tuple[str, ...]] = set()
+    cleaned: list[dict] = []
+    for row in canonical_rows:
+        if not isinstance(row, dict):
+            continue
+        if not any(_normalize_text(str(row.get(key) or "")) for key in identifier_keys):
+            continue
+
+        signature = tuple(
+            _normalize_text(str(row.get(key) or ""))
+            for key in ("clave_beneficiario", "cuenta_beneficiario", "referencia", "importe", "concepto_pago")
+        )
+        if signature in seen:
+            continue
+        seen.add(signature)
+        cleaned.append(row)
+
+    if len(cleaned) < len(canonical_rows):
+        removed = len(canonical_rows) - len(cleaned)
         canonical_rows.clear()
-        canonical_rows.append(row)
-        logger.debug("Santander fixup B (SPEI): '%s' cuenta=%s", nombre, cuenta)
+        canonical_rows.extend(cleaned)
+        logger.debug("Scotiabank fixup: removed %d summary/duplicate rows", removed)
 
 
 def _extract_banorte_payment_metadata(raw_text: str) -> dict[str, str]:
@@ -5339,6 +5561,7 @@ def _extract_banorte_payment_metadata(raw_text: str) -> dict[str, str]:
         r"TOTAL\s+IMPORTE\s*:?\s*\$?\s*([\d,]+\.?\d*)",
         r"IMPORTE\s+TOTAL\s*:?\s*\$?\s*([\d,]+\.?\d*)",
         r"MONTO\s+TOTAL\s*:?\s*\$?\s*([\d,]+\.?\d*)",
+        r"IMPORTE\s*:?\s*(?:[0-9OIL]{1,6}\s*)?\$?\s*([\d,]+\.?\d*)",
     ]:
         m = re.search(pat, text)
         if m:
@@ -5346,6 +5569,29 @@ def _extract_banorte_payment_metadata(raw_text: str) -> dict[str, str]:
             if normalized:
                 out.setdefault("importe_total", normalized)
             break
+
+    amount_matches = re.findall(
+        r"\$?\s*([0-9OIL]{1,3}(?:[.,][0-9OIL]{3})*(?:[.,][0-9OIL]{2}))",
+        text,
+    )
+    if amount_matches:
+        best_amount = ""
+        best_value = 0.0
+        for raw_amt in amount_matches:
+            normalized = _normalize_payment_amount("$" + raw_amt)
+            if not normalized:
+                continue
+            try:
+                value = float(normalized.replace("$", "").replace(",", ""))
+            except ValueError:
+                continue
+            if value > best_value:
+                best_value = value
+                best_amount = normalized
+
+        if best_amount:
+            out["importe_detectado"] = best_amount
+            out.setdefault("importe_total", best_amount)
 
     return out
 
@@ -6192,6 +6438,123 @@ def _payment_to_canonical_rows(bank: str, rows: list[dict]) -> tuple[list[str], 
     return canonical_keys, canonical_rows
 
 
+def _payment_rows_total_cents(rows: list[dict], amount_key: str = "importe") -> int | None:
+    total = 0
+    found = False
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        cents = _parse_amount_to_cents(str(row.get(amount_key) or ""))
+        if cents is None:
+            continue
+        total += cents
+        found = True
+    return total if found else None
+
+
+def _build_santander_raw_canonical_rows(row_objects: list[dict]) -> list[dict]:
+    candidate_rows: list[dict] = []
+    seen: set[tuple[str, ...]] = set()
+
+    for row in row_objects:
+        if not isinstance(row, dict):
+            continue
+
+        cuenta = _normalize_numeric_field(row.get("cuenta") or row.get("cuenta_beneficiario") or "")
+        referencia = _normalize_text(row.get("referencia") or row.get("referencia_2") or "")
+        importe = _normalize_payment_amount(row.get("importe") or row.get("importe_2") or "")
+        nombre = _normalize_text(row.get("nombre") or row.get("nombre_beneficiario") or "").upper()
+        paterno = _normalize_text(row.get("apellidopaterno") or "").upper()
+        materno = _normalize_text(row.get("apellidomaterno") or "").upper()
+        estatus = _normalize_text(row.get("estatus") or "").upper()
+        concepto = _normalize_text(row.get("concepto") or row.get("concepto_pago") or "").upper()
+        combo = _normalize_text(row.get("apellidopaternoapellidomaternoestatus") or "").upper()
+
+        if combo:
+            combo_tokens = combo.split()
+            if not estatus and combo_tokens and combo_tokens[-1] in _ALL_PAYMENT_STATUSES:
+                estatus = combo_tokens[-1]
+                combo_tokens = combo_tokens[:-1]
+            if combo_tokens:
+                if not paterno:
+                    paterno = combo_tokens[0]
+                if not materno and len(combo_tokens) > 1:
+                    materno = " ".join(combo_tokens[1:])
+
+        full_name = " ".join(part for part in (nombre, paterno, materno) if part).strip()
+        if not cuenta or not importe or not full_name:
+            continue
+
+        candidate = {
+            "nombre_beneficiario": full_name,
+            "cuenta_beneficiario": cuenta,
+            "referencia": referencia,
+            "importe": importe,
+            "estatus": estatus,
+            "concepto_pago": concepto,
+        }
+        signature = (
+            candidate["cuenta_beneficiario"],
+            candidate["referencia"],
+            candidate["importe"],
+            candidate["nombre_beneficiario"],
+        )
+        if signature in seen:
+            continue
+        seen.add(signature)
+        candidate_rows.append(candidate)
+
+    return candidate_rows
+
+
+def _prefer_santander_raw_canonical_rows(
+    metadata: dict[str, str],
+    row_objects: list[dict],
+    canonical_columns: list[str],
+    canonical_rows: list[dict],
+) -> tuple[list[str], list[dict]]:
+    candidate_rows = _build_santander_raw_canonical_rows(row_objects)
+    if not candidate_rows:
+        return canonical_columns, canonical_rows
+
+    expected_total = _parse_amount_to_cents(
+        str(metadata.get("importe_detectado") or metadata.get("importe_total") or "")
+    )
+    candidate_total = _payment_rows_total_cents(candidate_rows)
+    current_total = _payment_rows_total_cents(canonical_rows)
+    candidate_reference_count = sum(
+        1 for row in candidate_rows if _normalize_text(str(row.get("referencia") or ""))
+    )
+    current_reference_count = sum(
+        1 for row in canonical_rows if _normalize_text(str(row.get("referencia") or ""))
+    )
+
+    should_use_candidate = False
+    if expected_total is not None and candidate_total is not None:
+        candidate_diff = abs(candidate_total - expected_total)
+        current_diff = abs(current_total - expected_total) if current_total is not None else 10**18
+        if candidate_diff < current_diff:
+            should_use_candidate = True
+
+    if not should_use_candidate:
+        if len(candidate_rows) > len(canonical_rows) and candidate_reference_count >= current_reference_count:
+            should_use_candidate = True
+
+    if not should_use_candidate:
+        return canonical_columns, canonical_rows
+
+    preferred_columns = [
+        "nombre_beneficiario",
+        "cuenta_beneficiario",
+        "referencia",
+        "importe",
+        "estatus",
+        "concepto_pago",
+    ]
+    columns = [column for column in preferred_columns if any(_normalize_text(row.get(column)) for row in candidate_rows)]
+    return columns, candidate_rows
+
+
 def _extract_payment_detail_payload(base_text_raw: str, table_payload: dict | None) -> dict | None:
     try:
         return _extract_payment_detail_payload_impl(base_text_raw, table_payload)
@@ -6246,6 +6609,8 @@ def _extract_payment_detail_payload_impl(base_text_raw: str, table_payload: dict
             metadata.update(_extract_bbva_payment_metadata(text))
         elif bank == "SANTANDER":
             metadata.update(_extract_santander_payment_metadata(text))
+        elif bank == "BANORTE":
+            metadata.update(_extract_banorte_payment_metadata(text))
         else:
             metadata.update(_extract_generic_bank_payment_metadata(text, bank))
         metadata = _sanitize_payment_metadata(metadata)
@@ -6258,8 +6623,21 @@ def _extract_payment_detail_payload_impl(base_text_raw: str, table_payload: dict
                 if not isinstance(raw_row, list):
                     continue
                 rows.append([str(cell or "") for cell in raw_row])
+        secondary_pdf_tables = table_payload.get("secondary_pdf_tables") or []
+        rows, secondary_pdf_tables = _merge_scotia_secondary_pdf_tables(
+            rows,
+            secondary_pdf_tables if isinstance(secondary_pdf_tables, list) else [],
+            text,
+        )
         row_objects = _payment_rows_to_objects(rows) if rows else []
         canonical_columns, canonical_rows = _payment_to_canonical_rows(bank, row_objects)
+        if bank == "SANTANDER" and row_objects:
+            canonical_columns, canonical_rows = _prefer_santander_raw_canonical_rows(
+                metadata,
+                row_objects,
+                canonical_columns,
+                canonical_rows,
+            )
         # Uppercase name columns in canonical rows
         _name_cols = {"nombre", "nombre_beneficiario", "apellido_paterno", "apellido_materno", "titular"}
         for crow in canonical_rows:
@@ -6283,6 +6661,8 @@ def _extract_payment_detail_payload_impl(base_text_raw: str, table_payload: dict
             _fix_banorte_canonical_rows(canonical_rows, text)
         elif bank == "SANTANDER" and canonical_rows:
             _fix_santander_canonical_rows(canonical_rows, text)
+        elif bank == "SCOTIABANK" and canonical_rows:
+            _fix_scotiabank_canonical_rows(canonical_rows, text)
 
         # Use canonical keys for rows in table_out (matches what callers expect)
         _header_keys = _payment_header_keys_from_cells(rows[0]) if rows else []
@@ -6291,6 +6671,24 @@ def _extract_payment_detail_payload_impl(base_text_raw: str, table_payload: dict
         )
 
         summary_tables_early = _extract_scotia_summary_tables(text) if bank == "SCOTIABANK" else []
+        if isinstance(secondary_pdf_tables, list):
+            for sec_idx, sec_table in enumerate(secondary_pdf_tables):
+                if not isinstance(sec_table, list) or len(sec_table) < 2:
+                    continue
+                sec_header = [str(cell or "") for cell in sec_table[0]]
+                sec_rows = [
+                    [str(cell or "") for cell in row]
+                    for row in sec_table[1:]
+                    if isinstance(row, list) and any(str(cell or "").strip() for cell in row)
+                ]
+                if sec_rows:
+                    summary_tables_early.append(
+                        {
+                            "title": f"Tabla {sec_idx + 2}",
+                            "columns": sec_header,
+                            "rows": sec_rows,
+                        }
+                    )
 
         table_out = {
             "columns": rows[0] if rows else [],
@@ -6375,6 +6773,13 @@ def _extract_payment_detail_payload_impl(base_text_raw: str, table_payload: dict
                 rows.append([str(cell or "") for cell in raw_row])
     row_objects = _payment_rows_to_objects(rows) if rows else []
     canonical_columns, canonical_rows = _payment_to_canonical_rows(bank, row_objects)
+    if bank == "SANTANDER" and row_objects:
+        canonical_columns, canonical_rows = _prefer_santander_raw_canonical_rows(
+            metadata,
+            row_objects,
+            canonical_columns,
+            canonical_rows,
+        )
     summary_tables = _extract_scotia_summary_tables(text) if bank == "SCOTIABANK" else []
 
     # Convert secondary PDF tables (different header structures) into summary_tables
@@ -6483,6 +6888,8 @@ def _extract_payment_detail_payload_impl(base_text_raw: str, table_payload: dict
         _fix_banorte_canonical_rows(canonical_rows, text)
     elif bank == "SANTANDER" and canonical_rows:
         _fix_santander_canonical_rows(canonical_rows, text)
+    elif bank == "SCOTIABANK" and canonical_rows:
+        _fix_scotiabank_canonical_rows(canonical_rows, text)
 
     # --- BBVA "Grupo Pago Mismo Banco": split multi-payment into separate tables ---
     text_upper = _ascii_fold(text).upper() if text else ""

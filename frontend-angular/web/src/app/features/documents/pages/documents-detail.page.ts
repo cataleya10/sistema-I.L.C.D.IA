@@ -142,6 +142,32 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
                       <ng-container *ngIf="paymentDetailForField(field) as paymentDetail; else plainValue">
                         <div class="payment-detail">
                           <p class="payment-detail__bank">Banco: {{ paymentDetail.bank }}</p>
+                          <div
+                            class="payment-detail__validation"
+                            *ngIf="paymentDetail.expectedTotalAmount !== null || paymentDetail.validationWarnings.length"
+                          >
+                            <div class="payment-detail__validation-grid">
+                              <p class="payment-detail__validation-item">
+                                <strong>Total documento:</strong> {{ formatAmount(paymentDetail.expectedTotalAmount) }}
+                              </p>
+                              <p class="payment-detail__validation-item">
+                                <strong>Suma filas:</strong> {{ formatAmount(paymentDetail.extractedTotalAmount) }}
+                              </p>
+                              <p class="payment-detail__validation-item">
+                                <strong>Diferencia:</strong> {{ formatAmount(paymentDetail.totalDifferenceAmount) }}
+                              </p>
+                              <p
+                                class="payment-detail__validation-item payment-detail__validation-status"
+                                [class.ok]="paymentDetail.totalsMatch === true"
+                                [class.warn]="paymentDetail.totalsMatch !== true"
+                              >
+                                <strong>Resultado:</strong> {{ paymentDetailStatus(paymentDetail) }}
+                              </p>
+                            </div>
+                            <ul class="payment-detail__warnings" *ngIf="paymentDetail.validationWarnings.length">
+                              <li *ngFor="let warning of paymentDetail.validationWarnings; trackBy: trackByIndex">{{ warning }}</li>
+                            </ul>
+                          </div>
                           <div class="payment-detail__meta" *ngIf="paymentDetail.metadataEntries.length">
                             <p class="payment-detail__meta-item" *ngFor="let meta of paymentDetail.metadataEntries; trackBy: trackByMetaKey">
                               <strong>{{ meta.key }}:</strong> {{ meta.value }}
@@ -280,6 +306,31 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
         (exportJson)="exportReplicaCalibration()"
         (importJson)="importReplicaCalibration($event)"
       ></app-replica-calibration-panel>
+
+      <section class="extracted-tables-panel" *ngIf="document.tables?.length">
+        <h3>Tablas extraidas ({{ document.tables.length }})</h3>
+        <div class="extracted-table-block" *ngFor="let table of document.tables; let i = index; trackBy: trackByIndex">
+          <p class="extracted-table-meta">
+            Tabla {{ i + 1 }}
+            <span *ngIf="table.doc_type_hint"> — {{ table.doc_type_hint }}</span>
+            &nbsp;·&nbsp;{{ table.row_count }} filas&nbsp;·&nbsp;calidad {{ (table.quality / 100) | percent:'1.0-0' }}
+          </p>
+          <div class="cells-table-wrap">
+            <table class="cells-table">
+              <thead>
+                <tr>
+                  <th *ngFor="let col of table.columns; trackBy: trackByIndex">{{ col }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let row of table.rows; let ri = index; trackBy: trackByIndex" [class.alt]="ri % 2 === 1">
+                  <td *ngFor="let col of table.columns; trackBy: trackByIndex">{{ row[col] ?? '' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
 
       <details class="logs">
         <summary>Ver logs</summary>
@@ -681,6 +732,29 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
         font-weight: 700;
         color: #1f2937;
       }
+      .payment-detail__validation {
+        display: grid;
+        gap: 8px;
+        padding: 10px;
+        background: #f8fafc;
+        border: 1px solid #dbe4f0;
+        border-radius: 10px;
+      }
+      .payment-detail__validation-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
+      .payment-detail__validation-item {
+        margin: 0;
+        font-size: 12px;
+        color: #334155;
+      }
+      .payment-detail__validation-status.ok { color: #166534; }
+      .payment-detail__validation-status.warn { color: #b45309; }
+      .payment-detail__warnings {
+        margin: 0;
+        padding-left: 18px;
+        color: #9a3412;
+        font-size: 12px;
+      }
+      .payment-detail__warnings li + li { margin-top: 4px; }
       .payment-detail__meta {
         display: grid;
         gap: 3px;
@@ -744,6 +818,29 @@ import { buildExtractionHtmlDocument } from '../utils/extraction-export';
         color: #111827;
       }
       .empty {
+        font-size: 12px;
+        color: #6b7280;
+      }
+      .extracted-tables-panel {
+        display: grid;
+        gap: 16px;
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 16px;
+      }
+      .extracted-tables-panel h3 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 600;
+        color: #111827;
+      }
+      .extracted-table-block {
+        display: grid;
+        gap: 8px;
+      }
+      .extracted-table-meta {
+        margin: 0;
         font-size: 12px;
         color: #6b7280;
       }
@@ -1485,6 +1582,23 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
     return getDocumentTypeLabel(type);
   }
 
+  formatAmount(value: number | null): string {
+    if (value === null || value === undefined || Number.isNaN(value)) {
+      return 'N/D';
+    }
+    return `$${value.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+
+  paymentDetailStatus(paymentDetail: PaymentDetailViewModel): string {
+    if (paymentDetail.totalsMatch === true) {
+      return 'VALIDACION CORRECTA';
+    }
+    if (paymentDetail.expectedTotalAmount === null) {
+      return paymentDetail.validationWarnings.length ? 'REVISAR OBSERVACIONES' : 'SIN TOTAL DE CONTROL';
+    }
+    return 'NO COINCIDE';
+  }
+
   isTableField(field: DocumentDetail['fields'][number]): boolean {
     return isTableCellsField(field);
   }
@@ -1840,4 +1954,3 @@ export class DocumentsDetailPage implements OnInit, OnDestroy {
   trackByMetaKey(_: number, m: { key: string }): string { return m.key; }
   trackBySummaryTitle(_: number, s: { title: string }): string { return s.title; }
 }
-

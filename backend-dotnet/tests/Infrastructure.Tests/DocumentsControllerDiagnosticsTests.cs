@@ -3,6 +3,7 @@ using Application.DTOs;
 using Application.Interfaces;
 using Infrastructure.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shared.Options;
 using Xunit;
@@ -110,7 +111,8 @@ public class DocumentsControllerDiagnosticsTests
             new FakeDocumentService(),
             pythonAiClient,
             new DocumentExportService(),
-            Options.Create(new UploadOptions()));
+            Options.Create(new UploadOptions()),
+            NullLogger<DocumentsController>.Instance);
     }
 
     private sealed class FakeDocumentService : IDocumentService

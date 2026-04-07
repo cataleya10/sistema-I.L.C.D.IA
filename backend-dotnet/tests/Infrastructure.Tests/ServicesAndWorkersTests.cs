@@ -187,6 +187,7 @@ public class ProcessingTrackerTests
     private static DocumentProcessResponse CreateDummyResponse(Guid id) =>
         new(id, Domain.Enums.DocumentStatus.Ready, Domain.Enums.DocumentType.Ine,
             0.95m, Array.Empty<DocumentFieldResultDto>(),
+            Array.Empty<ExtractedTableDto>(),
             Array.Empty<string>(), Array.Empty<string>(),
             new DocumentProcessMeta(1, "paddle", "1.0", "v1", 100));
 }

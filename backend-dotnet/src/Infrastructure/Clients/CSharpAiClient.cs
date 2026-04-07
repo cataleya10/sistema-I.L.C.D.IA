@@ -127,6 +127,7 @@ public sealed class CSharpAiClient : IPythonAiClient
             type,
             confidence,
             fields,
+            Array.Empty<ExtractedTableDto>(),
             warnings,
             Array.Empty<string>(),
             new DocumentProcessMeta(

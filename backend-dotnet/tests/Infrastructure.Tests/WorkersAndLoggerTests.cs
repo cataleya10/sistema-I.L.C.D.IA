@@ -20,6 +20,7 @@ public class DocumentProcessingWorkerTests
     private static DocumentProcessResponse MakeResponse(Guid id) =>
         new(id, DocumentStatus.Ready, DocumentType.Ine, 0.95m,
             Array.Empty<DocumentFieldResultDto>(),
+            Array.Empty<ExtractedTableDto>(),
             Array.Empty<string>(), Array.Empty<string>(),
             new DocumentProcessMeta(1, "PaddleOCR", "v1", "v1", 200));
 

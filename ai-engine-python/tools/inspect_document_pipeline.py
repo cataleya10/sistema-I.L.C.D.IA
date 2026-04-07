@@ -16,6 +16,7 @@ from app.pipelines.ocr import run_ocr
 from app.pipelines.preprocess import preprocess
 from app.pipelines.validate import validate_fields
 from app.services.document_processor import (
+    _correct_doc_type_from_fields,
     _evaluate_payroll_strict,
     _extract_payroll_canonical_table,
     _normalize_fields,
@@ -176,12 +177,17 @@ async def inspect_document(
     fields = await validate_fields(fields)
     fields = _normalize_fields(doc_type, fields)
     fields = _postprocess_fields(doc_type, fields)
+    corrected_doc_type, corrected_confidence, correction_warning = _correct_doc_type_from_fields(
+        doc_type,
+        fields,
+        doc_confidence,
+    )
 
     field_map = {str(field.get("key", "")): field for field in fields}
     tabla_payload = _safe_json_loads(field_map.get("tabla_celdas", {}).get("value"))
     detail_payload = _safe_json_loads(field_map.get("pago_detalle", {}).get("value"))
     payroll_table = _extract_payroll_canonical_table(fields)
-    strict_warnings, strict_hard_fail = _evaluate_payroll_strict(fields, doc_type)
+    strict_warnings, strict_hard_fail = _evaluate_payroll_strict(fields, corrected_doc_type)
 
     return {
         "file_path": str(file_path),
@@ -196,8 +202,11 @@ async def inspect_document(
         },
         "pipeline": {
             "ocr_engine": ocr_engine,
-            "doc_type": doc_type,
-            "doc_confidence": doc_confidence,
+            "doc_type": corrected_doc_type,
+            "doc_confidence": corrected_confidence,
+            "original_doc_type": doc_type,
+            "original_doc_confidence": doc_confidence,
+            "type_correction_warning": correction_warning,
             "field_count": len(fields),
             "field_keys": [field.get("key") for field in fields],
         },

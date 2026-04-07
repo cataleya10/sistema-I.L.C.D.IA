@@ -173,7 +173,7 @@ def _process_all_tables(
                 logger.debug("postprocess_payment_table falló", exc_info=True)
 
         # Remapeo al esquema bancario solo para dispersiones/transferencias, NO nómina
-        if is_bank:
+        if doc_type in _BANK_REMAP_DOC_TYPES:
             try:
                 # remap devuelve (cols, rows, display_labels) — ignorar display_labels
                 canon_cols, canon_rows, _ = remap_to_target_payment_schema(canon_cols, canon_rows, bank=bank or "")
@@ -272,6 +272,102 @@ _TYPE_SIGNAL_FIELDS: dict[str, frozenset[str]] = {
 
 _MIN_SIGNAL_MATCH = 2  # mínimo de campos señal para reclasificar
 
+_PAYMENT_TABLE_SIGNAL_COLUMNS = frozenset({
+    "cuenta",
+    "cuenta_beneficiario",
+    "referencia",
+    "importe",
+    "nombre",
+    "nombre_beneficiario",
+    "banco_receptor",
+    "concepto_pago",
+    "clave_beneficiario",
+    "dias_vigencia",
+    "fecha_aplicacion",
+})
+
+_PAYMENT_TABLE_REQUIRED_CORE = frozenset({
+    "cuenta",
+    "referencia",
+    "importe",
+})
+
+
+def _read_field_value(field: dict):
+    value = field.get("corrected_value")
+    if value in {None, ""}:
+        value = field.get("value")
+    return value
+
+
+def _parse_structured_table_payload(field: dict) -> dict | None:
+    raw_value = _read_field_value(field)
+    payload: dict | None = None
+    if isinstance(raw_value, dict):
+        payload = raw_value
+    elif isinstance(raw_value, str):
+        text = raw_value.strip()
+        if not text:
+            return None
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            return None
+        if isinstance(parsed, dict):
+            payload = parsed
+
+    if not isinstance(payload, dict):
+        return None
+
+    normalized_key = _normalize_key_name(str(field.get("key", "") or ""))
+    if normalized_key == "pago_detalle" and isinstance(payload.get("table"), dict):
+        return payload["table"]
+    return payload
+
+
+def _extract_structured_table_profile(fields: list[dict]) -> tuple[set[str], int]:
+    best_columns: set[str] = set()
+    best_rows = 0
+
+    for field in fields:
+        normalized_key = _normalize_key_name(str(field.get("key", "") or ""))
+        if normalized_key not in {"tabla_celdas", "pago_detalle"}:
+            continue
+
+        payload = _parse_structured_table_payload(field)
+        if not isinstance(payload, dict):
+            continue
+
+        columns_raw = payload.get("canonical_columns")
+        rows_raw = payload.get("canonical_rows")
+        if not isinstance(columns_raw, list) or not isinstance(rows_raw, list):
+            continue
+
+        columns = {
+            _normalize_key_name(str(col or ""))
+            for col in columns_raw
+            if str(col or "").strip()
+        }
+        row_count = sum(1 for row in rows_raw if isinstance(row, dict) and row)
+        if row_count <= 0 or not columns:
+            continue
+
+        if row_count > best_rows or (row_count == best_rows and len(columns) > len(best_columns)):
+            best_columns = columns
+            best_rows = row_count
+
+    return best_columns, best_rows
+
+
+def _looks_like_payment_table(fields: list[dict]) -> bool:
+    columns, row_count = _extract_structured_table_profile(fields)
+    if row_count <= 0 or not columns:
+        return False
+
+    core_hits = len(columns & _PAYMENT_TABLE_REQUIRED_CORE)
+    signal_hits = len(columns & _PAYMENT_TABLE_SIGNAL_COLUMNS)
+    return core_hits >= 2 and signal_hits >= 4
+
 
 def _correct_doc_type_from_fields(
     doc_type: str,
@@ -285,10 +381,22 @@ def _correct_doc_type_from_fields(
     Solo actúa sobre GENERICO, UNKNOWN y tipos de baja confianza (< 0.75).
     Retorna (nuevo_tipo, nueva_confianza, warning_or_None).
     """
+    extracted_keys = {f.get("key") for f in fields if f.get("value")}
+
+    if doc_type == "DATOS_BANCARIOS" and _looks_like_payment_table(fields):
+        bank_signals = len(extracted_keys & _TYPE_SIGNAL_FIELDS["DATOS_BANCARIOS"])
+        if bank_signals < 5:
+            new_conf = max(confidence, 0.82)
+            warning = (
+                "Tipo corregido DATOS_BANCARIOS→FACTURA por tabla estructurada "
+                "de pago/dispersión."
+            )
+            logger.info("%s señales_bancarias=%d", warning, bank_signals)
+            return "FACTURA", new_conf, warning
+
     if doc_type not in {"GENERICO", "UNKNOWN"} and confidence >= 0.75:
         return doc_type, confidence, None
 
-    extracted_keys = {f.get("key") for f in fields if f.get("value")}
     best_type = doc_type
     best_score = 0
 
@@ -565,6 +673,28 @@ _PAYROLL_STRICT_FILL_COLUMNS = (
     "apellido_materno",
 )
 
+_PAYMENT_REQUIRED_COLUMNS_BY_BANK: dict[str, tuple[str, ...]] = {
+    "SCOTIABANK": ("nombre_beneficiario", "importe", "referencia", "cuenta_beneficiario"),
+    "BBVA": ("nombre_beneficiario", "importe", "cuenta_beneficiario", "concepto_pago"),
+    "BANORTE": ("nombre_beneficiario", "importe", "cuenta_beneficiario", "clave_beneficiario"),
+    "SANTANDER": ("nombre_beneficiario", "importe", "cuenta_beneficiario", "referencia"),
+    "BANAMEX": ("nombre_beneficiario", "importe", "cuenta_beneficiario"),
+    "HSBC": ("nombre_beneficiario", "importe", "cuenta_beneficiario"),
+}
+
+_PAYMENT_DEFAULT_REQUIRED_COLUMNS: tuple[str, ...] = (
+    "nombre_beneficiario",
+    "importe",
+    "cuenta_beneficiario",
+)
+
+_PAYMENT_TOTAL_METADATA_KEYS: tuple[str, ...] = (
+    "importe_total_movimientos",
+    "importe_movimiento_altas",
+    "importe_detectado",
+    "importe_total",
+)
+
 
 def _json_to_dict(raw_value) -> dict | None:
     if isinstance(raw_value, dict):
@@ -627,20 +757,207 @@ def _extract_payroll_canonical_table(fields: list[dict]) -> tuple[list[str], lis
     return canonical_columns, canonical_rows
 
 
+def _normalize_bank_name(value) -> str:
+    return str(value or "").strip().upper()
+
+
+def _parse_amount_number(value) -> float | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    text = (
+        text.upper()
+        .replace("$", "")
+        .replace("MXN", "")
+        .replace("PESOS", "")
+        .replace(" ", "")
+        .replace("O", "0")
+        .replace("I", "1")
+        .replace("L", "1")
+    )
+    text = re.sub(r"[^0-9,.\-]", "", text)
+    if not text:
+        return None
+
+    if "," in text and "." in text:
+        decimal_sep = "." if text.rfind(".") > text.rfind(",") else ","
+        if decimal_sep == ".":
+            text = text.replace(",", "")
+        else:
+            text = text.replace(".", "").replace(",", ".")
+    elif text.count(",") == 1 and len(text.split(",")[-1]) in {1, 2}:
+        text = text.replace(",", ".")
+    else:
+        text = text.replace(",", "")
+
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _extract_payment_table_context(fields: list[dict]) -> dict | None:
+    fallback_bank = _normalize_bank_name(_detect_bank_from_fields(fields))
+    best_context: dict | None = None
+    best_score = -1
+
+    for field in fields:
+        normalized_key = _normalize_key_name(str(field.get("key", "") or ""))
+        if normalized_key not in {"tabla_celdas", "pago_detalle"}:
+            continue
+
+        payload = _json_to_dict(_field_value(field))
+        if not payload:
+            continue
+
+        table_payload = payload
+        if normalized_key == "pago_detalle" and isinstance(payload.get("table"), dict):
+            table_payload = payload["table"]
+
+        if not isinstance(table_payload, dict):
+            continue
+
+        canonical_columns_raw = table_payload.get("canonical_columns")
+        canonical_rows_raw = table_payload.get("canonical_rows")
+        if not isinstance(canonical_rows_raw, list) or not canonical_rows_raw:
+            continue
+
+        canonical_rows: list[dict[str, str]] = []
+        derived_columns: set[str] = set()
+        for row in canonical_rows_raw:
+            if not isinstance(row, dict):
+                continue
+            clean_row: dict[str, str] = {}
+            for key, value in row.items():
+                key_text = str(key or "").strip()
+                if not key_text:
+                    continue
+                value_text = str(value or "").strip()
+                if value_text:
+                    clean_row[key_text] = value_text
+                    derived_columns.add(key_text)
+            if clean_row:
+                canonical_rows.append(clean_row)
+
+        if not canonical_rows:
+            continue
+
+        if isinstance(canonical_columns_raw, list):
+            canonical_columns = [str(col or "").strip() for col in canonical_columns_raw if str(col or "").strip()]
+        else:
+            canonical_columns = sorted(derived_columns)
+
+        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        bank = _normalize_bank_name(
+            payload.get("bank")
+            or table_payload.get("bank")
+            or metadata.get("bank")
+            or fallback_bank
+        )
+
+        remapped_columns, remapped_rows, display_columns = remap_to_target_payment_schema(
+            canonical_columns,
+            canonical_rows,
+            bank=bank,
+        )
+        populated_remapped_columns = {
+            column
+            for column in remapped_columns
+            if any(str(row.get(column, "") or "").strip() for row in remapped_rows)
+        }
+
+        score = (
+            len(canonical_rows) * 50
+            + len(populated_remapped_columns) * 10
+            + (20 if metadata else 0)
+            + (10 if bank else 0)
+            + (5 if normalized_key == "pago_detalle" else 0)
+        )
+
+        if score > best_score:
+            best_score = score
+            best_context = {
+                "field_key": normalized_key,
+                "bank": bank,
+                "metadata": metadata,
+                "canonical_columns": canonical_columns,
+                "canonical_rows": canonical_rows,
+                "remapped_columns": remapped_columns,
+                "remapped_rows": remapped_rows,
+                "display_columns": display_columns,
+                "populated_remapped_columns": populated_remapped_columns,
+            }
+
+    return best_context
+
+
+def _payment_metadata_amount(metadata: dict) -> tuple[str | None, float | None]:
+    if not isinstance(metadata, dict):
+        return None, None
+
+    for key in _PAYMENT_TOTAL_METADATA_KEYS:
+        amount = _parse_amount_number(metadata.get(key))
+        if amount is not None:
+            return key, amount
+
+    return None, None
+
+
+def _should_skip_item_level_total_validation(
+    *,
+    bank: str,
+    metadata: dict,
+    total_key: str | None,
+    row_count: int,
+) -> bool:
+    if total_key != "importe_detectado" or row_count <= 1:
+        return False
+
+    bank_name = _normalize_bank_name(bank)
+    payment_type = str(metadata.get("tipo_pago") or "").strip().upper()
+    if bank_name == "BBVA" and "GRUPO PAGO" in payment_type:
+        return True
+
+    return False
+
+
+def _build_duplicate_payment_keys(rows: list[dict[str, str]]) -> list[tuple[str, ...]]:
+    candidate_sets = (
+        ("cuenta_beneficiario", "referencia", "importe"),
+        ("cuenta_beneficiario", "importe", "nombre_beneficiario"),
+        ("referencia", "importe", "nombre_beneficiario"),
+    )
+
+    for candidate in candidate_sets:
+        keys: list[tuple[str, ...]] = []
+        for row in rows:
+            values = tuple(str(row.get(column, "") or "").strip() for column in candidate)
+            if all(values):
+                keys.append(values)
+        if keys:
+            return keys
+
+    return []
+
+
 def _evaluate_payroll_strict(fields: list[dict], doc_type: str) -> tuple[list[str], bool]:
     if doc_type not in {"FACTURA", "NOMINA"} or not settings.payroll_strict_mode:
         return [], False
 
-    extracted = _extract_payroll_canonical_table(fields)
-    if not extracted:
+    table_context = _extract_payment_table_context(fields)
+    if not table_context:
         return [], False
-    canonical_columns, canonical_rows = extracted
+    canonical_columns = table_context["canonical_columns"]
+    canonical_rows = table_context["canonical_rows"]
     canonical_set = set(canonical_columns)
     required_set = set(_PAYROLL_REQUIRED_COLUMNS)
 
-    # Only enforce strict rules for advanced payroll tables.
-    if not required_set.issubset(canonical_set):
-        return [], False
+    remapped_rows: list[dict[str, str]] = table_context["remapped_rows"]
+    remapped_columns = set(table_context["populated_remapped_columns"])
+    bank = _normalize_bank_name(table_context["bank"])
+    metadata: dict = table_context["metadata"]
+    bank_required = _PAYMENT_REQUIRED_COLUMNS_BY_BANK.get(bank, _PAYMENT_DEFAULT_REQUIRED_COLUMNS)
 
     warnings: list[str] = []
     hard_fail = False
@@ -648,15 +965,33 @@ def _evaluate_payroll_strict(fields: list[dict], doc_type: str) -> tuple[list[st
     if total_rows == 0:
         return ["[NOMINA_STRICT] tabla de nomina sin filas de datos."], True
 
-    if "apellido_combo_estatus" in canonical_set:
+    if bank:
+        missing_bank_columns = [column for column in bank_required if column not in remapped_columns]
+        if missing_bank_columns and total_rows >= max(1, int(settings.payroll_strict_min_rows)):
+            warnings.append(
+                f"[NOMINA_STRICT] {bank}: columnas canónicas esperadas ausentes: {', '.join(missing_bank_columns)}."
+            )
+            if len(bank_required) - len(missing_bank_columns) < 2:
+                hard_fail = True
+
+    enforce_advanced_payroll = required_set.issubset(canonical_set)
+
+    if enforce_advanced_payroll and "apellido_combo_estatus" in canonical_set:
         warnings.append("[NOMINA_STRICT] columna combinada 'apellido_combo_estatus' detectada en salida final.")
         hard_fail = True
 
     min_fill_rate = max(0.0, min(1.0, float(settings.payroll_strict_min_fill_rate)))
     min_rows_for_strict_fill = max(1, int(settings.payroll_strict_min_rows))
     if total_rows >= min_rows_for_strict_fill:
-        for col in _PAYROLL_STRICT_FILL_COLUMNS:
-            filled = sum(1 for row in canonical_rows if str(row.get(col, "") or "").strip())
+        fill_columns = [column for column in bank_required if column in remapped_columns]
+        if enforce_advanced_payroll:
+            for column in _PAYROLL_STRICT_FILL_COLUMNS:
+                if column not in fill_columns and column in canonical_set:
+                    fill_columns.append(column)
+
+        for col in fill_columns:
+            row_source = canonical_rows if col in canonical_set and col not in remapped_columns else remapped_rows
+            filled = sum(1 for row in row_source if str(row.get(col, "") or "").strip())
             fill_rate = filled / max(1, total_rows)
             if fill_rate < min_fill_rate:
                 warnings.append(
@@ -666,34 +1001,51 @@ def _evaluate_payroll_strict(fields: list[dict], doc_type: str) -> tuple[list[st
 
     max_ratio = max(0.0, min(1.0, float(settings.payroll_strict_max_dominant_surname_ratio)))
     min_rows_for_ratio = max(10, int(settings.payroll_strict_min_rows))
-    for surname_col in ("apellido_paterno", "apellido_materno"):
-        values = [str(row.get(surname_col, "") or "").strip().upper() for row in canonical_rows]
-        values = [value for value in values if value]
-        if len(values) < min_rows_for_ratio:
-            continue
-        counts = Counter(values)
-        dominant_value, dominant_count = counts.most_common(1)[0]
-        dominant_ratio = dominant_count / len(values)
-        if dominant_ratio > max_ratio:
-            warnings.append(
-                f"[NOMINA_STRICT] posible sobre-relleno en '{surname_col}': "
-                f"'{dominant_value}' aparece en {dominant_ratio:.1%} de filas."
-            )
-            hard_fail = True
+    if enforce_advanced_payroll:
+        for surname_col in ("apellido_paterno", "apellido_materno"):
+            values = [str(row.get(surname_col, "") or "").strip().upper() for row in canonical_rows]
+            values = [value for value in values if value]
+            if len(values) < min_rows_for_ratio:
+                continue
+            counts = Counter(values)
+            dominant_value, dominant_count = counts.most_common(1)[0]
+            dominant_ratio = dominant_count / len(values)
+            if dominant_ratio > max_ratio:
+                warnings.append(
+                    f"[NOMINA_STRICT] posible sobre-relleno en '{surname_col}': "
+                    f"'{dominant_value}' aparece en {dominant_ratio:.1%} de filas."
+                )
+                hard_fail = True
 
-    dedupe_keys: list[tuple[str, str, str]] = []
-    for row in canonical_rows:
-        cuenta = str(row.get("cuenta", "") or "").strip()
-        referencia = str(row.get("referencia", "") or "").strip()
-        importe = str(row.get("importe", "") or "").strip()
-        if cuenta and referencia and importe:
-            dedupe_keys.append((cuenta, referencia, importe))
+    total_key, expected_total = _payment_metadata_amount(metadata)
+    if expected_total is not None and remapped_rows:
+        row_amounts = [
+            amount
+            for amount in (_parse_amount_number(row.get("importe")) for row in remapped_rows)
+            if amount is not None
+        ]
+        if row_amounts and not _should_skip_item_level_total_validation(
+            bank=bank,
+            metadata=metadata,
+            total_key=total_key,
+            row_count=len(remapped_rows),
+        ):
+            extracted_total = sum(row_amounts)
+            tolerance = max(0.05, round(expected_total * 0.005, 2))
+            if abs(extracted_total - expected_total) > tolerance:
+                warnings.append(
+                    f"[NOMINA_STRICT] total por filas ({extracted_total:.2f}) no coincide con "
+                    f"{total_key} ({expected_total:.2f})."
+                )
+                hard_fail = True
+
+    dedupe_keys = _build_duplicate_payment_keys(remapped_rows)
     if dedupe_keys:
         duplicate_count = len(dedupe_keys) - len(set(dedupe_keys))
         if duplicate_count > 0:
             duplicate_ratio = duplicate_count / len(dedupe_keys)
             warnings.append(
-                f"[NOMINA_STRICT] filas duplicadas por (cuenta,referencia,importe): "
+                f"[NOMINA_STRICT] filas duplicadas por clave de pago: "
                 f"{duplicate_count} ({duplicate_ratio:.1%})."
             )
             if duplicate_ratio > 0.10:

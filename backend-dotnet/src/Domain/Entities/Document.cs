@@ -23,4 +23,5 @@ public class Document
 
     public ICollection<DocumentField> Fields { get; set; } = new List<DocumentField>();
     public ICollection<ProcessingLog> ProcessingLogs { get; set; } = new List<ProcessingLog>();
+    public ICollection<DocumentTable> Tables { get; set; } = new List<DocumentTable>();
 }

@@ -6,6 +6,7 @@ using DocumentFormat.OpenXml.Spreadsheet;
 using Domain.Enums;
 using Infrastructure.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shared.Options;
 using System.Text;
@@ -223,7 +224,8 @@ public class DocumentsControllerEndpointExportTests
             new FakeDocumentService(detail),
             new FakePythonAiClient(),
             new DocumentExportService(),
-            Options.Create(new UploadOptions()));
+            Options.Create(new UploadOptions()),
+            NullLogger<DocumentsController>.Instance);
     }
 
     private static string ReadCellText(Cell cell)
@@ -310,7 +312,8 @@ public class DocumentsControllerEndpointExportTests
                     null,
                     false,
                     null)
-            });
+            },
+            Array.Empty<ExtractedTableDto>());
     }
 
     private static DocumentDetailDto CreateFacturaDetailWithNoisyTablaCeldas()
@@ -368,7 +371,8 @@ public class DocumentsControllerEndpointExportTests
                     null,
                     false,
                     null)
-            });
+            },
+            Array.Empty<ExtractedTableDto>());
     }
 
     private static DocumentDetailDto CreateFacturaDetailWithCanonicalRowsAndNoisyRawTable()
@@ -434,7 +438,8 @@ public class DocumentsControllerEndpointExportTests
                     null,
                     false,
                     null)
-            });
+            },
+            Array.Empty<ExtractedTableDto>());
     }
 
     private sealed class FakeDocumentService : IDocumentService

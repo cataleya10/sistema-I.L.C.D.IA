@@ -1,15 +1,16 @@
 import { CommonModule } from '@angular/common';
-import { HttpClient } from '@angular/common/http';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterModule } from '@angular/router';
-import { DocumentsService } from '../services/documents.service';
+import { DocumentProcessOptions, DocumentsService } from '../services/documents.service';
 import {
   DOCUMENT_TYPE_LABELS,
   DocumentStatus,
+  DocumentDetail,
   DocumentSummary,
   getDocumentTypeLabel
 } from '../../../shared/models/document.models';
+import { parsePaymentDetail } from '../utils/payment-detail';
 
 const STATUS_OPTIONS: Array<{ value: string; label: string }> = [
   { value: '', label: 'Todos los estados' },
@@ -133,6 +134,15 @@ const TYPE_OPTIONS: Array<{ value: string; label: string }> = [
                   {{ reprocesando()[document.id] ? 'Procesando...' : 'Reprocesar' }}
                 </button>
                 <button
+                  *ngIf="document.document_type === 'DATOS_BANCARIOS'"
+                  type="button"
+                  class="ghost btn-factura"
+                  [disabled]="reprocesando()[document.id]"
+                  (click)="reprocesarDocumentoComoFactura(document.id, $event)"
+                >
+                  {{ reprocesando()[document.id] ? 'Procesando...' : 'Como Factura' }}
+                </button>
+                <button
                   type="button"
                   class="ghost btn-eliminar"
                   [disabled]="eliminando()[document.id]"
@@ -157,7 +167,26 @@ const TYPE_OPTIONS: Array<{ value: string; label: string }> = [
           </p>
         </div>
 
-        <button type="button" class="ghost" (click)="cerrarDetalle()">Cerrar</button>
+        <div class="detail-actions">
+          <button
+            type="button"
+            class="ghost btn-reprocesar"
+            [disabled]="reprocesando()[seleccionado.id] || seleccionado.status === 'PROCESSING'"
+            (click)="reprocesarDocumento(seleccionado.id, $event)"
+          >
+            {{ reprocesando()[seleccionado.id] ? 'Procesando...' : 'Reprocesar' }}
+          </button>
+          <button
+            *ngIf="seleccionado.document_type === 'DATOS_BANCARIOS'"
+            type="button"
+            class="ghost btn-factura"
+            [disabled]="reprocesando()[seleccionado.id] || seleccionado.status === 'PROCESSING'"
+            (click)="reprocesarDocumentoComoFactura(seleccionado.id, $event)"
+          >
+            {{ reprocesando()[seleccionado.id] ? 'Procesando...' : 'Reprocesar como Factura' }}
+          </button>
+          <button type="button" class="ghost" (click)="cerrarDetalle()">Cerrar</button>
+        </div>
       </div>
 
       <div class="summary-grid">
@@ -223,33 +252,43 @@ const TYPE_OPTIONS: Array<{ value: string; label: string }> = [
             <article class="summary-item">
               <span>Resultado</span>
               <strong [class.valid-ok]="validacionDetalleCorrecta()" [class.valid-fail]="!validacionDetalleCorrecta()">
-                {{ validacionDetalleCorrecta() ? 'VALIDACIÓN CORRECTA' : 'NO COINCIDE' }}
+                {{ textoValidacionDetalle() }}
               </strong>
             </article>
           </div>
+
+          <div class="warning-list" *ngIf="getValidacionWarningsDetalle().length">
+            <p class="warning-list__title">Observaciones detectadas</p>
+            <ul>
+              <li *ngFor="let warning of getValidacionWarningsDetalle()">{{ warning }}</li>
+            </ul>
+          </div>
         </section>
 
-        <section class="table-card inner-card" *ngIf="getBeneficiariosTabla().filas.length">
+        <section class="table-card inner-card" *ngIf="getTablasDetalleRapido().length">
           <div class="section-head">
             <div>
               <p class="eyebrow">Tabla</p>
-              <h3>Beneficiarios</h3>
+              <h3>Tablas detectadas</h3>
             </div>
           </div>
 
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th *ngFor="let col of getBeneficiariosTabla().columnas">{{ col }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr *ngFor="let fila of getBeneficiariosTabla().filas; let rowIndex = index" [class.alt]="rowIndex % 2 === 1">
-                  <td *ngFor="let cell of fila">{{ cell }}</td>
-                </tr>
-              </tbody>
-            </table>
+          <div class="table-block" *ngFor="let tabla of getTablasDetalleRapido(); let tableIndex = index">
+            <h4>{{ tabla.titulo }}</h4>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th *ngFor="let col of tabla.columnas">{{ col }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr *ngFor="let fila of tabla.filas; let rowIndex = index" [class.alt]="rowIndex % 2 === 1">
+                    <td *ngFor="let cell of fila">{{ cell }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </section>
       </div>
@@ -462,6 +501,16 @@ const TYPE_OPTIONS: Array<{ value: string; label: string }> = [
         cursor: not-allowed;
       }
 
+      .btn-factura {
+        background: #dcfce7;
+        color: #166534;
+      }
+
+      .btn-factura:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
       .btn-eliminar {
         background: #fee2e2;
         color: #b91c1c;
@@ -478,6 +527,13 @@ const TYPE_OPTIONS: Array<{ value: string; label: string }> = [
         gap: 16px;
         align-items: flex-start;
         margin-bottom: 18px;
+      }
+
+      .detail-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
       }
 
       .summary-grid {
@@ -515,6 +571,32 @@ const TYPE_OPTIONS: Array<{ value: string; label: string }> = [
         border-radius: 20px;
       }
 
+      .warning-list {
+        margin-top: 16px;
+        padding: 16px 18px;
+        border-radius: 16px;
+        background: #fff7ed;
+        border: 1px solid #fdba74;
+        color: #9a3412;
+      }
+
+      .warning-list__title {
+        margin: 0 0 10px;
+        font-size: 13px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+
+      .warning-list ul {
+        margin: 0;
+        padding-left: 18px;
+      }
+
+      .warning-list li + li {
+        margin-top: 6px;
+      }
+
       .inner-card {
         margin-top: 20px;
         padding: 20px;
@@ -546,8 +628,7 @@ const TYPE_OPTIONS: Array<{ value: string; label: string }> = [
     `
   ]
 })
-export class DocumentsListPage implements OnInit {
-  private readonly http = inject(HttpClient);
+export class DocumentsListPage implements OnInit, OnDestroy {
   readonly documentoSeleccionado = signal<DocumentSummary | null>(null);
   readonly detalleDocumento = signal<any | null>(null);
   readonly cargandoDetalle = signal(false);
@@ -568,11 +649,16 @@ export class DocumentsListPage implements OnInit {
   readonly typeOptions = TYPE_OPTIONS;
 
   private requestToken = 0;
+  private readonly pollingTimers = new Map<string, ReturnType<typeof window.setTimeout>>();
 
   constructor(private readonly documentsService: DocumentsService) {}
 
   ngOnInit(): void {
     this.fetchDocuments();
+  }
+
+  ngOnDestroy(): void {
+    this.clearAllPolling();
   }
 
   applyFilters(): void {
@@ -611,12 +697,13 @@ export class DocumentsListPage implements OnInit {
     this.detalleDocumento.set(null);
     this.cargandoDetalle.set(true);
 
-    this.http.get<any>(`http://localhost:5000/api/documents/${document.id}`).subscribe({
+    this.documentsService.getById(document.id).subscribe({
       next: (detail) => {
         console.log('DETALLE DOCUMENTO COMPLETO:', detail);
         console.log('FIELDS:', detail?.fields);
         console.log('DETAIL JSON:', JSON.stringify(detail, null, 2));
 
+        this.documentoSeleccionado.set(this.toSummary(detail));
         this.detalleDocumento.set(detail);
         this.cargandoDetalle.set(false);
       },
@@ -635,15 +722,27 @@ export class DocumentsListPage implements OnInit {
 
   reprocesarDocumento(id: string, event: Event): void {
     event.stopPropagation();
-    if (this.reprocesando()[id]) return;
+    this.solicitarReproceso(id);
+  }
+
+  reprocesarDocumentoComoFactura(id: string, event: Event): void {
+    event.stopPropagation();
+    this.solicitarReproceso(id, { forceDocumentType: 'FACTURA' });
+  }
+
+  private solicitarReproceso(id: string, options?: DocumentProcessOptions): void {
+    if (this.reprocesando()[id]) {
+      return;
+    }
+
+    this.stopPolling(id);
     this.reprocesando.update((r) => ({ ...r, [id]: true }));
-    this.documentsService.reprocess(id).subscribe({
+    this.marcarDocumentoComoProcesando(id);
+
+    this.documentsService.reprocess(id, options).subscribe({
       next: () => {
-        this.reprocesando.update((r) => ({ ...r, [id]: false }));
         this.fetchDocuments();
-        if (this.documentoSeleccionado()?.id === id) {
-          this.detalleDocumento.set(null);
-        }
+        this.scheduleStatusPoll(id);
       },
       error: () => {
         this.reprocesando.update((r) => ({ ...r, [id]: false }));
@@ -692,74 +791,37 @@ export class DocumentsListPage implements OnInit {
   }
 
   getResumenMetadata(): Array<{ key: string; value: string }> {
-    const rawPagoDetalle = this.getFieldValue('pago_detalle');
-    const rawTablaCeldas = this.getFieldValue('tabla_celdas');
-    const raw = rawPagoDetalle || rawTablaCeldas;
-
-    if (!raw) {
-      return [];
-    }
-
-    try {
-      const parsed = JSON.parse(raw);
-
-      const metadata = parsed?.metadata ?? {};
-      const entries = Object.entries(metadata).map(([key, value]) => ({
-        key: this.formatearClave(key),
-        value: String(value ?? '')
-      }));
-
-      if (entries.length) {
-        return entries;
-      }
-
-      const mappedFields = parsed?.mapped_fields ?? {};
-      return Object.entries(mappedFields).map(([key, value]) => ({
-        key: this.formatearClave(key),
-        value: String(value ?? '')
-      }));
-    } catch {
-      return [];
-    }
+    return this.getParsedPaymentDetail()?.metadataEntries ?? [];
   }
 
   obtenerImporteTotalDetalle(): number {
-    const metadata = this.getResumenMetadata();
-
-    const item = metadata.find((x) =>
-      x.key.toLowerCase().includes('importe total movimientos')
-    );
-
-    return this.convertirImporteANumero(item?.value ?? '0');
+    return this.getParsedPaymentDetail()?.expectedTotalAmount ?? 0;
   }
 
   obtenerSumaBeneficiariosDetalle(): number {
-    const tabla = this.getBeneficiariosTabla();
-
-    if (!tabla.filas.length) {
-      return 0;
-    }
-
-    const columnasNormalizadas = tabla.columnas.map((c) => this.normalizarTexto(c));
-    const indiceImporte = columnasNormalizadas.findIndex((c) =>
-      c.includes('importe')
-    );
-
-    if (indiceImporte === -1) {
-      return 0;
-    }
-
-    return tabla.filas.reduce((total, fila) => {
-      const valor = fila[indiceImporte] ?? '0';
-      return total + this.convertirImporteANumero(valor);
-    }, 0);
+    return this.getParsedPaymentDetail()?.extractedTotalAmount ?? 0;
   }
 
   validacionDetalleCorrecta(): boolean {
-    const importeTotal = this.obtenerImporteTotalDetalle();
-    const sumaBeneficiarios = this.obtenerSumaBeneficiariosDetalle();
+    return this.getParsedPaymentDetail()?.totalsMatch === true;
+  }
 
-    return Math.abs(importeTotal - sumaBeneficiarios) < 0.01;
+  textoValidacionDetalle(): string {
+    const paymentDetail = this.getParsedPaymentDetail();
+    if (!paymentDetail) {
+      return 'SIN DATOS';
+    }
+    if (paymentDetail.totalsMatch === true) {
+      return 'VALIDACION CORRECTA';
+    }
+    if (paymentDetail.expectedTotalAmount === null) {
+      return paymentDetail.validationWarnings.length ? 'REVISAR OBSERVACIONES' : 'SIN TOTAL DE CONTROL';
+    }
+    return 'NO COINCIDE';
+  }
+
+  getValidacionWarningsDetalle(): string[] {
+    return this.getParsedPaymentDetail()?.validationWarnings ?? [];
   }
 
   formatearMoneda(valor: number): string {
@@ -770,16 +832,112 @@ export class DocumentsListPage implements OnInit {
   }
 
   getBeneficiariosTabla(): { columnas: string[]; filas: string[][] } {
+    const tablas = this.getTablasDetalleRapido();
+    return tablas[0] ?? { columnas: [], filas: [] };
+  }
+
+  getTablasDetalleRapido(): Array<{ titulo: string; columnas: string[]; filas: string[][] }> {
     const rawPagoDetalle = this.getFieldValue('pago_detalle');
     const rawTablaCeldas = this.getFieldValue('tabla_celdas');
     const raw = rawPagoDetalle || rawTablaCeldas;
 
+    const parsedPaymentDetail = parsePaymentDetail(raw);
+    if (parsedPaymentDetail) {
+      const tablas: Array<{ titulo: string; columnas: string[]; filas: string[][] }> = [];
+
+      if (parsedPaymentDetail.canonicalRows.length) {
+        tablas.push({
+          titulo: 'Beneficiarios',
+          columnas: parsedPaymentDetail.canonicalColumns,
+          filas: parsedPaymentDetail.canonicalRows
+        });
+      }
+
+      for (const summaryTable of parsedPaymentDetail.summaryTables) {
+        if (!summaryTable.rows.length) {
+          continue;
+        }
+
+        tablas.push({
+          titulo: summaryTable.title || `Tabla ${tablas.length + 1}`,
+          columnas: summaryTable.columns,
+          filas: summaryTable.rows
+        });
+      }
+
+      if (tablas.length) {
+        return tablas;
+      }
+    }
+
+    const extractedTables = this.detalleDocumento()?.tables ?? [];
+    const structuredTables = extractedTables
+      .filter((table: any) =>
+        Array.isArray(table?.columns) &&
+        table.columns.length > 0 &&
+        Array.isArray(table?.rows) &&
+        table.rows.length > 0
+      )
+      .map((table: any, index: number) => {
+        const columnas = table.columns.map((col: unknown) => {
+          const text = String(col ?? '').trim();
+          return /^col_\d+$/i.test(text) ? text.toUpperCase() : this.formatearClave(text);
+        });
+        const filas = table.rows
+          .map((row: Record<string, unknown>) =>
+            table.columns.map((col: string) => String(row?.[col] ?? ''))
+          )
+          .filter((fila: string[]) => fila.some((cell) => String(cell ?? '').trim().length > 0));
+
+        return {
+          titulo: table.doc_type_hint ? `Tabla ${index + 1} - ${table.doc_type_hint}` : `Tabla ${index + 1}`,
+          columnas,
+          filas
+        };
+      })
+      .filter((table: { columnas: string[]; filas: string[][] }) => table.columnas.length && table.filas.length);
+
+    if (structuredTables.length) {
+      return structuredTables;
+    }
+
     if (!raw) {
-      return { columnas: [], filas: [] };
+      return [];
     }
 
     try {
       const parsed = JSON.parse(raw);
+
+      const nestedCanonicalRows = Array.isArray(parsed?.table?.canonical_rows)
+        ? parsed.table.canonical_rows
+        : [];
+      const nestedCanonicalColumnsRaw = Array.isArray(parsed?.table?.canonical_columns)
+        ? parsed.table.canonical_columns
+        : [];
+      const nestedDisplayColumns = parsed?.table?.display_columns ?? {};
+
+      if (nestedCanonicalRows.length) {
+        const nestedCanonicalColumns = nestedCanonicalColumnsRaw
+          .map((value: unknown) => String(value ?? '').trim())
+          .filter((value: string) => value.length > 0);
+
+        const orderedKeys = nestedCanonicalColumns.length
+          ? nestedCanonicalColumns
+          : Object.keys(nestedCanonicalRows[0] ?? {});
+
+        const columnas = orderedKeys.map((key: string) =>
+          String(nestedDisplayColumns[key] ?? this.formatearClave(key))
+        );
+
+        const filas = nestedCanonicalRows
+          .filter((row: any) => row && typeof row === 'object')
+          .map((row: any) => orderedKeys.map((key: string) => String(row?.[key] ?? '')))
+          .filter((fila: string[]) => fila.some((cell) => String(cell ?? '').trim().length > 0));
+
+        if (filas.length) {
+          return [{ titulo: 'Beneficiarios', columnas, filas }];
+        }
+      }
 
       if (Array.isArray(parsed?.canonical_rows) && parsed.canonical_rows.length) {
         const displayColumns = parsed?.display_columns ?? {};
@@ -827,24 +985,24 @@ export class DocumentsListPage implements OnInit {
           })
           .map((row: any) => orderedKeys.map((key) => String(row?.[key] ?? '')));
 
-        return { columnas, filas };
+        return [{ titulo: 'Beneficiarios', columnas, filas }];
       }
 
       if (Array.isArray(parsed?.rows) && parsed.rows.length) {
         const rows = parsed.rows as string[][];
         if (!rows.length) {
-          return { columnas: [], filas: [] };
+          return [];
         }
 
         const columnas = rows[0].map((c) => String(c ?? ''));
         const filas = rows.slice(1);
 
-        return { columnas, filas };
+        return [{ titulo: 'Tabla 1', columnas, filas }];
       }
 
-      return { columnas: [], filas: [] };
+      return [];
     } catch {
-      return { columnas: [], filas: [] };
+      return [];
     }
   }
 
@@ -861,6 +1019,12 @@ export class DocumentsListPage implements OnInit {
     const numero = parseFloat(limpio);
 
     return isNaN(numero) ? 0 : numero;
+  }
+
+  private getParsedPaymentDetail() {
+    const rawPagoDetalle = this.getFieldValue('pago_detalle');
+    const rawTablaCeldas = this.getFieldValue('tabla_celdas');
+    return parsePaymentDetail(rawPagoDetalle || rawTablaCeldas);
   }
 
   private normalizarTexto(valor: string): string {
@@ -911,6 +1075,7 @@ export class DocumentsListPage implements OnInit {
           }
 
           this.documents.set(data);
+          this.syncSelectedSummaryFromList(data);
           this.hasMore.set(data.length === this.pageSize);
           this.isLoading.set(false);
         },
@@ -957,5 +1122,126 @@ export class DocumentsListPage implements OnInit {
     }
 
     return fallback;
+  }
+
+  private marcarDocumentoComoProcesando(id: string): void {
+    this.documents.update((items) =>
+      items.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              status: 'PROCESSING' as DocumentStatus
+            }
+          : item
+      )
+    );
+
+    const selected = this.documentoSeleccionado();
+    if (selected?.id === id) {
+      this.documentoSeleccionado.set({
+        ...selected,
+        status: 'PROCESSING'
+      });
+      this.detalleDocumento.set(null);
+      this.cargandoDetalle.set(true);
+    }
+  }
+
+  private scheduleStatusPoll(id: string, delayMs = 1500): void {
+    this.stopPolling(id);
+    const timer = window.setTimeout(() => {
+      this.documentsService.getProcessStatus(id).subscribe({
+        next: (status) => {
+          const summaryPatch: Partial<DocumentSummary> = {
+            status: status.status,
+            document_type: status.document_type,
+            confidence: status.confidence
+          };
+          this.updateDocumentSummary(id, summaryPatch);
+
+          if (status.status === 'PROCESSING' || status.status === 'UPLOADED') {
+            this.scheduleStatusPoll(id, 1500);
+            return;
+          }
+
+          this.stopPolling(id);
+          this.reprocesando.update((state) => ({ ...state, [id]: false }));
+          this.fetchDocuments();
+          if (this.documentoSeleccionado()?.id === id) {
+            this.loadDetalleDocumento(id);
+          }
+        },
+        error: () => {
+          this.scheduleStatusPoll(id, 2000);
+        }
+      });
+    }, delayMs);
+
+    this.pollingTimers.set(id, timer);
+  }
+
+  private stopPolling(id: string): void {
+    const timer = this.pollingTimers.get(id);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      this.pollingTimers.delete(id);
+    }
+  }
+
+  private clearAllPolling(): void {
+    this.pollingTimers.forEach((timer) => window.clearTimeout(timer));
+    this.pollingTimers.clear();
+  }
+
+  private loadDetalleDocumento(id: string): void {
+    this.cargandoDetalle.set(true);
+    this.documentsService.getById(id).subscribe({
+      next: (detail) => {
+        this.documentoSeleccionado.set(this.toSummary(detail));
+        this.detalleDocumento.set(detail);
+        this.cargandoDetalle.set(false);
+      },
+      error: () => {
+        this.cargandoDetalle.set(false);
+      }
+    });
+  }
+
+  private syncSelectedSummaryFromList(data: DocumentSummary[]): void {
+    const selectedId = this.documentoSeleccionado()?.id;
+    if (!selectedId) {
+      return;
+    }
+
+    const updated = data.find((item) => item.id === selectedId);
+    if (updated) {
+      this.documentoSeleccionado.set(updated);
+    }
+  }
+
+  private updateDocumentSummary(id: string, patch: Partial<DocumentSummary>): void {
+    this.documents.update((items) =>
+      items.map((item) => (item.id === id ? { ...item, ...patch } : item))
+    );
+
+    const selected = this.documentoSeleccionado();
+    if (selected?.id === id) {
+      this.documentoSeleccionado.set({
+        ...selected,
+        ...patch
+      });
+    }
+  }
+
+  private toSummary(detail: DocumentDetail): DocumentSummary {
+    return {
+      id: detail.id,
+      original_filename: detail.original_filename,
+      status: detail.status,
+      document_type: detail.document_type,
+      confidence: detail.confidence,
+      uploaded_at: detail.uploaded_at,
+      processed_at: detail.processed_at
+    };
   }
 }

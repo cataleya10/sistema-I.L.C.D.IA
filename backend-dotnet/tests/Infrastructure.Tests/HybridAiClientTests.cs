@@ -227,6 +227,68 @@ public class HybridAiClientTests
     }
 
     [Fact]
+    public async Task ProcessDocumentAsync_DatosBancariosStructuredPayment_ReclassifiesToFactura()
+    {
+        var tempFile = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}-datos-bancarios-payment.txt");
+        await File.WriteAllTextAsync(
+            tempFile,
+            """
+            REPORTE DE OPERACIONES
+            SCOTIABANK
+            TIPO REGISTRO CUENTA REFERENCIA IMPORTE
+            DA ALTA 0007425010945541678 A246 $700.00
+            """);
+
+        try
+        {
+            var config = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["PythonAi:BaseUrl"] = "http://unit-test.local",
+                    ["AiEngine:Hybrid:EnablePythonFallback"] = "true",
+                    ["AiEngine:Hybrid:FallbackMinConfidence"] = "0.8",
+                    ["AiEngine:Hybrid:AlwaysMergePythonFields"] = "true"
+                })
+                .Build();
+
+            using var httpClient = new HttpClient(new DatosBancariosStructuredPaymentHandler())
+            {
+                BaseAddress = new Uri("http://unit-test.local")
+            };
+
+            var pythonClient = new PythonAiClient(httpClient, config, new NullHttpContextAccessor());
+            var csharpClient = new CSharpAiClient();
+            var hybridClient = new HybridAiClient(
+                pythonClient,
+                csharpClient,
+                config,
+                NullLogger<HybridAiClient>.Instance);
+
+            var response = await hybridClient.ProcessDocumentAsync(
+                Guid.NewGuid(),
+                tempFile,
+                "pago-dispersion-scotiabank.pdf",
+                null,
+                CancellationToken.None);
+
+            Assert.Equal(DocumentType.Factura, response.DocumentType);
+            Assert.Contains(response.Warnings, warning => warning.Contains("DATOS_BANCARIOS", StringComparison.OrdinalIgnoreCase));
+
+            var tableField = Assert.Single(response.Fields);
+            Assert.Equal("tabla_celdas", tableField.Key, ignoreCase: true);
+            Assert.NotNull(tableField.Value);
+            Assert.Contains("\"canonical_rows\":", tableField.Value!, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (File.Exists(tempFile))
+            {
+                File.Delete(tempFile);
+            }
+        }
+    }
+
+    [Fact]
     public async Task ProcessDocumentAsync_Acta_PrefersPythonWhenReady()
     {
         var tempFile = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}-acta.txt");
@@ -674,6 +736,109 @@ public class HybridAiClientTests
                   "label":"Tabla celdas",
                   "value":"{\"source\":\"text_lines\",\"rows\":[[\"CUENTA\",\"REFERENCIA\",\"IMPORTE\",\"NOMBRE\",\"APELLIDO PATERNO\",\"APELLIDO MATERNO\",\"ESTATUS\",\"CONCEPTO\"],[\"56783223195\",\"1620260115134340581263\",\"$610.44\",\"MARLA GRISELDA\",\"MENDEZ\",\"FLORES\",\"PROCESADO\",\"PAGO DE NOMINA\"],[\"56936397470\",\"1620260115134348451388\",\"$1,537.35\",\"ROLANDO ROGERIO\",\"CONTRERAS\",\"CAMARGO\",\"PROCESADO\",\"PAGO DE NOMINA\"]],\"canonical_rows\":[{\"cuenta\":\"56783223195\",\"referencia\":\"1620260115134340581263\",\"importe\":\"$610.44\",\"nombre\":\"MARLA GRISELDA\",\"apellido_paterno\":\"MENDEZ\",\"apellido_materno\":\"FLORES\",\"estatus\":\"PROCESADO\",\"concepto_pago\":\"PAGO DE NOMINA\"},{\"cuenta\":\"56936397470\",\"referencia\":\"1620260115134348451388\",\"importe\":\"$1,537.35\",\"nombre\":\"ROLANDO ROGERIO\",\"apellido_paterno\":\"CONTRERAS\",\"apellido_materno\":\"CAMARGO\",\"estatus\":\"PROCESADO\",\"concepto_pago\":\"PAGO DE NOMINA\"}]}",
                   "confidence":0.70,
+                  "valid":true,
+                  "validation_errors":[],
+                  "source":null
+                }
+              ],
+              "warnings":[],
+              "errors":[],
+              "meta":{
+                "pages_processed":1,
+                "ocr_engine":"paddleocr",
+                "pipeline_version":"python-extract-v1",
+                "model_version":"clf-v1",
+                "processing_ms":180
+              }
+            }
+            """;
+        }
+    }
+
+    private sealed class DatosBancariosStructuredPaymentHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var body = request.Content is null
+                ? string.Empty
+                : await request.Content.ReadAsStringAsync(cancellationToken);
+
+            var isOcrOnly = body.Contains("return_ocr_text", StringComparison.OrdinalIgnoreCase);
+            var payload = isOcrOnly ? BuildOcrPayload() : BuildExtractionPayload();
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(payload, Encoding.UTF8, "application/json")
+            };
+        }
+
+        private static string BuildOcrPayload()
+        {
+            return """
+            {
+              "document_id":"00000000-0000-0000-0000-000000000000",
+              "status":"READY",
+              "document_type":"DATOS_BANCARIOS",
+              "confidence":0.75,
+              "fields":[
+                {
+                  "key":"tabla_celdas",
+                  "label":"Tabla celdas",
+                  "value":"{\"source\":\"python\",\"rows\":[[\"TIPO REGISTRO\",\"CUENTA\",\"REFERENCIA\",\"IMPORTE\",\"CLAVE DEL BENEFICIARIO\",\"NOMBRE DEL BENEFICIARIO\",\"NO. CUENTA\",\"NO. BANCO\",\"CONCEPTO\"],[\"DA ALTA\",\"04 CLIENTE ABONO EN\",\"$700.00\",\"15/01/2026\",\"A246\",\"PEREZ CORNEJO\",\"RUBEN\",\"0007425010945541678\",\"72 1\",\"PAGOS246\"]],\"canonical_rows\":[{\"tipo\":\"DA ALTA\",\"cuenta\":\"04 CLIENTE ABONO EN\",\"importe\":\"$700.00\",\"fecha\":\"15/01/2026\",\"referencia\":\"A246\",\"apellido_paterno\":\"PEREZ CORNEJO\",\"nombre\":\"RUBEN\",\"no_cuenta\":\"0007425010945541678\",\"no_banco\":\"72 1\",\"concepto_pago\":\"PAGOS246\"}]}",
+                  "confidence":0.89,
+                  "valid":true,
+                  "validation_errors":[],
+                  "source":null
+                },
+                {
+                  "key":"folio",
+                  "label":"Folio",
+                  "value":"62016189548",
+                  "confidence":0.93,
+                  "valid":true,
+                  "validation_errors":[],
+                  "source":null
+                }
+              ],
+              "warnings":[],
+              "errors":[],
+              "meta":{
+                "pages_processed":1,
+                "ocr_engine":"paddleocr",
+                "pipeline_version":"python-extract-v1",
+                "model_version":"clf-v1",
+                "processing_ms":180
+              },
+              "ocr_text":"REPORTE DE OPERACIONES SCOTIABANK TIPO REGISTRO CUENTA REFERENCIA IMPORTE DA ALTA 0007425010945541678 A246 $700.00"
+            }
+            """;
+        }
+
+        private static string BuildExtractionPayload()
+        {
+            return """
+            {
+              "document_id":"00000000-0000-0000-0000-000000000000",
+              "status":"READY",
+              "document_type":"DATOS_BANCARIOS",
+              "confidence":0.75,
+              "fields":[
+                {
+                  "key":"tabla_celdas",
+                  "label":"Tabla celdas",
+                  "value":"{\"source\":\"python\",\"rows\":[[\"TIPO REGISTRO\",\"CUENTA\",\"REFERENCIA\",\"IMPORTE\",\"CLAVE DEL BENEFICIARIO\",\"NOMBRE DEL BENEFICIARIO\",\"NO. CUENTA\",\"NO. BANCO\",\"CONCEPTO\"],[\"DA ALTA\",\"04 CLIENTE ABONO EN\",\"$700.00\",\"15/01/2026\",\"A246\",\"PEREZ CORNEJO\",\"RUBEN\",\"0007425010945541678\",\"72 1\",\"PAGOS246\"]],\"canonical_rows\":[{\"tipo\":\"DA ALTA\",\"cuenta\":\"04 CLIENTE ABONO EN\",\"importe\":\"$700.00\",\"fecha\":\"15/01/2026\",\"referencia\":\"A246\",\"apellido_paterno\":\"PEREZ CORNEJO\",\"nombre\":\"RUBEN\",\"no_cuenta\":\"0007425010945541678\",\"no_banco\":\"72 1\",\"concepto_pago\":\"PAGOS246\"}]}",
+                  "confidence":0.89,
+                  "valid":true,
+                  "validation_errors":[],
+                  "source":null
+                },
+                {
+                  "key":"folio",
+                  "label":"Folio",
+                  "value":"62016189548",
+                  "confidence":0.93,
                   "valid":true,
                   "validation_errors":[],
                   "source":null

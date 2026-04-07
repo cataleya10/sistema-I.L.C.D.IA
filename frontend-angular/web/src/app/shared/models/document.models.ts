@@ -32,6 +32,14 @@ export function getDocumentTypeLabel(type: DocumentType | string | null | undefi
   return DOCUMENT_TYPE_LABELS[type as DocumentType] ?? String(type);
 }
 
+export interface ExtractedTable {
+  columns: string[];
+  rows: Array<Record<string, string | null>>;
+  quality: number;
+  row_count: number;
+  doc_type_hint?: string | null;
+}
+
 export interface DocumentField {
   key: string;
   label: string;
@@ -59,6 +67,7 @@ export interface DocumentSummary {
 
 export interface DocumentDetail extends DocumentSummary {
   fields: DocumentField[];
+  tables: ExtractedTable[];
   file_url: string;
   mime_type?: string | null;
   needs_review: boolean;
@@ -70,6 +79,7 @@ export interface DocumentProcessResponse {
   document_type: DocumentType;
   confidence: number;
   fields: DocumentField[];
+  tables: ExtractedTable[];
   warnings: string[];
   errors: string[];
   meta: {
@@ -78,6 +88,7 @@ export interface DocumentProcessResponse {
     pipeline_version: string;
     model_version: string;
     processing_ms: number;
+    tables_found?: number;
   };
 }
 

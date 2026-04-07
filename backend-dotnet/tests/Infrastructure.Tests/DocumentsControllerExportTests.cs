@@ -274,7 +274,8 @@ public class DocumentsControllerExportTests
                     null,
                     false,
                     null)
-            });
+            },
+            Array.Empty<ExtractedTableDto>());
     }
 
     private static DocumentDetailDto CreateFacturaDetailWithNoisyTablaCeldas()
@@ -331,7 +332,8 @@ public class DocumentsControllerExportTests
                     null,
                     false,
                     null)
-            });
+            },
+            Array.Empty<ExtractedTableDto>());
     }
 
     private static DocumentDetailDto CreateFacturaDetailWithCanonicalRowsAndNoisyRawTable()
@@ -396,6 +398,7 @@ public class DocumentsControllerExportTests
                     null,
                     false,
                     null)
-            });
+            },
+            Array.Empty<ExtractedTableDto>());
     }
 }

@@ -10,9 +10,22 @@ public sealed record DocumentProcessResponse(
     DocumentType DocumentType,
     decimal Confidence,
     IReadOnlyList<DocumentFieldResultDto> Fields,
+    IReadOnlyList<ExtractedTableDto> Tables,
     IReadOnlyList<string> Warnings,
     IReadOnlyList<string> Errors,
     DocumentProcessMeta Meta
+);
+
+/// <summary>
+/// Tabla canónica extraída del documento por el motor Python.
+/// Rows: lista de filas como diccionario columna→valor (strings).
+/// </summary>
+public sealed record ExtractedTableDto(
+    IReadOnlyList<string> Columns,
+    IReadOnlyList<IReadOnlyDictionary<string, string?>> Rows,
+    float Quality,
+    int RowCount,
+    string? DocTypeHint
 );
 
 public sealed record DocumentFieldResultDto(

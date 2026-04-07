@@ -1,9 +1,17 @@
 export interface PaymentDetailViewModel {
   bank: string;
   metadataEntries: Array<{ key: string; value: string }>;
+  validationWarnings: string[];
+  canonicalColumnKeys: string[];
   canonicalColumns: string[];
+  canonicalRowObjects: Array<Record<string, string>>;
   canonicalRows: string[][];
   summaryTables: Array<{ title: string; columns: string[]; rows: string[][] }>;
+  expectedTotalAmount: number | null;
+  expectedTotalSource: string | null;
+  extractedTotalAmount: number;
+  totalDifferenceAmount: number | null;
+  totalsMatch: boolean | null;
 }
 
 function normalizeText(value: unknown): string {
@@ -67,6 +75,64 @@ function labelForPaymentColumn(key: string): string {
   return PAYMENT_COLUMN_LABELS[normalized] || titleFromKey(key);
 }
 
+const TOTAL_METADATA_KEYS = [
+  'importe_total_movimientos',
+  'importe_movimiento_altas',
+  'importe_detectado',
+  'importe_total'
+];
+
+function parseAmount(value: unknown): number | null {
+  const raw = normalizeText(value);
+  if (!raw) {
+    return null;
+  }
+
+  let normalized = raw
+    .toUpperCase()
+    .replace(/\$/g, '')
+    .replace(/MXN/g, '')
+    .replace(/PESOS/g, '')
+    .replace(/\s+/g, '')
+    .replace(/O/g, '0')
+    .replace(/[IL]/g, '1')
+    .replace(/[^0-9,.\-]/g, '');
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.includes(',') && normalized.includes('.')) {
+    const decimalSep = normalized.lastIndexOf('.') > normalized.lastIndexOf(',') ? '.' : ',';
+    normalized =
+      decimalSep === '.'
+        ? normalized.replace(/,/g, '')
+        : normalized.replace(/\./g, '').replace(',', '.');
+  } else if (normalized.split(',').length === 2 && normalized.split(',')[1].length <= 2) {
+    normalized = normalized.replace(',', '.');
+  } else {
+    normalized = normalized.replace(/,/g, '');
+  }
+
+  const parsed = Number.parseFloat(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function shouldSkipItemLevelExpectedTotal(
+  bank: string,
+  metadata: Record<string, unknown>,
+  key: string,
+  rowCount: number
+): boolean {
+  if (key !== 'importe_detectado' || rowCount <= 1) {
+    return false;
+  }
+
+  const normalizedBank = normalizeText(bank).toUpperCase();
+  const paymentType = normalizeText(metadata['tipo_pago']).toUpperCase();
+  return normalizedBank === 'BBVA' && paymentType.includes('GRUPO PAGO');
+}
+
 export function parsePaymentDetail(rawValue: string | null | undefined): PaymentDetailViewModel | null {
   const serialized = normalizeText(rawValue);
   if (!serialized) {
@@ -80,11 +146,13 @@ export function parsePaymentDetail(rawValue: string | null | undefined): Payment
       canonical_columns?: unknown;
       canonical_rows?: unknown;
       display_columns?: Record<string, string>;
+      validation_warnings?: unknown;
       summary_tables?: unknown;
       table?: {
         canonical_columns?: unknown;
         canonical_rows?: unknown;
         display_columns?: Record<string, string>;
+        validation_warnings?: unknown;
         summary_tables?: unknown;
       };
     };
@@ -110,27 +178,47 @@ export function parsePaymentDetail(rawValue: string | null | undefined): Payment
           ? payload.table.display_columns
           : {};
 
+    const validationWarningsRaw = Array.isArray(payload?.validation_warnings)
+      ? payload.validation_warnings
+      : Array.isArray(payload?.table?.validation_warnings)
+        ? payload.table.validation_warnings
+        : [];
+    const validationWarnings = validationWarningsRaw
+      .map((item) => normalizeText(item))
+      .filter((item) => item.length > 0);
+
     const canonicalRowsRaw = Array.isArray(payload?.canonical_rows)
       ? payload.canonical_rows
       : Array.isArray(payload?.table?.canonical_rows)
         ? payload.table!.canonical_rows
         : [];
-    const canonicalRows = canonicalRowsRaw
+    const canonicalRowObjects = canonicalRowsRaw
       .map((row) => {
         if (!row || typeof row !== 'object') {
           return null;
         }
+
         const typed = row as Record<string, unknown>;
-        if (canonicalColumns.length > 0) {
-          return canonicalColumns.map((col) => normalizeText(typed[col]));
-        }
-        const keys = Object.keys(typed);
-        if (!keys.length) {
+        const entries = Object.entries(typed)
+          .map(([key, value]) => [normalizeText(key), normalizeText(value)] as const)
+          .filter(([key, value]) => key.length > 0 && value.length > 0);
+        if (!entries.length) {
           return null;
         }
-        return keys.map((key) => normalizeText(typed[key]));
+
+        return Object.fromEntries(entries);
       })
-      .filter((row): row is string[] => Array.isArray(row) && row.some((cell) => cell.length > 0));
+      .filter((row): row is Record<string, string> => row !== null);
+
+    const canonicalColumnKeys = canonicalColumns.length > 0
+      ? canonicalColumns.map((col) => normalizeText(col))
+      : Object.keys(canonicalRowObjects[0] ?? {});
+
+    const canonicalRows = canonicalRowObjects
+      .map((row) =>
+        canonicalColumnKeys.map((col) => normalizeText(row[col]))
+      )
+      .filter((row) => row.some((cell) => cell.length > 0));
 
     const summaryTablesRaw = Array.isArray(payload?.summary_tables)
       ? payload.summary_tables
@@ -164,15 +252,56 @@ export function parsePaymentDetail(rawValue: string | null | undefined): Payment
       return null;
     }
 
+    const bank = normalizeText(payload?.bank) || 'DESCONOCIDO';
+    let expectedTotalSource: string | null = null;
+    let expectedTotalAmount: number | null = null;
+    for (const key of TOTAL_METADATA_KEYS) {
+      const amount = parseAmount(metadata[key]);
+      if (amount !== null && !shouldSkipItemLevelExpectedTotal(bank, metadata, key, canonicalRowObjects.length)) {
+        expectedTotalSource = key;
+        expectedTotalAmount = amount;
+        break;
+      }
+    }
+
+    const importeColumnKey = canonicalColumnKeys.find((key) => {
+      const normalized = key.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+      return normalized === 'importe';
+    });
+    const extractedTotalAmount = canonicalRowObjects.reduce((total, row) => {
+      const amount = parseAmount(importeColumnKey ? row[importeColumnKey] : null);
+      return total + (amount ?? 0);
+    }, 0);
+
+    const totalDifferenceAmount =
+      expectedTotalAmount !== null ? extractedTotalAmount - expectedTotalAmount : null;
+    const totalTolerance =
+      expectedTotalAmount !== null
+        ? Math.max(0.05, Math.round(expectedTotalAmount * 0.005 * 100) / 100)
+        : null;
+    const totalsMatch =
+      expectedTotalAmount !== null && totalTolerance !== null
+        ? Math.abs(totalDifferenceAmount ?? 0) <= totalTolerance
+        : null;
+
     return {
-      bank: normalizeText(payload?.bank) || 'DESCONOCIDO',
+      bank,
       metadataEntries,
-      canonicalColumns: canonicalColumns.map((col) => {
+      validationWarnings,
+      canonicalColumnKeys,
+      canonicalColumns: canonicalColumnKeys.map((col) => {
         const normalized = col.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
         return displayColumnsMap[normalized] || displayColumnsMap[col] || labelForPaymentColumn(col);
       }),
+      canonicalRowObjects,
       canonicalRows,
       summaryTables
+      ,
+      expectedTotalAmount,
+      expectedTotalSource,
+      extractedTotalAmount,
+      totalDifferenceAmount,
+      totalsMatch
     };
   } catch {
     return null;

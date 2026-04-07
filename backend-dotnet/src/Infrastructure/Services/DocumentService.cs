@@ -123,12 +123,18 @@ public class DocumentService : IDocumentService
         var document = await _dbContext.Documents
             .AsNoTracking()
             .Include(x => x.Fields)
+            .Include(x => x.Tables)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
 
         if (document is null)
         {
             return null;
         }
+
+        var tables = document.Tables
+            .OrderBy(t => t.TableIndex)
+            .Select(MapTable)
+            .ToList();
 
         return new DocumentDetailDto(
             document.Id,
@@ -141,7 +147,8 @@ public class DocumentService : IDocumentService
             string.Empty,
             document.MimeType,
             document.NeedsReview,
-            document.Fields.Select(MapField).ToList()
+            document.Fields.Select(MapField).ToList(),
+            tables
         );
     }
 
@@ -239,6 +246,7 @@ public class DocumentService : IDocumentService
         var document = await _dbContext.Documents
             .AsNoTracking()
             .Include(x => x.Fields)
+            .Include(x => x.Tables)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
 
         if (document is null)
@@ -263,6 +271,7 @@ public class DocumentService : IDocumentService
                 document.DocumentType,
                 document.Confidence ?? 0m,
                 Array.Empty<DocumentFieldResultDto>(),
+                Array.Empty<ExtractedTableDto>(),
                 Array.Empty<string>(),
                 errors,
                 new DocumentProcessMeta(0, "pending", "", "", 0)
@@ -376,6 +385,30 @@ public class DocumentService : IDocumentService
         if (document.Fields.Count > 0)
         {
             _dbContext.DocumentFields.AddRange(document.Fields);
+        }
+
+        var existingTables = await _dbContext.DocumentTables
+            .Where(x => x.DocumentId == document.Id)
+            .ToListAsync(cancellationToken);
+        if (existingTables.Count > 0)
+        {
+            _dbContext.DocumentTables.RemoveRange(existingTables);
+        }
+
+        if (response.Tables is { Count: > 0 })
+        {
+            var newTables = response.Tables.Select((table, index) => new DocumentTable
+            {
+                Id = Guid.NewGuid(),
+                DocumentId = document.Id,
+                TableIndex = index,
+                Columns = table.Columns.ToArray(),
+                RowsJson = JsonSerializer.Serialize(table.Rows),
+                Quality = table.Quality,
+                RowCount = table.RowCount,
+                DocTypeHint = table.DocTypeHint
+            }).ToList();
+            _dbContext.DocumentTables.AddRange(newTables);
         }
 
         var needsReview = response.Status == DocumentStatus.NeedsReview;
@@ -536,6 +569,30 @@ public class DocumentService : IDocumentService
         );
     }
 
+    private static ExtractedTableDto MapTable(DocumentTable table)
+    {
+        List<IReadOnlyDictionary<string, string?>> rows;
+        try
+        {
+            rows = JsonSerializer.Deserialize<List<Dictionary<string, string?>>>(table.RowsJson)
+                       ?.Cast<IReadOnlyDictionary<string, string?>>()
+                       .ToList()
+                   ?? [];
+        }
+        catch
+        {
+            rows = [];
+        }
+
+        return new ExtractedTableDto(
+            table.Columns,
+            rows,
+            table.Quality,
+            table.RowCount,
+            table.DocTypeHint
+        );
+    }
+
     private static DocumentProcessResponse BuildResponseFromDocument(Document document)
     {
         var fields = document.Fields
@@ -559,12 +616,18 @@ public class DocumentService : IDocumentService
             })
             .ToList();
 
+        var tables = document.Tables
+            .OrderBy(t => t.TableIndex)
+            .Select(MapTable)
+            .ToList();
+
         return new DocumentProcessResponse(
             document.Id,
             document.Status,
             document.DocumentType,
             document.Confidence ?? 0m,
             fields,
+            tables,
             Array.Empty<string>(),
             Array.Empty<string>(),
             new DocumentProcessMeta(
@@ -611,6 +674,7 @@ public class DocumentService : IDocumentService
             DocumentType.Unknown,
             0m,
             Array.Empty<DocumentFieldResultDto>(),
+            Array.Empty<ExtractedTableDto>(),
             Array.Empty<string>(),
             Array.Empty<string>(),
             new DocumentProcessMeta(0, "pending", "", "", 0)

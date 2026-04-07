@@ -14,6 +14,7 @@ public class DocumentDbContext : DbContext
 
     public DbSet<Document> Documents => Set<Document>();
     public DbSet<DocumentField> DocumentFields => Set<DocumentField>();
+    public DbSet<DocumentTable> DocumentTables => Set<DocumentTable>();
     public DbSet<ProcessingLog> ProcessingLogs => Set<ProcessingLog>();
     public DbSet<ModelVersion> ModelVersions => Set<ModelVersion>();
 
@@ -35,6 +36,9 @@ public class DocumentDbContext : DbContext
             entity.HasMany(x => x.ProcessingLogs)
                 .WithOne(x => x.Document)
                 .HasForeignKey(x => x.DocumentId);
+            entity.HasMany(x => x.Tables)
+                .WithOne(x => x.Document)
+                .HasForeignKey(x => x.DocumentId);
         });
 
         modelBuilder.Entity<DocumentField>(entity =>
@@ -45,6 +49,18 @@ public class DocumentDbContext : DbContext
             entity.Property(x => x.SourceBbox).HasColumnType("integer[]");
             entity.HasIndex(x => x.DocumentId);
             entity.HasIndex(x => x.FieldKey);
+        });
+
+        modelBuilder.Entity<DocumentTable>(entity =>
+        {
+            entity.ToTable("document_tables");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Columns).HasColumnType("text[]");
+            if (!Database.IsInMemory())
+            {
+                entity.Property(x => x.RowsJson).HasColumnType("jsonb");
+            }
+            entity.HasIndex(x => x.DocumentId);
         });
 
         modelBuilder.Entity<ProcessingLog>(entity =>

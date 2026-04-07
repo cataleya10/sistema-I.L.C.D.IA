@@ -26,6 +26,28 @@ public sealed class HybridAiClient : IPythonAiClient
         "ESTATUS",
         "CONCEPTO"
     ];
+    private static readonly HashSet<string> PaymentTableSignalColumns = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "cuenta",
+        "referencia",
+        "importe",
+        "nombre",
+        "apellido_paterno",
+        "apellido_materno",
+        "estatus",
+        "concepto_pago",
+        "beneficiario",
+        "clave",
+        "folio",
+        "no_cuenta",
+        "no_banco"
+    };
+    private static readonly string[] PaymentTableCoreColumns =
+    [
+        "cuenta",
+        "referencia",
+        "importe"
+    ];
     private static readonly Dictionary<string, string> KeyAliases = new(StringComparer.OrdinalIgnoreCase)
     {
         ["direccion"] = "domicilio",
@@ -226,6 +248,7 @@ public sealed class HybridAiClient : IPythonAiClient
             preferred.DocumentType,
             Math.Max(preferred.Confidence, secondary.Confidence),
             mergedFields,
+            preferred.Tables,
             mergedWarnings,
             mergedErrors,
             mergedMeta);
@@ -719,26 +742,213 @@ public sealed class HybridAiClient : IPythonAiClient
 
     private static DocumentProcessResponse ApplyDocumentTypeFieldPolicy(DocumentProcessResponse response)
     {
-        if (response.DocumentType != DocumentType.Factura)
+        var normalizedResponse = NormalizeDocumentTypeFromStructuredTable(response);
+        if (normalizedResponse.DocumentType != DocumentType.Factura)
+        {
+            return normalizedResponse;
+        }
+
+        var filteredFields = normalizedResponse.Fields
+            .Where(field => string.Equals(field.Key, "tabla_celdas", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (filteredFields.Length == 0)
+        {
+            filteredFields = normalizedResponse.Fields
+                .Where(field => string.Equals(field.Key, "pago_detalle", StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+        }
+
+        var hasValidTable = filteredFields.Any(field => field.Valid && !string.IsNullOrWhiteSpace(field.Value));
+        var status = hasValidTable ? normalizedResponse.Status : DocumentStatus.NeedsReview;
+
+        return new DocumentProcessResponse(
+            normalizedResponse.DocumentId,
+            status,
+            normalizedResponse.DocumentType,
+            normalizedResponse.Confidence,
+            filteredFields,
+            normalizedResponse.Tables,
+            normalizedResponse.Warnings,
+            normalizedResponse.Errors,
+            normalizedResponse.Meta);
+    }
+
+    private static DocumentProcessResponse NormalizeDocumentTypeFromStructuredTable(DocumentProcessResponse response)
+    {
+        if (response.DocumentType != DocumentType.DatosBancarios || !LooksLikePaymentStructuredTable(response))
         {
             return response;
         }
 
-        var filteredFields = response.Fields
-            .Where(field => string.Equals(field.Key, "tabla_celdas", StringComparison.OrdinalIgnoreCase))
+        var warnings = response.Warnings
+            .Append("Tipo corregido DATOS_BANCARIOS→FACTURA por tabla estructurada de pago/dispersión.")
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-
-        var hasValidTable = filteredFields.Any(field => field.Valid && !string.IsNullOrWhiteSpace(field.Value));
-        var status = hasValidTable ? response.Status : DocumentStatus.NeedsReview;
 
         return new DocumentProcessResponse(
             response.DocumentId,
-            status,
-            response.DocumentType,
+            response.Status,
+            DocumentType.Factura,
             response.Confidence,
-            filteredFields,
-            response.Warnings,
+            response.Fields,
+            response.Tables,
+            warnings,
             response.Errors,
             response.Meta);
+    }
+
+    private static bool LooksLikePaymentStructuredTable(DocumentProcessResponse response)
+    {
+        foreach (var fieldKey in new[] { "tabla_celdas", "pago_detalle" })
+        {
+            var field = response.Fields.FirstOrDefault(x =>
+                string.Equals(x.Key, fieldKey, StringComparison.OrdinalIgnoreCase)
+                && x.Valid
+                && !string.IsNullOrWhiteSpace(x.Value));
+            if (field is null)
+            {
+                continue;
+            }
+
+            var profile = ExtractStructuredTableProfile(field.Key, field.Value!);
+            if (profile.CanonicalRows > 0
+                && profile.SignalColumns >= 3
+                && profile.CoreColumns >= 2)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static (int CanonicalRows, int SignalColumns, int CoreColumns) ExtractStructuredTableProfile(string key, string rawValue)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(rawValue);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return default;
+            }
+
+            var tableElement = root;
+            var usesNestedTable = false;
+            if (string.Equals(key, "pago_detalle", StringComparison.OrdinalIgnoreCase)
+                && TryGetProperty(root, "table", out var nestedTable)
+                && nestedTable.ValueKind == JsonValueKind.Object)
+            {
+                tableElement = nestedTable;
+                usesNestedTable = true;
+            }
+
+            var canonicalRows = CountArray(tableElement, "canonical_rows");
+            if (canonicalRows == 0 && usesNestedTable)
+            {
+                canonicalRows = CountArray(root, "canonical_rows");
+            }
+
+            var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            CollectStructuredColumns(tableElement, columns);
+            if (usesNestedTable)
+            {
+                CollectStructuredColumns(root, columns);
+            }
+
+            var signalColumns = columns.Count(PaymentTableSignalColumns.Contains);
+            var coreColumns = columns.Count(column =>
+                PaymentTableCoreColumns.Any(core => string.Equals(core, column, StringComparison.OrdinalIgnoreCase)));
+
+            return (canonicalRows, signalColumns, coreColumns);
+        }
+        catch
+        {
+            return default;
+        }
+    }
+
+    private static void CollectStructuredColumns(JsonElement parent, HashSet<string> columns)
+    {
+        if (TryGetProperty(parent, "canonical_columns", out var canonicalColumns)
+            && canonicalColumns.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var column in canonicalColumns.EnumerateArray())
+            {
+                if (column.ValueKind == JsonValueKind.String)
+                {
+                    var value = column.GetString();
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        columns.Add(value.Trim());
+                    }
+                }
+            }
+        }
+
+        if (TryGetProperty(parent, "canonical_rows", out var canonicalRows)
+            && canonicalRows.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var row in canonicalRows.EnumerateArray())
+            {
+                if (row.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                foreach (var property in row.EnumerateObject())
+                {
+                    if (!string.IsNullOrWhiteSpace(property.Name))
+                    {
+                        columns.Add(property.Name.Trim());
+                    }
+                }
+
+                break;
+            }
+        }
+
+        if (TryGetProperty(parent, "rows", out var rowsElement)
+            && rowsElement.ValueKind == JsonValueKind.Array
+            && rowsElement.GetArrayLength() > 0
+            && rowsElement[0].ValueKind == JsonValueKind.Array)
+        {
+            foreach (var cell in rowsElement[0].EnumerateArray())
+            {
+                var header = cell.ValueKind == JsonValueKind.String
+                    ? cell.GetString()
+                    : cell.ToString();
+                if (string.IsNullOrWhiteSpace(header))
+                {
+                    continue;
+                }
+
+                columns.Add(NormalizeHeaderToCanonicalKey(header));
+            }
+        }
+    }
+
+    private static string NormalizeHeaderToCanonicalKey(string header)
+    {
+        var normalized = header
+            .Trim()
+            .ToLowerInvariant()
+            .Replace("á", "a", StringComparison.Ordinal)
+            .Replace("é", "e", StringComparison.Ordinal)
+            .Replace("í", "i", StringComparison.Ordinal)
+            .Replace("ó", "o", StringComparison.Ordinal)
+            .Replace("ú", "u", StringComparison.Ordinal)
+            .Replace("ü", "u", StringComparison.Ordinal)
+            .Replace("ñ", "n", StringComparison.Ordinal);
+
+        normalized = Regex.Replace(normalized, @"[^a-z0-9]+", "_").Trim('_');
+
+        return normalized switch
+        {
+            "concepto" => "concepto_pago",
+            "no_cuenta" => "no_cuenta",
+            "no_banco" => "no_banco",
+            _ => normalized
+        };
     }
 }

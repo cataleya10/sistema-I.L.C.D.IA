@@ -231,7 +231,7 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertGreaterEqual(payload.get("all_table_count", 0), 1)
         self.assertEqual(payload.get("primary_table_index"), 1)
 
-    def test_extract_factura_scotia_ocr_boxes_also_append_bottom_summary_rows(self):
+    def test_extract_factura_scotia_ocr_boxes_keeps_bottom_summary_rows_out_of_main_table(self):
         ocr_text = "\n".join(
             [
                 "Scotiabank Inverlat S.A.",
@@ -283,8 +283,9 @@ class ExtractPipelineTests(unittest.TestCase):
         payload = json.loads(data["tabla_celdas"])
         self.assertEqual(payload.get("source"), "ocr_boxes")
         rows = payload.get("rows", [])
-        self.assertTrue(any(row[:4] == ["CANTIDAD DE MOVIMIENTOS ALTAS", "IMPORTE DE MOVIMIENTO ALTAS", "CANTIDAD DE MOVIMIENTOS BAJAS", "IMPORTE DE MOVIMIENTOS BAJAS"] for row in rows))
-        self.assertTrue(any(row[:4] == ["TOTAL CANTIDAD DE MOVIMIENTOS ALTAS", "TOTAL IMPORTE DE MOVIMIENTO ALTAS", "TOTAL CANTIDAD DE MOVIMIENTOS BAJAS", "TOTAL IMPORTE DE MOVIMIENTOS BAJAS"] for row in rows))
+        self.assertFalse(any("CANTIDAD DE MOVIMIENTOS ALTAS" in " ".join(row[:4]).upper() for row in rows))
+        self.assertFalse(any("TOTAL CANTIDAD DE MOVIMIENTOS ALTAS" in " ".join(row[:4]).upper() for row in rows))
+        self.assertEqual(payload.get("validation_warnings"), None)
 
     def test_extract_datos_bancarios_payment_table_from_text_lines(self):
         ocr_text = "\n".join(
@@ -900,6 +901,314 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertEqual(canonical_rows[0].get("importe"), "3,000.00")
         self.assertIn("CARLOS ROBERTO", canonical_rows[0].get("nombre", ""))
         self.assertEqual(canonical_rows[0].get("estatus"), "APLICADO")
+
+    def test_merge_scotia_secondary_pdf_tables_appends_headerless_continuations(self):
+        from app.pipelines.extract.tables import _merge_scotia_secondary_pdf_tables
+
+        rows = [
+            [
+                "TIPO DE\nREGISTRO",
+                "TIPO DE\nMOVIMIENTO\n(PAGO)",
+                "IMPORTE",
+                "FECHA DE\nAPLICACION",
+                "CLAVE DEL\nBENEFICIARIO",
+                "NOMBRE DEL\nBENEFICIARIO",
+                "REFERENCIA",
+                "NO. CUENTA\nBENEFICIARIO",
+                "NO. BANCO\nRECEPTOR",
+                "DIAS DE\nVIGENCIA",
+                "CONCEPTO\nPAGO",
+            ],
+            [
+                "DA ALTA",
+                "04 ABONO EN\nCUENTA",
+                "$700.00",
+                "15/01/2026",
+                "A246",
+                "PEREZ CORNELIO\nRUBEN",
+                "1",
+                "00072052010945534678",
+                "72",
+                "1",
+                "PAGO246",
+            ],
+        ]
+        secondary_pdf_tables = [
+            [
+                ["DA ALTA", "04 ABONO EN\nCUENTA", "$2,605.11", "15/01/2026", "A256", "PEREZ\nCONTRERAS\nSANDY DEL\nCARMEN", "1", "00014052569364199983", "14", "1", "PAGO256"],
+                ["DA ALTA", "04 ABONO EN\nCUENTA", "$3,000.00", "15/01/2026", "A257", "GONZALEZ\nAGUILAR\nMARGOT", "1", "00002843701208492372", "2", "1", "PAGO257"],
+            ],
+            [["RESUMEN", "NO APLICA"]],
+        ]
+        raw_text = "Scotiabank Inverlat S.A.\nTransferencia de Archivos\nCantidad Total de Movimientos: 44"
+
+        merged_rows, remaining = _merge_scotia_secondary_pdf_tables(rows, secondary_pdf_tables, raw_text)
+
+        self.assertEqual(len(merged_rows), 4)
+        self.assertEqual(merged_rows[2][4], "A256")
+        self.assertEqual(merged_rows[3][4], "A257")
+        self.assertEqual(len(remaining), 1)
+        self.assertEqual(remaining[0][0][0], "RESUMEN")
+
+    def test_extract_payment_detail_payload_merges_scotia_secondary_tables(self):
+        from app.pipelines.extract.tables import _extract_payment_detail_payload
+
+        payment_table = {
+            "bank": "SCOTIABANK",
+            "rows": [
+                [
+                    "TIPO DE\nREGISTRO",
+                    "TIPO DE\nMOVIMIENTO\n(PAGO)",
+                    "IMPORTE",
+                    "FECHA DE\nAPLICACION",
+                    "CLAVE DEL\nBENEFICIARIO",
+                    "NOMBRE DEL\nBENEFICIARIO",
+                    "REFERENCIA",
+                    "NO. CUENTA\nBENEFICIARIO",
+                    "NO. BANCO\nRECEPTOR",
+                    "DIAS DE\nVIGENCIA",
+                    "CONCEPTO\nPAGO",
+                ],
+                [
+                    "DA ALTA",
+                    "04 ABONO EN\nCUENTA",
+                    "$700.00",
+                    "15/01/2026",
+                    "A246",
+                    "PEREZ CORNELIO\nRUBEN",
+                    "1",
+                    "00072052010945534678",
+                    "72",
+                    "1",
+                    "PAGO246",
+                ],
+            ],
+            "secondary_pdf_tables": [
+                [
+                    ["DA ALTA", "04 ABONO EN\nCUENTA", "$2,605.11", "15/01/2026", "A256", "PEREZ\nCONTRERAS\nSANDY DEL\nCARMEN", "1", "00014052569364199983", "14", "1", "PAGO256"],
+                    ["DA ALTA", "04 ABONO EN\nCUENTA", "$3,000.00", "15/01/2026", "A257", "GONZALEZ\nAGUILAR\nMARGOT", "1", "00002843701208492372", "2", "1", "PAGO257"],
+                ]
+            ],
+        }
+        text = "Scotiabank Inverlat S.A.\nTransferencia de Archivos\nCantidad Total de Movimientos: 44"
+
+        payload = _extract_payment_detail_payload(text, payment_table)
+
+        canonical_rows = payload.get("table", {}).get("canonical_rows", [])
+        self.assertEqual(len(canonical_rows), 3)
+        self.assertEqual(canonical_rows[1].get("clave_beneficiario"), "A256")
+        self.assertEqual(canonical_rows[2].get("clave_beneficiario"), "A257")
+
+    def test_fix_scotiabank_canonical_rows_removes_summary_fragments(self):
+        from app.pipelines.extract.tables import _fix_scotiabank_canonical_rows
+
+        rows = [
+            {
+                "clave_beneficiario": "A289",
+                "nombre_beneficiario": "RODRIGUEZ GARCIA EDWIN FABIAN",
+                "importe": "$3,000.00",
+                "fecha_aplicacion": "15/01/2026",
+                "referencia": "1",
+                "cuenta_beneficiario": "00014052569330858614",
+                "banco_receptor": "14",
+                "dias_vigencia": "1",
+                "concepto_pago": "PAGO289",
+            },
+            {
+                "clave_beneficiario": "",
+                "nombre_beneficiario": "",
+                "importe": "CANTIDAD DE MOVIMIENTOS BAJAS",
+                "fecha_aplicacion": "IMPORTE DE MOVIMIENTOS BAJAS",
+                "referencia": "",
+                "cuenta_beneficiario": "",
+                "banco_receptor": "",
+                "dias_vigencia": "",
+                "concepto_pago": "",
+            },
+            {
+                "clave_beneficiario": "",
+                "nombre_beneficiario": "",
+                "importe": "0",
+                "fecha_aplicacion": "$0.00",
+                "referencia": "",
+                "cuenta_beneficiario": "",
+                "banco_receptor": "",
+                "dias_vigencia": "",
+                "concepto_pago": "",
+            },
+        ]
+
+        _fix_scotiabank_canonical_rows(rows, "Scotiabank Inverlat S.A.")
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["clave_beneficiario"], "A289")
+
+    def test_fix_banorte_canonical_rows_does_not_replace_better_existing_rows(self):
+        from app.pipelines.extract.tables import _fix_banorte_canonical_rows
+
+        rows = [
+            {
+                "clave_beneficiario": "0000000001",
+                "nombre_beneficiario": "RAMIRO ARTURO MORALES VINAGRE",
+                "cuenta_beneficiario": "000000001289962306",
+                "importe": "$874.60",
+                "referencia": "0000000002",
+                "concepto_pago": "APLICADO",
+            },
+            {
+                "clave_beneficiario": "0000000002",
+                "nombre_beneficiario": "EMIR SANTOS GARCIA",
+                "cuenta_beneficiario": "000000001290173292",
+                "importe": "$715.51",
+                "referencia": "0000000003",
+                "concepto_pago": "APLICADO",
+            },
+            {
+                "clave_beneficiario": "0000000003",
+                "nombre_beneficiario": "SAMUEL BARRERA GERONIMO",
+                "cuenta_beneficiario": "000000001290249012",
+                "importe": "$1,167.64",
+                "referencia": "0000000004",
+                "concepto_pago": "APLICADO",
+            },
+            {
+                "clave_beneficiario": "0000000004",
+                "nombre_beneficiario": "JUSTO JIMENEZ SANCHEZ",
+                "cuenta_beneficiario": "000000001290243346",
+                "importe": "$3,000.00",
+                "referencia": "0000000005",
+                "concepto_pago": "APLICADO",
+            },
+            {
+                "clave_beneficiario": "0000000005",
+                "nombre_beneficiario": "OLGA LIDIA CRUZ DE LOS SANTOS",
+                "cuenta_beneficiario": "000000001290346171",
+                "importe": "$2,924.30",
+                "referencia": "",
+                "concepto_pago": "APLICADO",
+            },
+        ]
+        text = """0000000001 RAMIRO ARTURO MORALES VINAGRE 01 000000001289962306 $874.60 APLICADO 00 ACEPTADO
+        0000000002 EMIR SANTOS GARCIA 01 000000001290173292 $715.51 APLICADO 00 ACEPTADO
+        0000000003 SAMUEL BARRERA GERONIMO 01 000000001290249012 $1,167.64 APLICADO 00 ACEPTADO
+        """
+
+        _fix_banorte_canonical_rows(rows, text)
+
+        self.assertEqual(len(rows), 5)
+        self.assertEqual(rows[1]["clave_beneficiario"], "0000000002")
+        self.assertEqual(rows[3]["clave_beneficiario"], "0000000004")
+
+    def test_prefer_santander_raw_canonical_rows_uses_full_raw_totals(self):
+        from app.pipelines.extract.tables import _prefer_santander_raw_canonical_rows
+
+        metadata = {"importe_detectado": "7,500.00"}
+        row_objects = [
+            {
+                "cuenta": "56775171706",
+                "referencia": "1620260115134903934215",
+                "importe": "$3,000.00",
+                "nombre": "PATRICIA",
+                "apellidopaterno": "CRUZ",
+                "apellidomaterno": "TEJERO",
+                "estatus": "Procesado",
+                "concepto": "Pago de N",
+            },
+            {
+                "cuenta": "56936419478",
+                "referencia": "1620260115134918564969",
+                "importe": "$3,000.00",
+                "nombre": "MARIA DEL ROSARIO",
+                "apellidopaterno": "PEREZ",
+                "apellidomaterno": "JIMENEZ",
+                "estatus": "Procesado",
+                "concepto": "Pago de N",
+            },
+            {
+                "cuenta": "56936397470",
+                "referencia": "1620260115134916294926",
+                "importe": "$1,500.00",
+                "nombre": "ROLANDO",
+                "apellidopaterno": "CONTRERAS",
+                "apellidomaterno": "CAMARGO",
+                "estatus": "Procesado",
+                "concepto": "Pago de N",
+            },
+        ]
+        canonical_columns = ["nombre_beneficiario", "cuenta_beneficiario", "importe"]
+        canonical_rows = [
+            {
+                "nombre_beneficiario": "PATRICIA",
+                "cuenta_beneficiario": "56775171706",
+                "importe": "3000.00",
+            },
+            {
+                "nombre_beneficiario": "MARIA DEL ROSARIO",
+                "cuenta_beneficiario": "56936419478",
+                "importe": "3000.00",
+            },
+        ]
+
+        columns, rows = _prefer_santander_raw_canonical_rows(
+            metadata,
+            row_objects,
+            canonical_columns,
+            canonical_rows,
+        )
+
+        self.assertEqual(len(rows), 3)
+        self.assertIn("referencia", columns)
+        self.assertEqual(rows[0]["referencia"], "1620260115134903934215")
+        self.assertEqual(rows[2]["nombre_beneficiario"], "ROLANDO CONTRERAS CAMARGO")
+
+    def test_fix_santander_canonical_rows_does_not_replace_better_existing_rows(self):
+        from app.pipelines.extract.tables import _fix_santander_canonical_rows
+
+        rows = [
+            {
+                "nombre_beneficiario": "PATRICIA CRUZ TEJERO",
+                "cuenta_beneficiario": "56775171706",
+                "referencia": "1620260115134903934215",
+                "importe": "3000.00",
+                "estatus": "PROCESADO",
+                "concepto_pago": "PAGO DE NOMINA",
+            },
+            {
+                "nombre_beneficiario": "MARIA DEL ROSARIO PEREZ JIMENEZ",
+                "cuenta_beneficiario": "56936419478",
+                "referencia": "1620260115134918564969",
+                "importe": "3000.00",
+                "estatus": "PROCESADO",
+                "concepto_pago": "PAGO DE NOMINA",
+            },
+            {
+                "nombre_beneficiario": "ROGER DE JESUS SANCHEZ PENATE",
+                "cuenta_beneficiario": "56936399792",
+                "referencia": "1620260115134918364964",
+                "importe": "3000.00",
+                "estatus": "PROCESADO",
+                "concepto_pago": "PAGO DE NOMINA",
+            },
+        ]
+        text = """DATOS DEL BENEFICIARIO
+        Nombre: PATRICIA
+        Primer apellido: CRUZ
+        Segundo apellido: TEJERO
+        Número de cuenta de Abono: 56775171706
+        Importe: $3,000.00 MXN
+        DATOS DEL BENEFICIARIO
+        Nombre: MARIA DEL ROSARIO
+        Primer apellido: PEREZ
+        Segundo apellido: JIMENEZ
+        Número de cuenta de Abono: 56936419478
+        Importe: $3,000.00 MXN
+        """
+
+        _fix_santander_canonical_rows(rows, text)
+
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[0]["referencia"], "1620260115134903934215")
+        self.assertEqual(rows[2]["nombre_beneficiario"], "ROGER DE JESUS SANCHEZ PENATE")
 
     def test_extract_factura_payment_detail_fixes_hernendez_ocr_typo(self):
         ocr_text = "\n".join(
@@ -3336,6 +3645,25 @@ class TestBbvaAmountPicksLargest(unittest.TestCase):
         """
         meta = _extract_bbva_payment_metadata(text)
         self.assertIn("importe_detectado", meta)
+
+
+class TestBanorteAmountExtraction(unittest.TestCase):
+    def test_picks_largest_amount_from_banorte_report(self):
+        from app.pipelines.extract import _extract_banorte_payment_metadata
+
+        text = """REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS
+        Folio electronico: 150120264263001PN7379597479
+        Registros Transmitidos:
+        Importe:
+        1
+        $ 3,000.00
+        Fecha de Aplicacion: 15-01-2026
+        """
+
+        meta = _extract_banorte_payment_metadata(text)
+
+        self.assertEqual(meta.get("importe_detectado"), "3,000.00")
+        self.assertEqual(meta.get("importe_total"), "3,000.00")
 
 
 class TestColumnsUseCanonical(unittest.TestCase):

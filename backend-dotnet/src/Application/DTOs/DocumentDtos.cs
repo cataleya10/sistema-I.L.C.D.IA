@@ -23,7 +23,8 @@ public sealed record DocumentDetailDto(
     string FileUrl,
     string MimeType,
     bool NeedsReview,
-    IReadOnlyList<DocumentFieldDto> Fields
+    IReadOnlyList<DocumentFieldDto> Fields,
+    IReadOnlyList<ExtractedTableDto> Tables
 );
 
 public sealed record DocumentFieldDto(

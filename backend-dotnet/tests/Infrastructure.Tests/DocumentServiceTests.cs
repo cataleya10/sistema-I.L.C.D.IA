@@ -83,6 +83,7 @@ public class DocumentServiceTests
                         Array.Empty<string>(),
                         new FieldSourceDto(1, new[] { 10, 20, 30, 40 }))
                 },
+                Array.Empty<ExtractedTableDto>(),
                 Array.Empty<string>(),
                 Array.Empty<string>(),
                 new DocumentProcessMeta(1, "paddleocr", "1.0.0", "clf-v1.0.0", 1500))));
