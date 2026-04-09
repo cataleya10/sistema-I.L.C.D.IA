@@ -45,15 +45,24 @@
     "CUENTA",
     "NO. CUENTA",
     "NUMERO DE CUENTA",
-    "NO CUENTA"
+    "NO CUENTA",
+    "CARGO",
+    "CUENTA CARGO"
   ],
   "titular": [
     "TITULAR",
-    "NOMBRE DEL TITULAR"
+    "NOMBRE DEL TITULAR",
+    "LEONARDO",
+    "ELENA",
+    "MARIA ELENA"
   ],
   "banco": [
     "BANCO",
-    "INSTITUCION BANCARIA"
+    "INSTITUCION BANCARIA",
+    "BANCA",
+    "PETICIONES BANCA",
+    "PROCESAN PETICIONES BANCA",
+    "QUE PROCESAN PETICIONES BANCA"
   ],
   "fecha_limite": [
     "FECHA LIMITE",
@@ -150,6 +159,14 @@
   "periodo": [
     "PERIODO",
     "PERIODO FACTURADO",
-    "PERIODO DE FACTURACION"
+    "PERIODO DE FACTURACION",
+    "ARCHIVO",
+    "TRANSMISION ARCHIVO",
+    "REPORTE TRANSMISION ARCHIVO"
+  ],
+  "fecha_corte": [
+    "TRANSMISION",
+    "HORA TRANSMISION",
+    "FECHA HORA TRANSMISION"
   ]
 }
