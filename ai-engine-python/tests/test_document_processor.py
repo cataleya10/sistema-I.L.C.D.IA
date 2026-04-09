@@ -60,7 +60,7 @@ class DocumentProcessorTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(response.status, "READY")
+        self.assertFalse(response.validation_summary.requires_review)
         self.assertEqual(learn_mock.call_count, 1)
         self.assertNotIn("Campos críticos faltantes", " ".join(response.warnings))
         self.assertNotIn("Campos críticos inválidos", " ".join(response.warnings))
@@ -68,7 +68,7 @@ class DocumentProcessorTests(unittest.TestCase):
     def test_process_document_needs_review_when_critical_field_is_missing(self):
         response, learn_mock = self._run_case([_field("curp", "AACD900101HDFRRL09")])
 
-        self.assertEqual(response.status, "NEEDS_REVIEW")
+        self.assertTrue(response.validation_summary.requires_review)
         self.assertEqual(learn_mock.call_count, 1)
         self.assertIn("Campos críticos faltantes: nombre", response.warnings)
 
@@ -80,14 +80,14 @@ class DocumentProcessorTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(response.status, "NEEDS_REVIEW")
+        self.assertTrue(response.validation_summary.requires_review)
         self.assertEqual(learn_mock.call_count, 1)
         self.assertIn("Campos críticos inválidos: nombre", response.warnings)
 
     def test_process_document_warns_when_ocr_text_is_empty(self):
         response, learn_mock = self._run_case([], ocr_text="")
 
-        self.assertEqual(response.status, "NEEDS_REVIEW")
+        self.assertTrue(response.validation_summary.requires_review)
         self.assertEqual(learn_mock.call_count, 1)
         self.assertIn("No se detectó texto. Verifica OCR o la calidad del documento.", response.warnings)
         self.assertIn("No se detectaron campos extraídos.", response.warnings)
@@ -104,7 +104,7 @@ class DocumentProcessorTests(unittest.TestCase):
             critical_fields={"ACTA_NACIMIENTO": ["nombre", "fecha_nacimiento", "folio", "numero_acta"]},
         )
 
-        self.assertEqual(response.status, "READY")
+        self.assertFalse(response.validation_summary.requires_review)
         self.assertEqual(learn_mock.call_count, 1)
         self.assertNotIn("Campos críticos faltantes", " ".join(response.warnings))
 
@@ -118,7 +118,7 @@ class DocumentProcessorTests(unittest.TestCase):
             critical_fields={"NSS": ["nss", "nombre"]},
         )
 
-        self.assertEqual(response.status, "READY")
+        self.assertFalse(response.validation_summary.requires_review)
         self.assertEqual(learn_mock.call_count, 1)
         self.assertNotIn("Campos críticos faltantes", " ".join(response.warnings))
 
@@ -134,7 +134,7 @@ class DocumentProcessorTests(unittest.TestCase):
             critical_fields={"ACTA_NACIMIENTO": ["nombre", "fecha_nacimiento", "folio", "numero_acta"]},
         )
 
-        self.assertEqual(response.status, "READY")
+        self.assertFalse(response.validation_summary.requires_review)
         self.assertEqual(learn_mock.call_count, 1)
         self.assertNotIn("Campos críticos inválidos", " ".join(response.warnings))
 
@@ -150,7 +150,7 @@ class DocumentProcessorTests(unittest.TestCase):
             critical_fields={"ACTA_NACIMIENTO": ["nombre", "fecha_nacimiento", "folio", "numero_acta"]},
         )
 
-        self.assertEqual(response.status, "NEEDS_REVIEW")
+        self.assertTrue(response.validation_summary.requires_review)
         self.assertEqual(learn_mock.call_count, 1)
         self.assertIn("Campos críticos inválidos: nombre", " ".join(response.warnings))
         self.assertTrue(any("Guardia ACTA" in warning for warning in response.warnings))
@@ -168,7 +168,7 @@ class DocumentProcessorTests(unittest.TestCase):
                 critical_fields={"ACTA_NACIMIENTO": ["nombre", "fecha_nacimiento", "folio", "numero_acta"]},
             )
 
-        self.assertEqual(response.status, "READY")
+        self.assertFalse(response.validation_summary.requires_review)
         self.assertEqual(learn_mock.call_count, 1)
         self.assertFalse(any("Guardia ACTA" in warning for warning in response.warnings))
 
@@ -180,8 +180,8 @@ class DocumentProcessorTests(unittest.TestCase):
             options='{"force_document_type":"FACTURA"}',
         )
 
-        self.assertEqual(response.document_type, "FACTURA")
-        self.assertEqual(response.status, "READY")
+        self.assertEqual(response.tipo_documento, "FACTURA")
+        self.assertFalse(response.validation_summary.requires_review)
         self.assertEqual(learn_mock.call_count, 1)
         self.assertIn("Tipo forzado manualmente: FACTURA.", response.warnings)
 
@@ -215,8 +215,8 @@ class DocumentProcessorTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(response.document_type, "FACTURA")
-        self.assertEqual(response.status, "READY")
+        self.assertEqual(response.tipo_documento, "FACTURA")
+        self.assertFalse(response.validation_summary.requires_review)
         self.assertEqual(learn_mock.call_count, 1)
         self.assertTrue(any("DATOS_BANCARIOS→FACTURA" in warning for warning in response.warnings))
 
@@ -290,7 +290,7 @@ class DocumentProcessorTests(unittest.TestCase):
             doc_type="FACTURA",
             critical_fields={"FACTURA": ["tabla_celdas"]},
         )
-        self.assertEqual(response.status, "READY")
+        self.assertFalse(response.validation_summary.requires_review)
         self.assertEqual(learn_mock.call_count, 1)
         self.assertFalse(any("[NOMINA_STRICT]" in warning for warning in response.warnings))
 
@@ -325,7 +325,7 @@ class DocumentProcessorTests(unittest.TestCase):
             doc_type="FACTURA",
             critical_fields={"FACTURA": ["tabla_celdas"]},
         )
-        self.assertEqual(response.status, "NEEDS_REVIEW")
+        self.assertTrue(response.validation_summary.requires_review)
         self.assertEqual(learn_mock.call_count, 1)
         self.assertTrue(any("[NOMINA_STRICT]" in warning for warning in response.warnings))
 
@@ -362,7 +362,7 @@ class DocumentProcessorTests(unittest.TestCase):
                 critical_fields={"FACTURA": ["tabla_celdas"]},
             )
 
-        self.assertEqual(response.status, "READY")
+        self.assertFalse(response.validation_summary.requires_review)
         self.assertEqual(learn_mock.call_count, 1)
         self.assertFalse(any("[NOMINA_STRICT]" in warning for warning in response.warnings))
 
@@ -407,7 +407,7 @@ class DocumentProcessorTests(unittest.TestCase):
             critical_fields={"FACTURA": ["tabla_celdas"]},
         )
 
-        self.assertEqual(response.status, "READY")
+        self.assertFalse(response.validation_summary.requires_review)
         self.assertEqual(learn_mock.call_count, 1)
         self.assertFalse(any("apellido_materno" in warning for warning in response.warnings))
 
@@ -462,7 +462,7 @@ class DocumentProcessorTests(unittest.TestCase):
             critical_fields={"FACTURA": ["pago_detalle"]},
         )
 
-        self.assertEqual(response.status, "READY")
+        self.assertFalse(response.validation_summary.requires_review)
         self.assertEqual(learn_mock.call_count, 1)
         self.assertFalse(any("[NOMINA_STRICT]" in warning for warning in response.warnings))
 
@@ -517,7 +517,7 @@ class DocumentProcessorTests(unittest.TestCase):
             critical_fields={"FACTURA": ["pago_detalle"]},
         )
 
-        self.assertEqual(response.status, "NEEDS_REVIEW")
+        self.assertTrue(response.validation_summary.requires_review)
         self.assertEqual(learn_mock.call_count, 1)
         self.assertTrue(any("importe_total_movimientos" in warning for warning in response.warnings))
         self.assertTrue(any("[NOMINA_STRICT]" in warning for warning in response.warnings))
@@ -570,7 +570,7 @@ class DocumentProcessorTests(unittest.TestCase):
             critical_fields={"FACTURA": ["pago_detalle"]},
         )
 
-        self.assertEqual(response.status, "READY")
+        self.assertFalse(response.validation_summary.requires_review)
         self.assertEqual(learn_mock.call_count, 1)
         self.assertFalse(any("importe_detectado" in warning for warning in response.warnings))
         self.assertFalse(any("[NOMINA_STRICT]" in warning for warning in response.warnings))
@@ -634,10 +634,159 @@ class DocumentProcessorTests(unittest.TestCase):
             critical_fields={"FACTURA": ["pago_detalle"]},
         )
 
-        self.assertEqual(response.status, "READY")
+        self.assertFalse(response.validation_summary.requires_review)
         self.assertEqual(learn_mock.call_count, 1)
         self.assertFalse(any("BANORTE" in warning and "referencia" in warning for warning in response.warnings))
         self.assertFalse(any("[NOMINA_STRICT]" in warning for warning in response.warnings))
+
+
+class ErrorCodeTests(unittest.TestCase):
+    """Tests de los error codes estructurados del contrato v2."""
+
+    # ── PDF_CORRUPTED ─────────────────────────────────────────────────────────
+
+    def test_pdf_corrupted_when_no_images_and_no_text(self):
+        """preprocess devuelve sin imágenes ni texto → PDF_CORRUPTED."""
+        fake_file = SimpleNamespace(filename="corrupted.pdf")
+        with patch("app.services.document_processor.preprocess",
+                   AsyncMock(return_value=([], ""))):
+            response = asyncio.run(dp.process_document(fake_file, "doc-corrupt", "upload", None))
+
+        self.assertFalse(response.success)
+        self.assertEqual(response.error_code, "PDF_CORRUPTED")
+        self.assertEqual(response.stage, "preprocess")
+        self.assertTrue(response.validation_summary.requires_review)
+        self.assertEqual(response.validation_summary.score_decision, "reprocess")
+
+    def test_make_error_response_always_has_score_decision_reprocess(self):
+        """_make_error_response siempre produce score_decision='reprocess'."""
+        err = dp._make_error_response(
+            document_id="x",
+            message="Error de prueba",
+            error_code="OCR_FAILED",
+            stage="ocr",
+        )
+        self.assertFalse(err.success)
+        self.assertTrue(err.validation_summary.requires_review)
+        self.assertEqual(err.validation_summary.score_decision, "reprocess")
+
+    # ── DOCUMENT_TYPE_UNKNOWN ─────────────────────────────────────────────────
+
+    def _run_unknown(self, *, ocr_text: str = "texto sin clasificar") -> object:
+        fake_file = SimpleNamespace(filename="doc.pdf")
+        mock_extractor = MagicMock()
+        mock_extractor.extract = AsyncMock(return_value=[])
+        with patch.object(dp, "CRITICAL_FIELDS", {"UNKNOWN": []}):
+            with patch("app.services.document_processor.preprocess",
+                       AsyncMock(return_value=([object()], ""))):
+                with patch("app.services.document_processor.run_ocr",
+                           AsyncMock(return_value=(ocr_text, []))):
+                    with patch("app.services.document_processor.classify_document",
+                               AsyncMock(return_value=("UNKNOWN", 0.5))):
+                        with patch("app.extractors.get_extractor", return_value=mock_extractor):
+                            with patch("app.services.document_processor.validate_fields",
+                                       AsyncMock(side_effect=lambda x: x)):
+                                with patch("app.services.document_processor.learn_from_processed_document"):
+                                    return asyncio.run(
+                                        dp.process_document(fake_file, "doc-unk", "upload", None)
+                                    )
+
+    def test_document_type_unknown_sets_error_code(self):
+        response = self._run_unknown()
+        self.assertEqual(response.error_code, "DOCUMENT_TYPE_UNKNOWN")
+        self.assertEqual(response.stage, "classification")
+        self.assertTrue(response.validation_summary.requires_review)
+
+    def test_document_type_unknown_is_not_success_false(self):
+        """UNKNOWN es recuperable: success=True, el sistema sí procesó."""
+        response = self._run_unknown()
+        self.assertTrue(response.success)
+
+    def test_document_type_unknown_score_not_accepted(self):
+        response = self._run_unknown()
+        self.assertIn(response.validation_summary.score_decision, {"review", "reprocess"})
+
+    def test_document_type_unknown_no_error_when_ocr_text_empty(self):
+        """Sin OCR text, el error prioritario es OCR_FAILED, no DOCUMENT_TYPE_UNKNOWN."""
+        response = self._run_unknown(ocr_text="")
+        self.assertEqual(response.error_code, "OCR_FAILED")
+        self.assertFalse(response.success)
+
+    # ── TABLE_NOT_FOUND ───────────────────────────────────────────────────────
+
+    def _run_factura_no_table(self) -> object:
+        fake_file = SimpleNamespace(filename="factura.pdf")
+        mock_extractor = MagicMock()
+        mock_extractor.extract = AsyncMock(return_value=[])  # sin tabla_celdas
+        with patch.object(dp, "CRITICAL_FIELDS", {"FACTURA": ["tabla_celdas"]}):
+            with patch("app.services.document_processor.preprocess",
+                       AsyncMock(return_value=([object()], ""))):
+                with patch("app.services.document_processor.run_ocr",
+                           AsyncMock(return_value=("factura sin tabla", []))):
+                    with patch("app.services.document_processor.classify_document",
+                               AsyncMock(return_value=("FACTURA", 0.92))):
+                        with patch("app.extractors.get_extractor", return_value=mock_extractor):
+                            with patch("app.services.document_processor.validate_fields",
+                                       AsyncMock(side_effect=lambda x: x)):
+                                with patch("app.services.document_processor.learn_from_processed_document"):
+                                    return asyncio.run(
+                                        dp.process_document(fake_file, "doc-fac", "upload", None)
+                                    )
+
+    def test_table_not_found_for_factura_without_tabla_celdas(self):
+        response = self._run_factura_no_table()
+        self.assertEqual(response.error_code, "TABLE_NOT_FOUND")
+        self.assertEqual(response.stage, "table_extraction")
+        self.assertTrue(response.validation_summary.requires_review)
+
+    def test_table_not_found_message_is_descriptive(self):
+        response = self._run_factura_no_table()
+        self.assertIn("tabla", response.message.lower())
+
+    def test_table_not_found_success_is_true(self):
+        """TABLE_NOT_FOUND: el proceso completó pero sin tabla → success=True."""
+        response = self._run_factura_no_table()
+        self.assertTrue(response.success)
+
+    # ── SCORE_DECISION ────────────────────────────────────────────────────────
+
+    def _run_with_coverage(self, *, found: int, total: int) -> object:
+        required_keys = [f"campo_{i}" for i in range(total)]
+        present_keys = required_keys[:found]
+        fields = [_field(k, f"val_{k}") for k in present_keys]
+        fake_file = SimpleNamespace(filename="doc.pdf")
+        mock_extractor = MagicMock()
+        mock_extractor.extract = AsyncMock(return_value=fields)
+        crit = {"INE": required_keys}
+        with patch.object(dp, "CRITICAL_FIELDS", crit):
+            with patch("app.services.document_processor.preprocess",
+                       AsyncMock(return_value=([object()], ""))):
+                with patch("app.services.document_processor.run_ocr",
+                           AsyncMock(return_value=("texto", []))):
+                    with patch("app.services.document_processor.classify_document",
+                               AsyncMock(return_value=("INE", 0.9))):
+                        with patch("app.extractors.get_extractor", return_value=mock_extractor):
+                            with patch("app.services.document_processor.validate_fields",
+                                       AsyncMock(side_effect=lambda x: x)):
+                                with patch("app.services.document_processor.learn_from_processed_document"):
+                                    return asyncio.run(
+                                        dp.process_document(fake_file, "doc-sc", "upload", None)
+                                    )
+
+    def test_score_decision_accepted_at_full_coverage(self):
+        response = self._run_with_coverage(found=10, total=10)
+        self.assertEqual(response.validation_summary.score_decision, "accepted")
+        self.assertFalse(response.validation_summary.requires_review)
+
+    def test_score_decision_review_at_partial_coverage(self):
+        """8/10 = 80% → entre 0.7 y 0.89 → 'review'."""
+        response = self._run_with_coverage(found=8, total=10)
+        self.assertEqual(response.validation_summary.score_decision, "review")
+
+    def test_score_decision_reprocess_at_low_coverage(self):
+        """4/10 = 40% < 0.7 → 'reprocess'."""
+        response = self._run_with_coverage(found=4, total=10)
+        self.assertEqual(response.validation_summary.score_decision, "reprocess")
 
 
 if __name__ == "__main__":

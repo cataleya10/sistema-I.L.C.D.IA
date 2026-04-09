@@ -27,10 +27,14 @@ def export_table_to_csv_excel(columns, rows, csv_path=None, excel_path=None):
             f.write(csv_str)
     return csv_str, excel_bytes
 import re
+import unicodedata
 from pathlib import Path
 import time
 import logging
-from app.schemas.process import ProcessResponse, DocumentField, ProcessMeta, ExtractedTable
+from app.schemas.process import (
+    ProcessResponse, DocumentField, ProcessMeta, ExtractedTable,
+    CampoExtraido, TablaExtraida, MetadataDocumento, ValidationSummary,
+)
 from app.core.config import settings
 from app.pipelines.preprocess import preprocess
 from app.pipelines.ocr import run_ocr
@@ -47,6 +51,11 @@ logger = logging.getLogger(__name__)
 _PAYMENT_DOC_TYPES = frozenset({
     "DATOS_BANCARIOS", "COMPROBANTE_DE_PAGO", "NOMINA",
     "ESTADO_DE_CUENTA", "FACTURA",
+})
+
+# Tipos donde la tabla es el contenido principal (su ausencia es un error)
+_TABLE_REQUIRED_DOC_TYPES = frozenset({
+    "DATOS_BANCARIOS", "COMPROBANTE_DE_PAGO", "NOMINA", "FACTURA",
 })
 
 # Tipos que usan el motor geométrico + extractor especializado (get_doc_extractor).
@@ -1284,6 +1293,35 @@ def _apply_acta_sanity_guards(fields: list[dict]) -> tuple[list[dict], list[str]
     return fields, warnings
 
 
+def _make_error_response(
+    document_id: str,
+    message: str,
+    error_code: str,
+    stage: str,
+    filename: str = "",
+    source: str = "web",
+    processing_time_ms: int = 0,
+) -> ProcessResponse:
+    """Construye una respuesta de error estructurada con error_code y stage."""
+    return ProcessResponse(
+        document_id=document_id,
+        tipo_documento="UNKNOWN",
+        success=False,
+        message=message,
+        error_code=error_code,
+        stage=stage,
+        metadata=MetadataDocumento(
+            filename=filename,
+            source=source,
+            processing_time_ms=processing_time_ms,
+        ),
+        validation_summary=ValidationSummary(
+            requires_review=True,
+            score_decision="reprocess",
+        ),
+    )
+
+
 async def process_document(file, document_id: str, source: str, options: str | None):
     start = time.time()
     options_data = {}
@@ -1296,7 +1334,19 @@ async def process_document(file, document_id: str, source: str, options: str | N
     forced_doc_type = _resolve_forced_document_type(options_data)
 
     t0 = time.time()
-    preprocess_result = await preprocess(file)
+    try:
+        preprocess_result = await preprocess(file)
+    except Exception as exc:
+        logger.exception("preprocess() falló para doc_id=%s", document_id)
+        return _make_error_response(
+            document_id=document_id,
+            message=f"Error en preprocesamiento: {exc}",
+            error_code="PREPROCESSING_FAILED",
+            stage="preprocess",
+            filename=str(getattr(file, "filename", "") or ""),
+            source=source or "web",
+            processing_time_ms=int((time.time() - start) * 1000),
+        )
     logger.info("[PERF] preprocess: %.1fms", (time.time() - t0) * 1000)
     text_layer_boxes: list[dict] = []
     pdf_tables: list[list[list[str]]] = []
@@ -1316,6 +1366,22 @@ async def process_document(file, document_id: str, source: str, options: str | N
     doc_type_warning = None
     fields: list[dict] = []
     acta_guard_warnings: list[str] = []
+    t_ocr_ms: float = 0.0
+    t_extract_ms: float = 0.0
+
+    # Detectar PDF corrupto / vacío: sin imágenes ni texto extraíble
+    if not images and not extracted_text:
+        logger.warning("PDF sin imágenes ni texto para doc_id=%s filename=%s",
+                       document_id, getattr(file, "filename", ""))
+        return _make_error_response(
+            document_id=document_id,
+            message="El documento no contiene páginas procesables.",
+            error_code="PDF_CORRUPTED",
+            stage="preprocess",
+            filename=str(getattr(file, "filename", "") or ""),
+            source=source or "web",
+            processing_time_ms=int((time.time() - start) * 1000),
+        )
 
     use_fastpath = bool(
         extracted_text
@@ -1355,8 +1421,21 @@ async def process_document(file, document_id: str, source: str, options: str | N
 
     if not fields:
         t1 = time.time()
-        ocr_text, ocr_boxes = await run_ocr(images)
-        logger.info("[PERF] OCR (%d pages): %.1fms", len(images), (time.time() - t1) * 1000)
+        try:
+            ocr_text, ocr_boxes = await run_ocr(images)
+        except Exception as exc:
+            logger.exception("run_ocr() falló para doc_id=%s", document_id)
+            return _make_error_response(
+                document_id=document_id,
+                message=f"Error en OCR: {exc}",
+                error_code="OCR_FAILED",
+                stage="ocr",
+                filename=str(getattr(file, "filename", "") or ""),
+                source=source or "web",
+                processing_time_ms=int((time.time() - start) * 1000),
+            )
+        t_ocr_ms = (time.time() - t1) * 1000
+        logger.info("[PERF] OCR (%d pages): %.1fms", len(images), t_ocr_ms)
         if ocr_boxes:
             ocr_engine = str(ocr_boxes[0].get("engine") or "paddleocr")
         elif ocr_text:
@@ -1372,7 +1451,10 @@ async def process_document(file, document_id: str, source: str, options: str | N
                 ocr_engine = "paddleocr+text-layer"
 
         if ocr_text:
+            # Normalización de texto OCR: unicode NFC, espacios, control chars
             ocr_text = ocr_text.replace("\u00a0", " ").replace("\t", " ")
+            ocr_text = unicodedata.normalize("NFC", ocr_text)
+            ocr_text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', ocr_text)
 
         # ── Fill img2table grids with OCR box text ──────────────────
         # When preprocess detected table grid structure (cell bounding
@@ -1437,7 +1519,8 @@ async def process_document(file, document_id: str, source: str, options: str | N
             if doc_type in {"GENERICO", "UNKNOWN"}:
                 _kwargs["document_type"] = doc_type
             fields = await _extractor.extract(**_kwargs)
-        logger.info("[PERF] extract_fields (%s): %.1fms", doc_type, (time.time() - t2) * 1000)
+        t_extract_ms = (time.time() - t2) * 1000
+        logger.info("[PERF] extract_fields (%s): %.1fms", doc_type, t_extract_ms)
         fields = await validate_fields(fields)
         fields = _normalize_fields(doc_type, fields)
         fields = _postprocess_fields(doc_type, fields)
@@ -1504,6 +1587,16 @@ async def process_document(file, document_id: str, source: str, options: str | N
         pdf_tables, doc_type, detected_bank, fields,
         ocr_boxes=extraction_boxes,
     )
+    # TABLE_NOT_FOUND no aplica cuando la tabla viene embebida en tabla_celdas / pago_detalle
+    _table_embedded = any(
+        f.get("key") in {"tabla_celdas", "pago_detalle"} and f.get("value")
+        for f in fields
+    )
+    table_not_found = (
+        doc_type in _TABLE_REQUIRED_DOC_TYPES
+        and not extracted_tables
+        and not _table_embedded
+    )
     # ========================================================================
 
     if doc_type == "ACTA_NACIMIENTO":
@@ -1568,25 +1661,15 @@ async def process_document(file, document_id: str, source: str, options: str | N
         status = "NEEDS_REVIEW"
         warnings.append("No se detectaron campos extraídos.")
 
+    if table_not_found:
+        status = "NEEDS_REVIEW"
+        warnings.append("No se detectó tabla principal en el documento.")
+
     strict_warnings, strict_hard_fail = _evaluate_payroll_strict(fields, doc_type)
     if strict_warnings:
         warnings.extend(strict_warnings)
     if strict_hard_fail:
         status = "NEEDS_REVIEW"
-
-    populated_fields = sum(1 for field in fields if _has_field_value(field))
-    invalid_fields = sum(1 for field in fields if field.get("valid") is False)
-    logger.info(
-        "Extraction summary doc_id=%s type=%s status=%s populated=%d invalid=%d required=%d missing=%d ocr=%s",
-        document_id,
-        doc_type,
-        status,
-        populated_fields,
-        invalid_fields,
-        len(required),
-        len(missing),
-        ocr_engine,
-    )
 
     if warnings:
         deduped_warnings: list[str] = []
@@ -1613,40 +1696,156 @@ async def process_document(file, document_id: str, source: str, options: str | N
     except Exception:
         logger.exception("Online learning failed for document_id=%s", document_id)
 
-    def _build_doc_field(field: dict) -> DocumentField:
-        source = field.get("source")
-        if source and source.get("bbox"):
-            bbox_pts = source["bbox"]
-            source = {
-                **source,
-                "bbox": [
-                    min(int(round(p[0])) for p in bbox_pts),
-                    min(int(round(p[1])) for p in bbox_pts),
-                    max(int(round(p[0])) for p in bbox_pts),
-                    max(int(round(p[1])) for p in bbox_pts),
-                ],
-            }
-        return DocumentField(**{**field, "source": source})
+    # ── Construir campos con flag is_critical ─────────────────────────────────
+    critical_keys_set: set[str] = set()
+    for k in CRITICAL_FIELDS.get(doc_type, []):
+        critical_keys_set.update(_critical_aliases(doc_type, k))
 
-    response = ProcessResponse(
+    campos_out: list[CampoExtraido] = []
+    for f in fields:
+        field_key = str(f.get("key", "") or "")
+        campos_out.append(CampoExtraido(
+            key=field_key,
+            label=str(f.get("label", field_key) or field_key),
+            value=f.get("value"),
+            confidence=round(float(f.get("confidence", 0.0) or 0.0), 4),
+            is_critical=bool(field_key in critical_keys_set),
+            is_valid=bool(f.get("valid", True)),
+        ))
+
+    # ── Construir tablas en el nuevo formato ──────────────────────────────────
+    tablas_out: list[TablaExtraida] = []
+    for i, t in enumerate(extracted_tables):
+        nombre_tabla = "tabla_principal" if i == 0 else f"tabla_secundaria_{i}"
+        tablas_out.append(TablaExtraida(
+            name=nombre_tabla,
+            headers_detected=list(t.columns),
+            rows=[],  # raw rows no se preservan en este path; usar canonical_rows
+            canonical_rows=list(t.rows),
+        ))
+
+    # ── Calcular confidence_global ────────────────────────────────────────────
+    # Campos críticos pesan 70%, el resto 30%; se blendea con la confianza del
+    # clasificador para que un tipo muy seguro suba el score global.
+    critical_campos = [c for c in campos_out if c.is_critical]
+    non_critical_campos = [c for c in campos_out if not c.is_critical]
+    if critical_campos:
+        crit_avg = sum(c.confidence for c in critical_campos) / len(critical_campos)
+        if non_critical_campos:
+            other_avg = sum(c.confidence for c in non_critical_campos) / len(non_critical_campos)
+            fields_confidence = crit_avg * 0.7 + other_avg * 0.3
+        else:
+            fields_confidence = crit_avg
+    elif campos_out:
+        fields_confidence = sum(c.confidence for c in campos_out) / len(campos_out)
+    else:
+        fields_confidence = 0.0
+    confidence_global = round((fields_confidence + doc_confidence) / 2, 4)
+
+    # ── Calcular validation_summary ───────────────────────────────────────────
+    required_count = len(required)
+    critical_coverage_val = round(found_required / max(1, required_count), 4) if required_count else 1.0
+    populated_count = sum(1 for c in campos_out if c.value not in {None, ""})
+    coverage_val = round(populated_count / max(1, len(campos_out)), 4) if campos_out else 1.0
+    requires_review = status == "NEEDS_REVIEW"
+
+    # Calidad de la mejor tabla (escala 0-100 interna)
+    table_quality_score_val = round(float(extracted_tables[0].quality), 2) if extracted_tables else 0.0
+
+    # score_decision por umbrales formales
+    # "accepted" requiere además que no haya ninguna bandera de revisión activa
+    if (
+        critical_coverage_val >= 0.9
+        and not invalid_critical
+        and not table_not_found
+        and not requires_review
+    ):
+        score_decision = "accepted"
+    elif critical_coverage_val >= 0.7:
+        score_decision = "review"
+    else:
+        score_decision = "reprocess"
+
+    # ── Construir mensaje y error_code ────────────────────────────────────────
+    # Orden de prioridad: OCR → tipo desconocido → tabla faltante →
+    #   campos críticos faltantes → campos inválidos → baja confianza → ok
+    if not ocr_text:
+        main_message = "No se detectó texto en el documento."
+        error_code_out: str | None = "OCR_FAILED"
+        stage_out: str | None = "ocr"
+        success_out = False
+    elif doc_type in {"UNKNOWN"} and not forced_doc_type:
+        main_message = "Tipo de documento no identificado."
+        error_code_out = "DOCUMENT_TYPE_UNKNOWN"
+        stage_out = "classification"
+        success_out = True
+    elif table_not_found:
+        main_message = "No se detectó tabla principal en el documento."
+        error_code_out = "TABLE_NOT_FOUND"
+        stage_out = "table_extraction"
+        success_out = True
+    elif requires_review and missing:
+        main_message = f"Campos críticos faltantes: {', '.join(missing)}."
+        error_code_out = "CRITICAL_FIELDS_MISSING"
+        stage_out = "validation"
+        success_out = True
+    elif requires_review and invalid_critical:
+        main_message = f"Campos críticos inválidos: {', '.join(invalid_critical)}."
+        error_code_out = "CRITICAL_FIELDS_INVALID"
+        stage_out = "validation"
+        success_out = True
+    elif requires_review:
+        main_message = "Documento requiere revisión manual."
+        error_code_out = "LOW_CONFIDENCE_RESULT"
+        stage_out = "validation"
+        success_out = True
+    else:
+        main_message = "Documento procesado correctamente."
+        error_code_out = None
+        stage_out = None
+        success_out = True
+
+    # ── Log estructurado final ────────────────────────────────────────────────
+    logger.info(
+        "doc_id=%s tipo=%s score=%s success=%s confidence=%.3f "
+        "critical=%.2f/%d campos=%d tablas=%d tabla_quality=%.1f "
+        "ocr=%s ms=%d ms_ocr=%.0f ms_extract=%.0f | %s",
+        document_id, doc_type, score_decision, success_out,
+        confidence_global,
+        critical_coverage_val, required_count,
+        len(campos_out), len(tablas_out), table_quality_score_val,
+        ocr_engine, processing_ms, t_ocr_ms, t_extract_ms,
+        error_code_out or "OK",
+    )
+
+    return ProcessResponse(
         document_id=document_id,
-        status=status,
-        document_type=doc_type,
-        confidence=doc_confidence,
-        fields=[_build_doc_field(f) for f in fields],
-        tables=extracted_tables,
-        warnings=warnings,
-        errors=[],
-        meta=ProcessMeta(
-            pages_processed=len(images),
+        tipo_documento=doc_type,
+        success=success_out,
+        message=main_message,
+        confidence_global=confidence_global,
+        campos=campos_out,
+        tablas=tablas_out,
+        metadata=MetadataDocumento(
+            filename=str(getattr(file, "filename", "") or ""),
+            pages=len(images),
+            source=source or "web",
+            processing_time_ms=processing_ms,
             ocr_engine=ocr_engine,
             pipeline_version=settings.pipeline_version,
             model_version=settings.model_version,
-            processing_ms=processing_ms,
-            tables_found=len(extracted_tables),
         ),
+        validation_summary=ValidationSummary(
+            coverage=coverage_val,
+            critical_coverage=critical_coverage_val,
+            requires_review=requires_review,
+            score_decision=score_decision,
+            table_quality_score=table_quality_score_val,
+        ),
+        warnings=warnings,
+        errors=[],
+        error_code=error_code_out,  # None solo cuando todo está OK
+        stage=stage_out,            # None solo cuando todo está OK
         ocr_text=ocr_text if include_ocr_text else None,
         ocr_boxes=(ocr_boxes if ocr_boxes else text_layer_boxes) if include_boxes else None,
     )
-
-    return response

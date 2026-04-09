@@ -4,7 +4,7 @@ import secrets
 from pathlib import Path
 
 from fastapi import APIRouter, UploadFile, File, Form, Header, HTTPException, Depends, Query, Response
-from app.schemas.process import ProcessResponse
+from app.schemas.process import ProcessResponse  # contrato v2 unificado
 from app.schemas.audit import AuditFolderRequest, AuditFolderResponse
 from app.schemas.online_learning import OnlineLearningFeedbackRequest, OnlineLearningRetrainRequest
 from app.services.document_processor import process_document, export_table_to_csv_excel
