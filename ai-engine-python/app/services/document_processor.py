@@ -1140,7 +1140,7 @@ _INVALID_DROP_BY_TYPE = {
     "INE": {"curp", "clave_elector", "seccion"},
     "CURP": {"curp"},
     "NSS": {"nss"},
-    "DATOS_BANCARIOS": {"clabe", "rfc"},
+    "DATOS_BANCARIOS": {"rfc"},
     "CONSTANCIA_SITUACION_FISCAL": {"rfc", "cp"},
     "COMPROBANTE_DOMICILIO": {"cp"},
 }

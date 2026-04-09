@@ -1904,7 +1904,7 @@ def _extract_generic_all_tables(
 ) -> list[dict]:
     """
     Extract ALL tables from any document source (PDF structure, OCR boxes, text).
-    Returns a list of field dicts with key=tabla_celdas_N for each table found.
+    Returns a list of table dicts to be consolidated into a single tabla_celdas field.
     """
     all_tables: list[dict] = []
 

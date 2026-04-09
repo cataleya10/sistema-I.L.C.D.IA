@@ -1444,6 +1444,81 @@ def _extract_santander_nomina_report_rows_impl(raw_text: str, folded: str) -> li
         logger.info("[SDR_REPORT] tabular: %d rows", len(rows_a))
         return [_ADVANCED_NOMINA_TABLE_HEADER, *rows_a[:500]]
 
+    # ── Strategy C: Banorte 6-line blocks (merged fields per line) ──────────
+    # Pattern per beneficiary (6 consecutive lines):
+    #   1. "CUENTA REFERENCIA"    (cuenta 10-18 digits + referencia 14-28 digits on same line)
+    #   2. "$IMPORTE NOMBRE"      (amount + first name(s) on same line)
+    #   3. "ESTATUS"              (Procesado / Aplicado / ...)
+    #   4. "APELLIDO_PATERNO"     (single name word)
+    #   5. "APELLIDO_MATERNO"     (single name word)
+    #   6. "CONCEPTO"             (Pago de Nómina / ...)
+    _BLOCK_START_C = re.compile(r"^(\d{10,18})\s+(\d{14,28})$")
+    _IMPORTE_NAME_C = re.compile(r"^\$?([\d,]+\.\d{2})\s*(?:MXN\s+)?(.+)$")
+
+    # Find end of header section (after last "Concepto" header keyword)
+    _header_end_c = 0
+    for idx in range(min(30, len(lines))):
+        if _ascii_fold(lines[idx]).upper().strip() in ("CONCEPTO", "CONCEPTODEPAGO"):
+            _header_end_c = idx + 1
+
+    rows_c: list[list[str]] = []
+    seen_c: set[tuple] = set()
+    ci = _header_end_c
+    while ci < len(lines):
+        bm = _BLOCK_START_C.match(lines[ci])
+        if not bm:
+            ci += 1
+            continue
+        c_cuenta = bm.group(1)
+        c_referencia = bm.group(2)
+        if ci + 1 >= len(lines):
+            break
+        im = _IMPORTE_NAME_C.match(lines[ci + 1])
+        if not im:
+            ci += 1
+            continue
+        c_importe = "$" + im.group(1)
+        c_nombre = im.group(2).strip()
+        c_estatus = lines[ci + 2] if ci + 2 < len(lines) else ""
+        # Validate estatus
+        if not _IS_STATUS_LN.match(_ascii_fold(c_estatus).upper()):
+            ci += 1
+            continue
+        c_ap_pat = lines[ci + 3] if ci + 3 < len(lines) else ""
+        c_ap_mat = lines[ci + 4] if ci + 4 < len(lines) else ""
+        c_concepto = lines[ci + 5] if ci + 5 < len(lines) else "PAGO DE NOMINA"
+        # Skip footer lines mistaken as apellido
+        if re.match(r"^(?:Importe|Total|Número)\b", c_ap_pat, re.IGNORECASE):
+            c_ap_pat = ""
+            c_ap_mat = ""
+        elif re.match(r"^(?:Importe|Total|Número)\b", c_ap_mat, re.IGNORECASE):
+            c_ap_mat = ""
+        key = (_normalize_numeric_field(c_cuenta), c_referencia)
+        if key in seen_c:
+            ci += 6
+            continue
+        seen_c.add(key)
+        full_name_parts = [c_nombre]
+        if c_ap_pat and _IS_NAME_LN.match(c_ap_pat):
+            full_name_parts.append(c_ap_pat)
+        if c_ap_mat and _IS_NAME_LN.match(c_ap_mat):
+            full_name_parts.append(c_ap_mat)
+        rows_c.append([
+            _normalize_numeric_field(c_cuenta),
+            c_referencia,
+            _normalize_payment_amount(c_importe),
+            _normalize_name(" ".join(full_name_parts)),
+            _normalize_name(c_ap_pat) if c_ap_pat and _IS_NAME_LN.match(c_ap_pat) else "",
+            _normalize_name(c_ap_mat) if c_ap_mat and _IS_NAME_LN.match(c_ap_mat) else "",
+            _normalize_table_cell(c_estatus),
+            _normalize_table_cell(c_concepto) if c_concepto else "PAGO DE NOMINA",
+        ])
+        ci += 6
+
+    if len(rows_c) >= 1:
+        logger.info("[SDR_REPORT] banorte_blocks: %d rows", len(rows_c))
+        return [_ADVANCED_NOMINA_TABLE_HEADER, *rows_c[:500]]
+
     # ── Diagnostic: log lines around where data seems to start ───────────────
     # Find index of last header keyword (CONCEPTO or CUENTA)
     header_end_idx = -1
@@ -1569,6 +1644,18 @@ def _extract_payment_table_rows_from_text(raw_text: str) -> list[list[str]]:
             return bbva_receipt_rows
     except Exception:
         logger.debug("_extract_payment_table_rows_from_text: bbva receipt failed", exc_info=True)
+
+    # Banorte / Santander "Dispersión de Pago de Nómina" report format
+    # (must run BEFORE santander comprobante individual — both match on
+    #  CONTRATO ENLACE + DATOS DEL BENEFICIARIO, but the report parser
+    #  extracts full names from the summary table while the comprobante
+    #  parser only finds the detail pages which may lack names)
+    try:
+        nomina_rows = _extract_santander_nomina_report_rows(raw_text)
+        if nomina_rows and len(nomina_rows) >= 2:
+            return nomina_rows
+    except Exception:
+        logger.debug("_extract_payment_table_rows_from_text: nomina report failed", exc_info=True)
 
     # SANTANDER individual comprobante format — last resort before generic splitter
     try:
@@ -4035,6 +4122,10 @@ def _payment_rows_quality_score(rows: list[list[str]]) -> int:
     score -= sum(max(0, len(cell) - 60) for cell in header) // 4
     score -= sum(max(0, len(cell) - 120) for cell in data) // 6
 
+    # Penalize empty header cells — indicates broken PDF cell boundaries
+    _empty_header_count = sum(1 for cell in header if not cell.strip())
+    score -= _empty_header_count * 12
+
     # Penalizar headers con tokens duplicados (multi-página OCR)
     repeated_header_cells = sum(1 for cell in header if _header_cell_has_repeated_tokens(cell))
     score -= repeated_header_cells * 25
@@ -4095,6 +4186,17 @@ def _payment_rows_quality_score(rows: list[list[str]]) -> int:
         score += 12
     else:
         score -= 20
+
+    # Bonus: headers con columnas separadas APELLIDO PATERNO / APELLIDO MATERNO
+    # indican descomposición completa del nombre (Strategy C / nómina report) —
+    # preferir sobre OCR geométrico que suele truncar nombres.
+    _has_separate_apellido = any(
+        cell.strip() in ("APELLIDO PATERNO", "APELLIDO MATERNO")
+        for cell in header
+    )
+    if _has_separate_apellido:
+        score += 5
+
     return score
 
 
@@ -4371,13 +4473,14 @@ def _payment_detect_bank(raw_text: str) -> str:
     # ── Step 1: unique document-format phrases (checked before bank-name mentions) ──
     # These phrases uniquely identify the bank even when other bank names appear in the
     # document as "BANCO DESTINO" or "BANCO ORDENANTE" (beneficiary/sender fields).
-    # BANORTE: "REPORTE DE TRANSMISION" is theirs unless BBVA is also explicitly named
+    # BANORTE: "REPORTE DE TRANSMISION" / "CONTRATO ENLACE" are Banorte's
+    # payroll dispersal service (Enlace) — do NOT confuse with Santander.
     if "REPORTE DE TRANSMISION DE ARCHIVO DE PAGOS" in text and "BBVA" not in text:
+        return "BANORTE"
+    if "NUMERO DE CONTRATO ENLACE" in text or "CONTRATO ENLACE" in text:
         return "BANORTE"
     if (
         "DESCARGA MASIVA EN PDF DE COMPROBANTE DE TRANSFERENCIAS" in text
-        or "NUMERO DE CONTRATO ENLACE" in text
-        or "CONTRATO ENLACE" in text
         or "SUPERLINEA" in text  # SANTANDER's customer-service brand
         or "CONSULTAS - MOVIMIENTOS OTROS BANCOS - DETALLE" in text
     ):
