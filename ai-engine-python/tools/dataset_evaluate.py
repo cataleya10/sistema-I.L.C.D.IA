@@ -88,7 +88,7 @@ def _cargar_batch_prelabel() -> ModuleType:
 
 # ── Modo PIPELINE: usa el sistema real ────────────────────────────────────────
 
-def _extraer_con_pipeline(pdf_path: Path, tipo: str) -> dict:
+def _extraer_con_pipeline(pdf_path: Path, tipo: str, banco_origen: str = "") -> dict:
     """
     Corre el pipeline real: extrae texto con PyMuPDF → extract_fields.
     Devuelve el dict de campos extraídos (o {} si falla).
@@ -120,8 +120,19 @@ def _extraer_con_pipeline(pdf_path: Path, tipo: str) -> dict:
         else:
             result = extract_document_fields(document_type, ocr_text, ocr_boxes)
 
-        fields = result.get("fields", {}) if isinstance(result, dict) else {}
-        return {k: (v or "") for k, v in fields.items()}
+        # extract_document_fields returns list[dict] with {key, value, ...}
+        if isinstance(result, list):
+            fields = {f["key"]: (f.get("value") or "") for f in result if "key" in f}
+        elif isinstance(result, dict):
+            fields = result.get("fields", {})
+            if isinstance(fields, list):
+                fields = {f["key"]: (f.get("value") or "") for f in fields if "key" in f}
+        else:
+            fields = {}
+        # Use banco_origen as authoritative source when available
+        if banco_origen:
+            fields["banco"] = banco_origen
+        return fields
 
     except Exception as e:
         return {"_error": str(e)[:200]}
@@ -185,7 +196,7 @@ def evaluar(tipo: str, modo_pipeline: bool = False,
 
         # Extraer campos con el modo elegido
         if modo_pipeline:
-            detectado = _extraer_con_pipeline(pdf_path, tipo)
+            detectado = _extraer_con_pipeline(pdf_path, tipo, banco_origen=banco_orig)
         else:
             try:
                 if bp_mod is None:

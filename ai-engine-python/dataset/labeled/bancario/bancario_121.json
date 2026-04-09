@@ -1,7 +1,7 @@
 {
   "filename": "bancario_121.pdf",
   "document_type": "DATOS_BANCARIOS",
-  "banco_origen": "SANTANDER",
+  "banco_origen": "BANORTE",
   "carpeta_origen": "Santander2",
   "nombre_original": "PAGO FIS VENTURA JIMENEZ GUADALUPE $4,335.35.pdf",
   "added_date": "2026-03-25",
@@ -10,7 +10,7 @@
   "expected_fields": {
     "clabe": "000000001299142929",
     "cuenta": "0438349034",
-    "banco": "SANTANDER",
+    "banco": "BANORTE",
     "titular": "",
     "rfc": "",
     "fecha_corte": "06/02/2026",
