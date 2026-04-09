@@ -1056,9 +1056,19 @@ def remap_to_target_payment_schema(
             all_remapped.append(new_row)
 
     # ── Seleccionar esquema de columnas ──────────────────────────────────────
+    # Determinar columnas objetivo que realmente vinieron del header original
+    mapped_from_header = {col_map[src] for src in canonical_columns if src in col_map}
+
     if bank_key in _BANK_SCHEMAS:
-        # Esquema específico del banco — sin columnas vacías ni irrelevantes
-        schema = _BANK_SCHEMAS[bank_key]
+        # Esquema del banco como base, pero AGREGAR columnas extra que
+        # estén en el header original del documento y tengan datos reales
+        base_schema = list(_BANK_SCHEMAS[bank_key])
+        for col in TARGET_PAYMENT_SCHEMA:
+            if col in mapped_from_header and col not in base_schema:
+                # Solo agregar si al menos una fila tiene valor en esta columna
+                if any(str(row.get(col, "") or "").strip() for row in all_remapped):
+                    base_schema.append(col)
+        schema = base_schema
         final_rows = [
             {col: row.get(col, "") for col in schema}
             for row in all_remapped
