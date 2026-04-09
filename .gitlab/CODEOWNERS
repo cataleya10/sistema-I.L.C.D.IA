@@ -1,0 +1,30 @@
+# ─── CODEOWNERS ──────────────────────────────────────────────────────────────
+# Define quién debe aprobar cambios en cada área del sistema.
+# Documentación: https://docs.gitlab.com/ee/user/project/codeowners/
+#
+# Formato:  <patrón>  @usuario-o-grupo
+# Reemplazar los @usuario con los usernames reales de GitLab del equipo.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Propietario por defecto (aprueba cualquier cambio no cubierto abajo)
+*                           @CHANGE_ME_OWNER
+
+# CI/CD y configuración de infraestructura — requiere revisión de DevOps
+/.github/                   @CHANGE_ME_DEVOPS
+/.gitlab-ci.yml             @CHANGE_ME_DEVOPS
+/docker-compose*.yml        @CHANGE_ME_DEVOPS
+/scripts/                   @CHANGE_ME_DEVOPS
+
+# AI Engine Python — requiere revisión del equipo de IA
+/ai-engine-python/          @CHANGE_ME_AI_TEAM
+
+# Backend .NET — requiere revisión del equipo de backend
+/backend-dotnet/            @CHANGE_ME_BACKEND_TEAM
+
+# Frontend Angular — requiere revisión del equipo de frontend
+/frontend-angular/          @CHANGE_ME_FRONTEND_TEAM
+
+# Seguridad: cambios en autenticación, CORS, secrets siempre requieren revisión
+/backend-dotnet/src/Api/Controllers/AuthController.cs   @CHANGE_ME_OWNER
+/backend-dotnet/src/Api/appsettings*.json               @CHANGE_ME_OWNER @CHANGE_ME_DEVOPS
+/.env.deploy.example                                    @CHANGE_ME_OWNER @CHANGE_ME_DEVOPS

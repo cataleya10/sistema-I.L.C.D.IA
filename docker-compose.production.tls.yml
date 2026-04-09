@@ -1,0 +1,35 @@
+# ─── TLS override — usar junto con docker-compose.production.yml ─────────────
+#
+# Uso:
+#   docker compose -f docker-compose.production.yml \
+#                  -f docker-compose.production.tls.yml \
+#                  up -d
+#
+# Variables requeridas en .env:
+#   HTTPS_PORT      (default 443)
+#   TLS_CERT_PATH   ruta absoluta al certificado PEM (ej. /etc/letsencrypt/live/example.com/fullchain.pem)
+#   TLS_KEY_PATH    ruta absoluta a la clave privada  (ej. /etc/letsencrypt/live/example.com/privkey.pem)
+#
+# El frontend nginx escucha en :443 con SSL y redirige HTTP→HTTPS en :80.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  frontend:
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ${TLS_CERT_PATH}:/etc/nginx/certs/fullchain.pem:ro
+      - ${TLS_KEY_PATH}:/etc/nginx/certs/privkey.pem:ro
+    environment:
+      # Señal para que el entrypoint de nginx active el bloque SSL
+      TLS_ENABLED: "true"
+      TLS_CERT: /etc/nginx/certs/fullchain.pem
+      TLS_KEY: /etc/nginx/certs/privkey.pem
+    # Sobrescribe el healthcheck para verificar HTTPS
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "--no-check-certificate", "https://localhost/nginx-health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
