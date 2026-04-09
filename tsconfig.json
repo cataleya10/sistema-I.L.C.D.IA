@@ -1,6 +1,5 @@
 {
   "compilerOptions": {
-    "baseUrl": ".",
     "target": "ES2022",
     "module": "preserve",
     "moduleResolution": "bundler",
@@ -10,10 +9,10 @@
     "isolatedModules": true,
     "experimentalDecorators": true,
     "paths": {
-      "@angular/*": ["frontend-angular/web/node_modules/@angular/*"],
-      "rxjs": ["frontend-angular/web/node_modules/rxjs"],
-      "rxjs/*": ["frontend-angular/web/node_modules/rxjs/*"],
-      "tslib": ["frontend-angular/web/node_modules/tslib"]
+      "@angular/*": ["./frontend-angular/web/node_modules/@angular/*"],
+      "rxjs": ["./frontend-angular/web/node_modules/rxjs"],
+      "rxjs/*": ["./frontend-angular/web/node_modules/rxjs/*"],
+      "tslib": ["./frontend-angular/web/node_modules/tslib"]
     }
   },
   "include": ["src/**/*.ts"]
