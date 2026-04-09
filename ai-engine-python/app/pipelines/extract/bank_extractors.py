@@ -11,6 +11,15 @@ Jerarquía:
     ├── BanamexExtractor     ← FECHA / DESCRIPCION / CARGOS / ABONOS / SALDO
     ├── BanorteExtractor     ← FECHA / DESCRIPCION / CARGO / ABONO / SALDO
     ├── HSBCExtractor        ← FECHA / DESCRIPCION / CARGO / ABONO / SALDO
+    ├── ScotiabankExtractor  ← FECHA / DESCRIPCION / CARGO / ABONO / SALDO
+    ├── InbursaExtractor     ← FECHA / DESCRIPCION / CARGO / ABONO / SALDO
+    ├── AztecaExtractor      ← FECHA / CONCEPTO / DEPOSITO / RETIRO / SALDO
+    ├── AfirmeExtractor      ← FECHA / DESCRIPCION / CARGO / ABONO / SALDO
+    ├── BanBajioExtractor    ← FECHA / DESCRIPCION / CARGO / ABONO / SALDO
+    ├── MultivaBankExtractor ← FECHA / DESCRIPCION / CARGO / ABONO / SALDO
+    ├── InvexExtractor       ← FECHA / DESCRIPCION / CARGO / ABONO / SALDO
+    ├── NominaExtractor      ← CLAVE / CONCEPTO / IMP GRAVADO / IMP EXENTO / IMPORTE
+    ├── CFDIExtractor        ← CANTIDAD / UNIDAD / DESCRIPCION / V.UNITARIO / IMPORTE
     └── GenericBankExtractor ← fallback: usa lo que encuentre el detector
 
 Uso
@@ -37,13 +46,44 @@ logger = logging.getLogger(__name__)
 # ─── Normalización de texto ───────────────────────────────────────────────────
 
 def _norm(text: str) -> str:
-    """Normaliza texto: mayúsculas, sin acentos, sin caracteres extra."""
+    """Normaliza texto: mayúsculas, sin acentos, sin caracteres especiales.
+
+    Reemplaza '/' y '-' por espacio antes de quitar puntuación para evitar
+    que tokens como "FECHA/HORA" se fusionen en "FECHAHORA".
+    """
     if not text:
         return ""
     text = unicodedata.normalize("NFD", text.upper())
     text = "".join(c for c in text if unicodedata.category(c) != "Mn")
+    # Separadores comunes que deben dividir tokens, no fusionarlos
+    text = re.sub(r"[/\-]", " ", text)
     text = re.sub(r"[^\w\s]", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _normalize_amount(val: str) -> str:
+    """Normaliza un monto monetario a string numérico limpio.
+
+    Maneja correctamente montos > 999,999:
+      "1,234,567.89" → "1234567.89"
+      "$ 1,234.50"   → "1234.50"
+      "1.234.567,89" → "1234567.89"  (formato europeo)
+      "-1,234.56"    → "-1234.56"
+    """
+    if not val:
+        return val
+    val = re.sub(r"\s", "", val)
+    # Quitar símbolo de moneda y signo negativo (lo conservamos aparte)
+    negative = val.startswith("-")
+    val = re.sub(r"^[-$€£¥MXN]+", "", val).strip()
+    # Detectar formato europeo: puntos de miles y coma decimal ("1.234,56")
+    if re.search(r"\d\.\d{3},\d{1,2}$", val):
+        val = val.replace(".", "").replace(",", ".")
+    else:
+        # Formato MX/US: comas como separador de miles
+        # Usa lookahead para sólo remover comas seguidas de exactamente 3 dígitos
+        val = re.sub(r",(?=\d{3}(?:[,.]|$))", "", val)
+    return f"-{val}" if negative else val
 
 
 def _best_match(label: str, candidates: list[str], threshold: float = 0.6) -> str | None:
@@ -84,6 +124,10 @@ class BankExtractorBase(ABC):
     SCHEMA: list[tuple[str, list[str]]] = []
     BANK_NAME: str = "GENERICO"
 
+    # Columnas que contienen montos monetarios y deben normalizarse.
+    # Las subclases pueden sobreescribir esto.
+    _MONEY_KEYS: tuple[str, ...] = ("cargo", "abono", "saldo")
+
     def extract(self, grid: GridTable) -> tuple[list[str], list[dict]]:
         """
         Mapea el GridTable al schema del banco.
@@ -107,7 +151,12 @@ class BankExtractorBase(ABC):
         # Columnas canónicas que sí se encontraron
         found_canonical = [can for can, _ in self.SCHEMA if col_map.get(can) is not None]
         if not found_canonical:
-            logger.warning("[%s] no se mapeó ninguna columna del schema", self.BANK_NAME)
+            logger.warning(
+                "[%s] no se mapeó ninguna columna del schema — grid_cols=%s, schema_keys=%s",
+                self.BANK_NAME,
+                grid.column_labels[:10],
+                [k for k, _ in self.SCHEMA],
+            )
             return self._fallback_extract(grid)
 
         cols = found_canonical
@@ -168,7 +217,11 @@ class BankExtractorBase(ABC):
 
     def _fallback_extract(self, grid: GridTable) -> tuple[list[str], list[dict]]:
         """Extracción genérica cuando el schema no matchea."""
-        cols = grid.column_labels
+        # Normalizar a minúsculas para garantizar consistencia entre cols y row keys.
+        # C# aplica DictionaryKeyPolicy=SnakeCaseLower a los keys al serializar; si los
+        # columns son uppercase ("FECHA") pero los keys quedan lowercase ("fecha") el
+        # template Angular row[col] falla. Ambos deben ser la misma cadena.
+        cols = [c.lower() for c in grid.column_labels]
         rows = []
         for r in range(1, grid.n_rows):
             texts = grid.row_texts(r)
@@ -177,7 +230,11 @@ class BankExtractorBase(ABC):
         return cols, rows
 
     def _postprocess_row(self, row: dict) -> dict:
-        """Hook para limpieza específica de banco. Overrideable."""
+        """Normaliza montos en las columnas declaradas en _MONEY_KEYS."""
+        for key in self._MONEY_KEYS:
+            val = row.get(key, "")
+            if val:
+                row[key] = _normalize_amount(val)
         return row
 
     def _filter_rows(self, rows: list[dict]) -> list[dict]:
@@ -215,18 +272,6 @@ class SantanderExtractor(BankExtractorBase):
         ("saldo",       ["SALDO", "SALDO ACTUAL", "BALANCE"]),
     ]
 
-    def _postprocess_row(self, row: dict) -> dict:
-        # Normalizar montos: quitar comas de miles, unificar puntos decimales
-        for key in ("cargo", "abono", "saldo"):
-            val = row.get(key, "")
-            if val:
-                # Quitar espacios, reemplazar coma-miles
-                val = re.sub(r"\s", "", val)
-                val = re.sub(r"(\d),(\d{3})", r"\1\2", val)
-                val = val.replace(",", ".")
-                row[key] = val
-        return row
-
 
 # ─── BBVA ─────────────────────────────────────────────────────────────────────
 
@@ -249,16 +294,6 @@ class BBVAExtractor(BankExtractorBase):
         ("saldo",       ["SALDO", "SALDO FINAL", "BALANCE"]),
     ]
 
-    def _postprocess_row(self, row: dict) -> dict:
-        for key in ("cargo", "abono", "saldo"):
-            val = row.get(key, "")
-            if val:
-                val = re.sub(r"\s", "", val)
-                val = re.sub(r"(\d),(\d{3})", r"\1\2", val)
-                val = val.replace(",", ".")
-                row[key] = val
-        return row
-
 
 # ─── Banamex / Citibanamex ────────────────────────────────────────────────────
 
@@ -278,16 +313,6 @@ class BanamexExtractor(BankExtractorBase):
         ("abono",       ["ABONOS", "ABONO", "CREDITO", "DEPOSITOS"]),
         ("saldo",       ["SALDO", "SALDO FINAL", "BALANCE"]),
     ]
-
-    def _postprocess_row(self, row: dict) -> dict:
-        for key in ("cargo", "abono", "saldo"):
-            val = row.get(key, "")
-            if val:
-                val = re.sub(r"\s", "", val)
-                val = re.sub(r"(\d),(\d{3})", r"\1\2", val)
-                val = val.replace(",", ".")
-                row[key] = val
-        return row
 
 
 # ─── Banorte ──────────────────────────────────────────────────────────────────
@@ -309,16 +334,6 @@ class BanorteExtractor(BankExtractorBase):
         ("saldo",       ["SALDO", "SALDO ACTUAL", "BALANCE"]),
     ]
 
-    def _postprocess_row(self, row: dict) -> dict:
-        for key in ("cargo", "abono", "saldo"):
-            val = row.get(key, "")
-            if val:
-                val = re.sub(r"\s", "", val)
-                val = re.sub(r"(\d),(\d{3})", r"\1\2", val)
-                val = val.replace(",", ".")
-                row[key] = val
-        return row
-
 
 # ─── HSBC ─────────────────────────────────────────────────────────────────────
 
@@ -338,16 +353,6 @@ class HSBCExtractor(BankExtractorBase):
         ("abono",       ["ABONO", "ABONOS", "CREDITO", "DEPOSITO"]),
         ("saldo",       ["SALDO", "BALANCE"]),
     ]
-
-    def _postprocess_row(self, row: dict) -> dict:
-        for key in ("cargo", "abono", "saldo"):
-            val = row.get(key, "")
-            if val:
-                val = re.sub(r"\s", "", val)
-                val = re.sub(r"(\d),(\d{3})", r"\1\2", val)
-                val = val.replace(",", ".")
-                row[key] = val
-        return row
 
 
 # ─── Scotiabank ───────────────────────────────────────────────────────────────
@@ -369,16 +374,6 @@ class ScotiabankExtractor(BankExtractorBase):
         ("saldo",       ["SALDO", "BALANCE"]),
     ]
 
-    def _postprocess_row(self, row: dict) -> dict:
-        for key in ("cargo", "abono", "saldo"):
-            val = row.get(key, "")
-            if val:
-                val = re.sub(r"\s", "", val)
-                val = re.sub(r"(\d),(\d{3})", r"\1\2", val)
-                val = val.replace(",", ".")
-                row[key] = val
-        return row
-
 
 # ─── Inbursa ──────────────────────────────────────────────────────────────────
 
@@ -392,6 +387,108 @@ class InbursaExtractor(BankExtractorBase):
         ("descripcion", ["DESCRIPCION", "CONCEPTO", "DETALLE"]),
         ("referencia",  ["REFERENCIA", "REF", "FOLIO"]),
         ("cargo",       ["CARGO", "CARGOS", "DEBITO"]),
+        ("abono",       ["ABONO", "ABONOS", "CREDITO", "DEPOSITO"]),
+        ("saldo",       ["SALDO", "BALANCE"]),
+    ]
+    # Hereda _postprocess_row de BankExtractorBase (normaliza cargo/abono/saldo)
+
+
+# ─── Azteca ───────────────────────────────────────────────────────────────────
+
+class AztecaExtractor(BankExtractorBase):
+    """
+    Estado de cuenta Banco Azteca.
+
+    Columnas típicas:
+      FECHA | CONCEPTO | DEPOSITO | RETIRO | SALDO
+    Nota: Azteca invierte el orden DEPOSITO/RETIRO vs el estándar CARGO/ABONO.
+    """
+    BANK_NAME = "AZTECA"
+    SCHEMA = [
+        ("fecha",       ["FECHA", "DATE", "DIA"]),
+        ("descripcion", ["CONCEPTO", "DESCRIPCION", "DETALLE", "MOVIMIENTO"]),
+        ("referencia",  ["REFERENCIA", "REF", "FOLIO", "NUM OPERACION"]),
+        ("abono",       ["DEPOSITO", "DEPOSITOS", "ABONO", "ABONOS", "CREDITO"]),
+        ("cargo",       ["RETIRO", "RETIROS", "CARGO", "CARGOS", "DEBITO"]),
+        ("saldo",       ["SALDO", "SALDO ACTUAL", "BALANCE"]),
+    ]
+
+
+# ─── Afirme ───────────────────────────────────────────────────────────────────
+
+class AfirmeExtractor(BankExtractorBase):
+    """
+    Estado de cuenta Banco Afirme.
+
+    Columnas típicas:
+      FECHA | DESCRIPCION | REFERENCIA | CARGO | ABONO | SALDO
+    """
+    BANK_NAME = "AFIRME"
+    SCHEMA = [
+        ("fecha",       ["FECHA", "DATE", "FEC"]),
+        ("descripcion", ["DESCRIPCION", "CONCEPTO", "DETALLE", "MOVIMIENTO"]),
+        ("referencia",  ["REFERENCIA", "REF", "FOLIO", "NUM OPERACION", "NO OPER"]),
+        ("cargo",       ["CARGO", "CARGOS", "DEBITO", "RETIRO"]),
+        ("abono",       ["ABONO", "ABONOS", "CREDITO", "DEPOSITO"]),
+        ("saldo",       ["SALDO", "SALDO ACTUAL", "BALANCE"]),
+    ]
+
+
+# ─── BanBajío ─────────────────────────────────────────────────────────────────
+
+class BanBajioExtractor(BankExtractorBase):
+    """
+    Estado de cuenta Banco del Bajío (BanBajío).
+
+    Columnas típicas:
+      FECHA | DESCRIPCION | REFERENCIA | CARGO | ABONO | SALDO
+    """
+    BANK_NAME = "BANBAJIO"
+    SCHEMA = [
+        ("fecha",       ["FECHA", "DATE", "DIA"]),
+        ("descripcion", ["DESCRIPCION", "CONCEPTO", "DETALLE", "MOVIMIENTO"]),
+        ("referencia",  ["REFERENCIA", "REF", "FOLIO", "NUM OPERACION"]),
+        ("cargo",       ["CARGO", "CARGOS", "DEBITO", "RETIRO"]),
+        ("abono",       ["ABONO", "ABONOS", "CREDITO", "DEPOSITO"]),
+        ("saldo",       ["SALDO", "SALDO FINAL", "BALANCE"]),
+    ]
+
+
+# ─── Multiva ──────────────────────────────────────────────────────────────────
+
+class MultivaBankExtractor(BankExtractorBase):
+    """
+    Estado de cuenta Multiva / Grupo Financiero Multiva.
+
+    Columnas típicas:
+      FECHA | DESCRIPCION | REFERENCIA | CARGO | ABONO | SALDO
+    """
+    BANK_NAME = "MULTIVA"
+    SCHEMA = [
+        ("fecha",       ["FECHA", "DATE"]),
+        ("descripcion", ["DESCRIPCION", "CONCEPTO", "DETALLE", "MOVIMIENTO"]),
+        ("referencia",  ["REFERENCIA", "REF", "FOLIO", "OPERACION"]),
+        ("cargo",       ["CARGO", "CARGOS", "DEBITO", "RETIRO"]),
+        ("abono",       ["ABONO", "ABONOS", "CREDITO", "DEPOSITO"]),
+        ("saldo",       ["SALDO", "BALANCE"]),
+    ]
+
+
+# ─── Invex ────────────────────────────────────────────────────────────────────
+
+class InvexExtractor(BankExtractorBase):
+    """
+    Estado de cuenta Invex Banco.
+
+    Columnas típicas:
+      FECHA | CONCEPTO | REFERENCIA | CARGO | ABONO | SALDO
+    """
+    BANK_NAME = "INVEX"
+    SCHEMA = [
+        ("fecha",       ["FECHA", "DATE"]),
+        ("descripcion", ["CONCEPTO", "DESCRIPCION", "DETALLE"]),
+        ("referencia",  ["REFERENCIA", "REF", "FOLIO", "NUM CHEQUE"]),
+        ("cargo",       ["CARGO", "CARGOS", "DEBITO", "RETIRO"]),
         ("abono",       ["ABONO", "ABONOS", "CREDITO", "DEPOSITO"]),
         ("saldo",       ["SALDO", "BALANCE"]),
     ]
@@ -423,10 +520,7 @@ class GenericBankExtractor(BankExtractorBase):
             if any(hint in _norm(col) for hint in self._AMOUNT_COL_HINTS):
                 val = row.get(col, "")
                 if val:
-                    val = re.sub(r"\s", "", val)
-                    val = re.sub(r"(\d),(\d{3})", r"\1\2", val)
-                    val = val.replace(",", ".")
-                    row[col] = val
+                    row[col] = _normalize_amount(val)
         return row
 
 
@@ -453,15 +547,7 @@ class NominaExtractor(BankExtractorBase):
         ("importe",         ["IMPORTE", "MONTO", "CANTIDAD", "TOTAL", "IMPORTE TOTAL"]),
     ]
 
-    def _postprocess_row(self, row: dict) -> dict:
-        for key in ("importe_gravado", "importe_exento", "importe"):
-            val = row.get(key, "")
-            if val:
-                val = re.sub(r"\s", "", val)
-                val = re.sub(r"(\d),(\d{3})", r"\1\2", val)
-                val = val.replace(",", ".")
-                row[key] = val
-        return row
+    _MONEY_KEYS = ("importe_gravado", "importe_exento", "importe")
 
     def _filter_rows(self, rows: list[dict]) -> list[dict]:
         """En nómina excluimos filas de totales pero mantenemos conceptos clave."""
@@ -513,15 +599,7 @@ class CFDIExtractor(BankExtractorBase):
         ("importe",         ["IMPORTE", "TOTAL", "MONTO", "SUBTOTAL", "IMPORTE TOTAL"]),
     ]
 
-    def _postprocess_row(self, row: dict) -> dict:
-        for key in ("valor_unitario", "descuento", "importe", "cantidad"):
-            val = row.get(key, "")
-            if val:
-                val = re.sub(r"\s", "", val)
-                val = re.sub(r"(\d),(\d{3})", r"\1\2", val)
-                val = val.replace(",", ".")
-                row[key] = val
-        return row
+    _MONEY_KEYS = ("valor_unitario", "descuento", "importe")
 
     def _filter_rows(self, rows: list[dict]) -> list[dict]:
         """En CFDI eliminamos filas de subtotal/IVA/total que no son conceptos."""
@@ -555,6 +633,18 @@ _EXTRACTOR_MAP: dict[str, type[BankExtractorBase]] = {
     "SCOTIABANK": ScotiabankExtractor,
     "INBURSA": InbursaExtractor,
     "GFINBURSA": InbursaExtractor,
+    # Bancos adicionales
+    "AZTECA": AztecaExtractor,
+    "BANCO AZTECA": AztecaExtractor,
+    "AFIRME": AfirmeExtractor,
+    "BANCO AFIRME": AfirmeExtractor,
+    "BANBAJIO": BanBajioExtractor,
+    "BANCO DEL BAJIO": BanBajioExtractor,
+    "BAJIO": BanBajioExtractor,
+    "MULTIVA": MultivaBankExtractor,
+    "GRUPO FINANCIERO MULTIVA": MultivaBankExtractor,
+    "INVEX": InvexExtractor,
+    "BANCO INVEX": InvexExtractor,
 }
 
 # Mapa por tipo de documento (independiente del banco)

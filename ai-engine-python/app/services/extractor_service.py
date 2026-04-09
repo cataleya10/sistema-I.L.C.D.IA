@@ -34,8 +34,10 @@ Formato de retorno de process_document:
 from __future__ import annotations
 
 import io
+import json
 import logging
 import mimetypes
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -171,6 +173,56 @@ def _table_content_sig(cols: list[str], rows: list[dict]) -> str:
     return f"{header}::{row_count}::{sample}"
 
 
+def _promote_tabla_celdas_to_tables(
+    fields: list[dict],
+    all_tables: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """If fields contain a high-quality tabla_celdas, synthesize a proper
+    table entry and prepend it to all_tables so the frontend table viewer
+    shows the best available data."""
+    tc_field = next((f for f in fields if f.get("key") == "tabla_celdas"), None)
+    if not tc_field:
+        return all_tables
+    try:
+        payload = json.loads(tc_field.get("value") or "{}")
+    except Exception:
+        return all_tables
+    raw_rows: list[list[str]] = payload.get("rows", [])
+    if len(raw_rows) < 2:
+        return all_tables
+    header = raw_rows[0]
+    data_rows = raw_rows[1:]
+    # Build canonical column names
+    cols = [re.sub(r"[^a-z0-9]+", "_", c.strip().lower()).strip("_") or f"col_{i}"
+            for i, c in enumerate(header)]
+    canonical = []
+    for row in data_rows:
+        entry: dict[str, str] = {}
+        for j, col in enumerate(cols):
+            entry[col] = str(row[j]) if j < len(row) else ""
+        canonical.append(entry)
+    display = {c: h.strip() for c, h in zip(cols, header) if h.strip()}
+    table_entry: dict[str, Any] = {
+        "index": 0,
+        "columns": cols,
+        "display_columns": display,
+        "rows": raw_rows,
+        "canonical_rows": canonical,
+        "row_count": len(canonical),
+        "quality": 200,  # highest priority — from specialized text extractor
+        "avg_fill_rate": 1.0,
+    }
+    # Prepend and re-index; drop geometric noise tables that are clearly
+    # inferior to the promoted tabla_celdas (they're just fragments).
+    result = [table_entry] + [
+        t for t in all_tables
+        if t.get("row_count", 0) >= max(2, len(canonical) // 2)
+    ]
+    for idx, t in enumerate(result):
+        t["index"] = idx
+    return result
+
+
 def _process_all_tables(
     pdf_tables: list[list[list[str]]],
     doc_type: str,
@@ -207,7 +259,14 @@ def _process_all_tables(
                 try:
                     geo_cols, geo_rows = extractor.extract(grid)
                 except Exception:
-                    logger.debug("bank_extractor.extract falló (extractor_service)", exc_info=True)
+                    logger.warning(
+                        "bank_extractor.extract falló (extractor_service) "
+                        "bank=%s n_rows=%s cols=%s",
+                        getattr(extractor, 'BANK_NAME', '?'),
+                        grid.n_rows,
+                        grid.column_labels[:10],
+                        exc_info=True,
+                    )
                     geo_cols, geo_rows = [], []
 
                 if not geo_cols or not geo_rows:
@@ -418,6 +477,7 @@ async def process_document(
                 doc_type = ft
                 doc_confidence = max(fc, 0.85) if ft not in {"UNKNOWN", "GENERICO"} else fc
                 fields = cands
+                extraction_boxes = text_boxes  # make available for _process_all_tables
 
     # ── 3. OCR completo si fastpath no fue suficiente ────────────────────────
     if not fields:
@@ -470,6 +530,19 @@ async def process_document(
     # ── 4. Tablas: procesar TODAS las tablas detectadas ──────────────────────
     bank = _detect_bank_from_fields(fields)
     all_tables = _process_all_tables(pdf_tables, doc_type, bank=bank, ocr_boxes=extraction_boxes)
+
+    # ── 4b. Si tabla_celdas tiene datos de calidad, usarla como tabla principal
+    #         (los extractores de texto producen datos más completos que el
+    #          detector geométrico en documentos sin estructura de tabla nativa)
+    all_tables = _promote_tabla_celdas_to_tables(fields, all_tables)
+
+    # ── 4c. Devolver solo la tabla principal (mayor calidad) ────────────────
+    if len(all_tables) > 1:
+        logger.info("Keeping best table out of %d (discarding %d secondary tables)",
+                     len(all_tables), len(all_tables) - 1)
+        best_table = all_tables[0]  # ya está ordenada por calidad desc
+        best_table["index"] = 0
+        all_tables = [best_table]
 
     # Tabla principal = la de mayor calidad (backward compat con backend C#)
     best = all_tables[0] if all_tables else None
