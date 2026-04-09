@@ -95,7 +95,7 @@ class PipelineIntegrationTests(unittest.TestCase):
             [
                 "BANCO BBVA",
                 "CLABE 032180000118359719",
-                "RFC XAXX010101000",
+                "RFC ABC1234567X0",
             ]
         )
         doc_type, _ = _run_sync(classify.classify_document(None, text, "estado_cuenta.pdf"))
@@ -108,7 +108,7 @@ class PipelineIntegrationTests(unittest.TestCase):
         rfc = _require_field(validated, "rfc")
         self.assertEqual(clabe.get("value"), "032180000118359719")
         self.assertTrue(bool(clabe.get("valid")))
-        self.assertEqual(rfc.get("value"), "XAXX010101000")
+        self.assertEqual(rfc.get("value"), "ABC1234567X0")
         self.assertTrue(bool(rfc.get("valid")))
 
     def test_pipeline_nss_end_to_end(self):

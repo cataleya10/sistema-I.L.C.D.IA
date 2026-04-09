@@ -12,21 +12,54 @@ import unittest
 from unittest.mock import MagicMock
 
 # ─── Mock de dependencias pesadas antes de importar document_processor ────────
-for mod in ["pandas", "fastapi", "app.pipelines.table_postprocess",
-            "app.utils.table_utils", "app.pipelines.preprocess",
-            "app.pipelines.ocr", "app.pipelines.validate",
-            "app.services.online_learning", "app.services.llm_fallback"]:
+# Save originals so we can restore them after this module's tests run
+_MOCKED_MODULES = [
+    "pandas", "fastapi", "app.pipelines.table_postprocess",
+    "app.utils.table_utils", "app.pipelines.preprocess",
+    "app.pipelines.ocr", "app.pipelines.validate",
+    "app.services.online_learning", "app.services.llm_fallback",
+]
+_SAVED_MODULES: dict = {}
+for mod in _MOCKED_MODULES:
+    _SAVED_MODULES[mod] = sys.modules.get(mod)
     if mod not in sys.modules:
         sys.modules[mod] = MagicMock()
 
 # Hacer que pandas.DataFrame retorne algo serializable
 pd_mock = sys.modules["pandas"]
-pd_mock.DataFrame = MagicMock(return_value=MagicMock(
-    to_csv=MagicMock(return_value=""),
-    to_excel=MagicMock(),
-))
+if isinstance(pd_mock, MagicMock):
+    pd_mock.DataFrame = MagicMock(return_value=MagicMock(
+        to_csv=MagicMock(return_value=""),
+        to_excel=MagicMock(),
+    ))
 
 from app.pipelines import classify
+
+
+def teardown_module():
+    """Restore original sys.modules entries to prevent cross-test contamination.
+
+    After restoring, also evict modules that imported from the mocked versions
+    so that subsequent test files get fresh, real imports.
+    """
+    for mod, original in _SAVED_MODULES.items():
+        if original is None:
+            sys.modules.pop(mod, None)
+        else:
+            sys.modules[mod] = original
+
+    # Evict modules that may hold cached references to MagicMock objects so
+    # subsequent test files reimport them cleanly.
+    _DEPENDENTS_PREFIX = (
+        "app.pipelines.extract",
+        "app.pipelines.table_postprocess",
+        "app.services.document_processor",
+        "app.services.extractor_service",
+        "app.utils.table_utils",
+    )
+    for key in list(sys.modules.keys()):
+        if key.startswith(_DEPENDENTS_PREFIX):
+            sys.modules.pop(key, None)
 
 
 # ─── Clasificación de NOMINA ──────────────────────────────────────────────────

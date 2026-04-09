@@ -27,6 +27,30 @@ _TEST_ENV_DEFAULTS = {
 for _key, _val in _TEST_ENV_DEFAULTS.items():
     os.environ.setdefault(_key, _val)
 
+# ── Pre-import shared modules before any test file is collected ───────────────
+# test_nomina_classify.py and test_table_from_ocr.py mock several modules at
+# module-level, which runs at *collection* time (before any test executes).
+# Importing the real modules here first caches them in sys.modules so the
+# `if mod not in sys.modules` guard in those test files doesn't replace them
+# with MagicMocks that later test files would then import.
+#
+# The list mirrors _MOCKED_MODULES in test_nomina_classify.py.
+_PREIMPORTS = [
+    "pandas",
+    "app.utils.table_utils",
+    "app.pipelines.validate",
+    "app.pipelines.table_postprocess",
+    "app.services.online_learning",
+    "app.services.llm_fallback",
+    # preprocess and ocr need PIL/OCR backends — best-effort only
+    "app.pipelines.preprocess",
+    "app.pipelines.ocr",
+]
+for _mod in _PREIMPORTS:
+    try:
+        __import__(_mod)
+    except (ImportError, Exception):
+        pass
 
 # ── Fixtures disponibles para todos los módulos de tests ─────────────────────
 

@@ -117,14 +117,14 @@ class OnlineLearningTests(unittest.TestCase):
                 stats = get_online_learning_stats(recent=5)
 
             self.assertFalse(result.get("trained"))
-            self.assertEqual(result.get("reason"), "status_not_ready")
+            self.assertEqual(result.get("reason"), "insufficient_text")
             self.assertFalse(dataset_path.exists())
             self.assertTrue(stats_path.exists())
             self.assertEqual(int(stats.get("totals", {}).get("attempted", 0)), 1)
             self.assertEqual(int(stats.get("totals", {}).get("trained", 0)), 0)
             self.assertEqual(int(stats.get("totals", {}).get("skipped", 0)), 1)
             self.assertEqual(
-                int(stats.get("by_reason", {}).get("status_not_ready", 0)),
+                int(stats.get("by_reason", {}).get("insufficient_text", 0)),
                 1,
             )
             self.assertEqual(len(stats.get("recent_events", [])), 1)

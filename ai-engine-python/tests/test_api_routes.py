@@ -1,5 +1,7 @@
 import unittest
 import asyncio
+import os
+from pathlib import Path
 from unittest.mock import patch
 
 from app.api.routes import (
@@ -18,8 +20,10 @@ from app.schemas.online_learning import (
 
 class ApiRoutesTests(unittest.TestCase):
     def test_audit_folder_endpoint_returns_service_payload(self):
+        base = Path(os.environ.get("AUDIT_BASE_PATH", "storage")).resolve()
+        resolved = str((base / "docs").resolve())
         expected = {
-            "folder_path": "C:\\docs",
+            "folder_path": "docs",
             "recurse": True,
             "limit": 25,
             "issues_only": False,
@@ -34,13 +38,13 @@ class ApiRoutesTests(unittest.TestCase):
             "document_type_counts": {"FACTURA": 3},
             "documents": [],
         }
-        payload = AuditFolderRequest(folder_path="C:\\docs", recurse=True, limit=25, issues_only=False)
+        payload = AuditFolderRequest(folder_path="docs", recurse=True, limit=25, issues_only=False)
         with patch("app.api.routes.run_audit_folder", return_value=expected) as audit_mock:
             response = asyncio.run(audit_folder_endpoint(payload=payload))
 
         self.assertEqual(response, expected)
         audit_mock.assert_called_once_with(
-            "C:\\docs",
+            resolved,
             recurse=True,
             limit=25,
             issues_only=False,

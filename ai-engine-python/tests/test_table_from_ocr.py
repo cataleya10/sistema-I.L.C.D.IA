@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import MagicMock
 
 # Mock pandas antes de que el __init__.py del paquete lo importe
+_PANDAS_ORIGINAL = sys.modules.get("pandas")
 if "pandas" not in sys.modules:
     sys.modules["pandas"] = MagicMock()
 
@@ -19,6 +20,15 @@ from app.pipelines.extract.table_from_ocr import (
     extract_tables_from_ocr_boxes,
     extract_tables_from_text,
 )
+
+
+def teardown_module():
+    """Restore original pandas module to prevent cross-test contamination."""
+    if _PANDAS_ORIGINAL is None:
+        sys.modules.pop("pandas", None)
+    else:
+        sys.modules["pandas"] = _PANDAS_ORIGINAL
+
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
 
