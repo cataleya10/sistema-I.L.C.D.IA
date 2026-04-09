@@ -80,3 +80,6 @@ out-tsc/
 dist/
 .tmp/
 dataset/cache/
+.python-version
+ai-engine-python/.python-version
+ai-engine-python/dataset/manifests/eval_*
