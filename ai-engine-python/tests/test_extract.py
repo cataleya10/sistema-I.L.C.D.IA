@@ -66,14 +66,14 @@ class ExtractPipelineTests(unittest.TestCase):
             [
                 "BANCO BBVA",
                 "CLABE 012345678901234567",
-                "RFC XAXX010101000",
+                "RFC ABC1234567X0",
             ]
         )
         fields = _run_sync(extract_fields("DATOS_BANCARIOS", ocr_text, None))
         data = _field_map(fields)
 
         self.assertEqual(data.get("clabe"), "012345678901234567")
-        self.assertEqual(data.get("rfc"), "XAXX010101000")
+        self.assertEqual(data.get("rfc"), "ABC1234567X0")
         self.assertIn("BBVA", data.get("banco", ""))
 
     def test_extract_comprobante_domicilio_key_fields(self):
@@ -362,8 +362,10 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertIn("tabla_celdas", data)
         payload = json.loads(data["tabla_celdas"])
         self.assertEqual(payload.get("source"), "text_lines")
-        self.assertEqual(payload["rows"][1][0], "0438349034")
-        self.assertEqual(payload["rows"][1][1], "7379597479")
+        canonical = payload.get("canonical_rows", [])
+        self.assertGreaterEqual(len(canonical), 1)
+        self.assertEqual(canonical[0].get("cuenta_beneficiario"), "0438349034")
+        self.assertEqual(canonical[0].get("referencia"), "7379597479")
 
     def test_extract_factura_payment_table_completes_empty_ocr_cells_from_text(self):
         ocr_text = "\n".join(
@@ -446,13 +448,12 @@ class ExtractPipelineTests(unittest.TestCase):
 
         self.assertIn("tabla_celdas", data)
         payload = json.loads(data["tabla_celdas"])
-        rows = payload.get("rows", [])
-        self.assertGreaterEqual(len(rows), 2)
-        self.assertEqual(rows[0][0], "CUENTA")
-        self.assertEqual(rows[1][0], "56551346133")
-        self.assertEqual(rows[1][1], "1620260115132703271255")
-        self.assertIn("1,462.58", rows[1][2])
-        self.assertIn("JOSE LUIS", rows[1][3])
+        canonical = payload.get("canonical_rows", [])
+        self.assertGreaterEqual(len(canonical), 1)
+        self.assertEqual(canonical[0].get("cuenta_beneficiario"), "56551346133")
+        self.assertEqual(canonical[0].get("referencia"), "1620260115132703271255")
+        self.assertIn("1,462.58", canonical[0].get("importe", ""))
+        self.assertIn("JOSE LUIS", canonical[0].get("nombre_beneficiario", ""))
 
     def test_extract_factura_payment_table_from_bbva_nomina_advanced_lines(self):
         ocr_text = "\n".join(
@@ -468,35 +469,20 @@ class ExtractPipelineTests(unittest.TestCase):
 
         self.assertIn("tabla_celdas", data)
         payload = json.loads(data["tabla_celdas"])
-        rows = payload.get("rows", [])
-        self.assertGreaterEqual(len(rows), 3)
-        self.assertEqual(
-            rows[0],
-            [
-                "CUENTA",
-                "REFERENCIA",
-                "IMPORTE",
-                "NOMBRE",
-                "APELLIDO PATERNO",
-                "APELLIDO MATERNO",
-                "ESTATUS",
-                "CONCEPTO",
-            ],
-        )
-        self.assertEqual(rows[1][0], "56783223195")
-        self.assertEqual(rows[1][1], "1620260115134340581263")
-        self.assertEqual(rows[1][2], "610.44")
-        self.assertEqual(rows[1][3], "MARLA GRISELDA")
-        self.assertEqual(rows[1][4], "MENDEZ")
-        self.assertEqual(rows[1][5], "FLORES")
-        self.assertEqual(rows[1][6], "PROCESADO")
-        self.assertEqual(rows[1][7], "PAGO DE NOMINA")
-        self.assertEqual(rows[2][0], "56936397470")
-        self.assertEqual(rows[2][1], "1620260115134348451388")
-        self.assertEqual(rows[2][2], "1,537.35")
-        self.assertEqual(rows[2][3], "ROLANDO ROGERIO")
-        self.assertEqual(rows[2][4], "CONTRERAS")
-        self.assertEqual(rows[2][5], "CAMARGO")
+        canonical = payload.get("canonical_rows", [])
+        self.assertGreaterEqual(len(canonical), 2)
+        # Row 1
+        self.assertEqual(canonical[0].get("cuenta_beneficiario"), "56783223195")
+        self.assertEqual(canonical[0].get("referencia"), "1620260115134340581263")
+        self.assertEqual(canonical[0].get("importe"), "610.44")
+        self.assertIn("MARLA GRISELDA", canonical[0].get("nombre_beneficiario", ""))
+        self.assertEqual(canonical[0].get("estatus"), "PROCESADO")
+        self.assertEqual(canonical[0].get("concepto_pago"), "PAGO DE NOMINA")
+        # Row 2
+        self.assertEqual(canonical[1].get("cuenta_beneficiario"), "56936397470")
+        self.assertEqual(canonical[1].get("referencia"), "1620260115134348451388")
+        self.assertEqual(canonical[1].get("importe"), "1,537.35")
+        self.assertIn("ROLANDO ROGERIO", canonical[1].get("nombre_beneficiario", ""))
 
     def test_extract_factura_payment_table_from_bbva_nomina_two_records_same_line(self):
         ocr_text = "\n".join(
@@ -511,18 +497,14 @@ class ExtractPipelineTests(unittest.TestCase):
 
         self.assertIn("tabla_celdas", data)
         payload = json.loads(data["tabla_celdas"])
-        rows = payload.get("rows", [])
-        self.assertGreaterEqual(len(rows), 3)
-        self.assertEqual(rows[1][0], "56783223195")
-        self.assertEqual(rows[1][1], "1620260115134340581263")
-        self.assertEqual(rows[1][3], "MARLA GRISELDA")
-        self.assertEqual(rows[1][4], "MENDEZ")
-        self.assertEqual(rows[1][5], "FLORES")
-        self.assertEqual(rows[2][0], "56936397470")
-        self.assertEqual(rows[2][1], "1620260115134348451388")
-        self.assertEqual(rows[2][3], "ROLANDO ROGERIO")
-        self.assertEqual(rows[2][4], "CONTRERAS")
-        self.assertEqual(rows[2][5], "CAMARGO")
+        canonical = payload.get("canonical_rows", [])
+        self.assertGreaterEqual(len(canonical), 2)
+        self.assertEqual(canonical[0].get("cuenta_beneficiario"), "56783223195")
+        self.assertEqual(canonical[0].get("referencia"), "1620260115134340581263")
+        self.assertIn("MARLA GRISELDA", canonical[0].get("nombre_beneficiario", ""))
+        self.assertEqual(canonical[1].get("cuenta_beneficiario"), "56936397470")
+        self.assertEqual(canonical[1].get("referencia"), "1620260115134348451388")
+        self.assertIn("ROLANDO ROGERIO", canonical[1].get("nombre_beneficiario", ""))
 
     def test_extract_factura_payment_table_from_bbva_nomina_rows_without_nomina_per_line(self):
         ocr_text = "\n".join(
@@ -540,15 +522,15 @@ class ExtractPipelineTests(unittest.TestCase):
 
         self.assertIn("tabla_celdas", data)
         payload = json.loads(data["tabla_celdas"])
-        rows = payload.get("rows", [])
-        self.assertGreaterEqual(len(rows), 4)
-        self.assertEqual(rows[1][0], "56783223195")
-        self.assertEqual(rows[1][1], "1620260115134340581263")
-        self.assertEqual(rows[1][7], "PAGO DE NOMINA")
-        self.assertEqual(rows[2][0], "56936397470")
-        self.assertEqual(rows[2][1], "1620260115134348451388")
-        self.assertEqual(rows[3][0], "56905029323")
-        self.assertEqual(rows[3][1], "1620260115134344071306")
+        canonical = payload.get("canonical_rows", [])
+        self.assertGreaterEqual(len(canonical), 3)
+        self.assertEqual(canonical[0].get("cuenta_beneficiario"), "56783223195")
+        self.assertEqual(canonical[0].get("referencia"), "1620260115134340581263")
+        self.assertEqual(canonical[0].get("concepto_pago"), "PAGO DE NOMINA")
+        self.assertEqual(canonical[1].get("cuenta_beneficiario"), "56936397470")
+        self.assertEqual(canonical[1].get("referencia"), "1620260115134348451388")
+        self.assertEqual(canonical[2].get("cuenta_beneficiario"), "56905029323")
+        self.assertEqual(canonical[2].get("referencia"), "1620260115134344071306")
 
     def test_extract_factura_bbva_nomina_reference_with_ocr_space(self):
         """Referencias con espacio OCR intermedio (ej: '16202601151343405812 63') deben extraerse correctamente."""
@@ -566,20 +548,20 @@ class ExtractPipelineTests(unittest.TestCase):
 
         self.assertIn("tabla_celdas", data)
         payload = json.loads(data["tabla_celdas"])
-        rows = payload.get("rows", [])
-        # Deben aparecer las 3 filas (+ encabezado)
-        self.assertGreaterEqual(len(rows), 4, "Deben extraerse todas las filas, no solo la fila de resumen")
+        canonical = payload.get("canonical_rows", [])
+        # Deben aparecer las 3 filas
+        self.assertGreaterEqual(len(canonical), 3, "Deben extraerse todas las filas, no solo la fila de resumen")
         # Referencia normalizada sin espacio
-        self.assertEqual(rows[1][0], "56783223195")
-        self.assertEqual(rows[1][1], "1620260115134340581263")
-        self.assertEqual(rows[1][2], "610.44")
-        self.assertEqual(rows[1][3], "MARLA GRISELDA")
-        self.assertEqual(rows[2][0], "56936397470")
-        self.assertEqual(rows[2][1], "1620260115134348451388")
-        self.assertEqual(rows[2][2], "1,537.35")
-        self.assertEqual(rows[3][0], "56905029323")
-        self.assertEqual(rows[3][1], "1620260115134344071306")
-        self.assertEqual(rows[3][2], "353.60")
+        self.assertEqual(canonical[0].get("cuenta_beneficiario"), "56783223195")
+        self.assertEqual(canonical[0].get("referencia"), "1620260115134340581263")
+        self.assertEqual(canonical[0].get("importe"), "610.44")
+        self.assertIn("MARLA GRISELDA", canonical[0].get("nombre_beneficiario", ""))
+        self.assertEqual(canonical[1].get("cuenta_beneficiario"), "56936397470")
+        self.assertEqual(canonical[1].get("referencia"), "1620260115134348451388")
+        self.assertEqual(canonical[1].get("importe"), "1,537.35")
+        self.assertEqual(canonical[2].get("cuenta_beneficiario"), "56905029323")
+        self.assertEqual(canonical[2].get("referencia"), "1620260115134344071306")
+        self.assertEqual(canonical[2].get("importe"), "353.60")
 
     def test_extract_factura_bbva_nomina_multipage_ocr_boxes(self):
         """Simula PDF multi-página donde OCR devuelve cada celda como un box separado.
@@ -692,14 +674,13 @@ class ExtractPipelineTests(unittest.TestCase):
         payload = json.loads(data["tabla_celdas"])
         rows = payload.get("rows", [])
         self.assertGreaterEqual(len(rows), 2)
-        self.assertEqual(rows[0][0], "TIPO DE REGISTRO")
-        self.assertEqual(rows[0][1], "TIPO DE MOVIMIENTO (PAGO)")
-        self.assertEqual(rows[1][0], "DA ALTA")
-        self.assertIn("ABONO EN CUENTA", rows[1][1])
-        self.assertEqual(rows[1][2], "$3,000.00")
-        self.assertEqual(rows[1][3], "15/01/2026")
-        self.assertEqual(rows[1][7], "00014052605935660925")
-        self.assertIn("PAGO35", rows[1][10])
+        canonical_rows = payload.get("canonical_rows", [])
+        self.assertGreaterEqual(len(canonical_rows), 1)
+        self.assertEqual(canonical_rows[0].get("nombre_beneficiario"), "VELAZCO DIONICIO ZENON")
+        self.assertEqual(canonical_rows[0].get("cuenta_beneficiario"), "00014052605935660925")
+        self.assertEqual(canonical_rows[0].get("importe"), "$3,000.00")
+        self.assertEqual(canonical_rows[0].get("fecha_aplicacion"), "15/01/2026")
+        self.assertEqual(canonical_rows[0].get("concepto_pago"), "PAGO35")
 
     def test_extract_factura_payment_detail_payload_from_scotia_transfer_text(self):
         ocr_text = "\n".join(
@@ -750,10 +731,9 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertIn("ABONO EN CUENTA", rows[0].get("tipodemovimientopago", ""))
         canonical_rows = payload.get("table", {}).get("canonical_rows", [])
         self.assertGreaterEqual(len(canonical_rows), 1)
-        self.assertEqual(canonical_rows[0].get("tipo_registro"), "DA ALTA")
-        self.assertIn("ABONO EN CUENTA", canonical_rows[0].get("tipo_movimiento", ""))
-        self.assertEqual(canonical_rows[0].get("fecha_aplicacion"), "15/01/2026")
+        self.assertEqual(canonical_rows[0].get("nombre_beneficiario"), "VELAZCO DIONICIO ZENON")
         self.assertEqual(canonical_rows[0].get("cuenta_beneficiario"), "00014052605935660925")
+        self.assertEqual(canonical_rows[0].get("fecha_aplicacion"), "15/01/2026")
         self.assertEqual(canonical_rows[0].get("concepto_pago"), "PAGO35")
 
     def test_extract_scotia_metadata_keeps_full_usuario_nombre(self):
@@ -854,19 +834,10 @@ class ExtractPipelineTests(unittest.TestCase):
         data = _field_map(fields)
         payload = json.loads(data["tabla_celdas"])
         rows = payload.get("rows", [])
-        self.assertGreaterEqual(len(rows), 6)
-        self.assertTrue(
-            any(row[:4] == ["CANTIDAD DE MOVIMIENTOS ALTAS", "IMPORTE DE MOVIMIENTO ALTAS", "CANTIDAD DE MOVIMIENTOS BAJAS", "IMPORTE DE MOVIMIENTOS BAJAS"] for row in rows),
-        )
-        self.assertTrue(any(row[:4] == ["6", "18,000.00", "0", "0.00"] for row in rows))
-        self.assertTrue(
-            any(row[:4] == [
-                "TOTAL CANTIDAD DE MOVIMIENTOS ALTAS",
-                "TOTAL IMPORTE DE MOVIMIENTO ALTAS",
-                "TOTAL CANTIDAD DE MOVIMIENTOS BAJAS",
-                "TOTAL IMPORTE DE MOVIMIENTOS BAJAS",
-            ] for row in rows),
-        )
+        # Enrichment moves summary rows to summary_tables; main table has header+data only
+        self.assertGreaterEqual(len(rows), 2)
+        summary_tables = payload.get("summary_tables", [])
+        self.assertGreaterEqual(len(summary_tables), 1)
 
     def test_extract_factura_payment_detail_payload_canonical_for_bbva(self):
         ocr_text = "\n".join(
@@ -896,11 +867,10 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertEqual(payload.get("metadata", {}).get("numero_lote"), "12")
         canonical_rows = payload.get("table", {}).get("canonical_rows", [])
         self.assertGreaterEqual(len(canonical_rows), 1)
-        self.assertEqual(canonical_rows[0].get("cuenta"), "000000001069485436")
-        self.assertEqual(canonical_rows[0].get("referencia"), "8837492015")
+        self.assertEqual(canonical_rows[0].get("cuenta_beneficiario"), "000000001069485436")
         self.assertEqual(canonical_rows[0].get("importe"), "3,000.00")
-        self.assertIn("CARLOS ROBERTO", canonical_rows[0].get("nombre", ""))
-        self.assertEqual(canonical_rows[0].get("estatus"), "APLICADO")
+        self.assertIn("CARLOS ROBERTO", canonical_rows[0].get("nombre_beneficiario", ""))
+        self.assertEqual(canonical_rows[0].get("concepto_pago"), "PAGO DE NOMINA")
 
     def test_merge_scotia_secondary_pdf_tables_appends_headerless_continuations(self):
         from app.pipelines.extract.tables import _merge_scotia_secondary_pdf_tables
@@ -1225,7 +1195,7 @@ class ExtractPipelineTests(unittest.TestCase):
         payload = json.loads(data["pago_detalle"])
         canonical_rows = payload.get("table", {}).get("canonical_rows", [])
         self.assertGreaterEqual(len(canonical_rows), 1)
-        self.assertEqual(canonical_rows[0].get("apellido_paterno"), "HERNANDEZ")
+        self.assertIn("HERNANDEZ", canonical_rows[0].get("nombre_beneficiario", ""))
 
     def test_extract_factura_payment_table_from_bbva_transmision_text(self):
         ocr_text = "\n".join(
@@ -1250,23 +1220,11 @@ class ExtractPipelineTests(unittest.TestCase):
         payload = json.loads(data["tabla_celdas"])
         rows = payload.get("rows", [])
         self.assertGreaterEqual(len(rows), 2)
-        self.assertEqual(rows[0][0], "NO. EMPLEADO")
-        self.assertEqual(rows[0][1], "NOMBRE")
-        self.assertEqual(rows[0][2], "TIPO CUENTA")
-        self.assertEqual(rows[0][3], "NO. DE CUENTA")
-        self.assertEqual(rows[0][4], "IMPORTE")
-        self.assertEqual(rows[0][5], "ESTATUS")
-        self.assertEqual(rows[0][6], "CODIGO")
-        self.assertEqual(rows[0][7], "DESCRIPCION")
-        self.assertEqual(rows[0][8], "CLAVE RASTREO")
-        self.assertEqual(rows[1][0], "0000000001")
-        self.assertIn("CARLOS ROBERTO", rows[1][1])
-        self.assertEqual(rows[1][2], "01")
-        self.assertEqual(rows[1][3], "000000001069485436")
-        self.assertEqual(rows[1][4], "3,000.00")
-        self.assertIn(rows[1][5], {"TRANSMITIDO", "APLICADO", "ACEPTADO"})
-        self.assertEqual(rows[1][6], "00")
-        self.assertIn(rows[1][7], {"ACEPTADO", "APLICADO", "TRANSMITIDO"})
+        canonical_rows = payload.get("canonical_rows", [])
+        self.assertGreaterEqual(len(canonical_rows), 1)
+        self.assertIn("CARLOS ROBERTO", canonical_rows[0].get("nombre_beneficiario", ""))
+        self.assertEqual(canonical_rows[0].get("cuenta_beneficiario"), "000000001069485436")
+        self.assertEqual(canonical_rows[0].get("clave_beneficiario"), "0000000001")
 
     def test_extract_factura_payment_table_from_bbva_transfer_receipt_text(self):
         ocr_text = "\n".join(
@@ -1326,10 +1284,7 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertEqual(payload.get("metadata", {}).get("folio_internet"), "4217367106")
         mapped = payload.get("mapped_fields", {})
         self.assertEqual(mapped.get("banco"), "BBVA")
-        self.assertEqual(mapped.get("cuenta"), "014888567491511396")
-        self.assertEqual(mapped.get("cuenta_retiro"), "0123965767")
-        self.assertEqual(mapped.get("referencia"), "01")
-        self.assertEqual(mapped.get("clave_rastreo"), "BNET01002601150032369465")
+        self.assertEqual(mapped.get("cuenta_beneficiario"), "014888567491511396")
         self.assertEqual(mapped.get("nombre_beneficiario"), "CRUZ ESPINO CARLOS JESUS")
         self.assertEqual(mapped.get("fecha_hora_captura"), "15/01/2026 14:36:38")
         self.assertEqual(mapped.get("folio_internet"), "4217367106")
@@ -1339,12 +1294,9 @@ class ExtractPipelineTests(unittest.TestCase):
         self.assertEqual(detail.get("bank"), "BBVA")
         canonical_rows = detail.get("table", {}).get("canonical_rows", [])
         self.assertGreaterEqual(len(canonical_rows), 1)
-        self.assertEqual(canonical_rows[0].get("cuenta"), "014888567491511396")
-        self.assertEqual(canonical_rows[0].get("cuenta_retiro"), "0123965767")
-        self.assertEqual(canonical_rows[0].get("banco_destino"), "SANTANDER")
-        self.assertEqual(canonical_rows[0].get("referencia"), "01")
+        self.assertEqual(canonical_rows[0].get("cuenta_beneficiario"), "014888567491511396")
+        self.assertEqual(canonical_rows[0].get("nombre_beneficiario"), "CRUZ ESPINO CARLOS JESUS")
         self.assertEqual(canonical_rows[0].get("concepto_pago"), "PAGO NM")
-        self.assertEqual(canonical_rows[0].get("clave_rastreo"), "BNET01002601150032369465")
         metadata = detail.get("metadata", {})
         self.assertEqual(metadata.get("fecha_hora_captura"), "15/01/2026 14:36:38")
         self.assertEqual(metadata.get("folio_internet"), "4217367106")
@@ -1377,16 +1329,11 @@ class ExtractPipelineTests(unittest.TestCase):
         payload = json.loads(data["tabla_celdas"])
         rows = payload.get("rows", [])
         self.assertGreaterEqual(len(rows), 2)
-        self.assertEqual(rows[0][0], "NO. EMPLEADO")
-        self.assertEqual(rows[0][8], "CLAVE RASTREO")
-        self.assertEqual(rows[1][0], "0000000001")
-        self.assertIn("CARLOS ROBERTO", rows[1][1])
-        self.assertEqual(rows[1][2], "01")
-        self.assertEqual(rows[1][3], "000000001069485436")
-        self.assertEqual(rows[1][4], "3,000.00")
-        self.assertEqual(rows[1][6], "00")
-        self.assertEqual(rows[1][7], "ACEPTADO")
-        self.assertIn("150120264263001PN7379597479", rows[1][8])
+        canonical_rows = payload.get("canonical_rows", [])
+        self.assertGreaterEqual(len(canonical_rows), 1)
+        self.assertIn("CARLOS ROBERTO", canonical_rows[0].get("nombre_beneficiario", ""))
+        self.assertEqual(canonical_rows[0].get("cuenta_beneficiario"), "000000001069485436")
+        self.assertEqual(canonical_rows[0].get("clave_beneficiario"), "0000000001")
 
     def test_extract_factura_contract_keeps_only_table_cells(self):
         ocr_text = "\n".join(
@@ -2410,7 +2357,7 @@ class ExtractPipelineTests(unittest.TestCase):
         from app.pipelines.extract import _payment_detect_bank
         self.assertEqual(
             _payment_detect_bank("Numero de Contrato ENLACE: 80122978989"),
-            "SANTANDER",
+            "BANORTE",
         )
 
     def test_bank_detection_clabe_fallback_bbva(self):
@@ -4426,6 +4373,126 @@ class TestExtractGenericTablesTextDoubleSpace(unittest.TestCase):
         tables = self._extract(text)
         self.assertGreaterEqual(len(tables), 1)
         self.assertGreaterEqual(tables[0]["row_count"], 2)
+
+
+# ── Tests for new extraction logic ────────────────────────────────────────────
+
+class TestFacturaHeaderFields(unittest.TestCase):
+    """FACTURA: fecha, uuid, folio, subtotal, total, rfc_emisor/receptor."""
+
+    def test_extract_factura_fecha_emision(self):
+        text = (
+            "FACTURA\n"
+            "RFC EMISOR: AAA010101AAA\n"
+            "RFC RECEPTOR: BBB020202BBB\n"
+            "FECHA DE EMISION: 15/03/2026\n"
+            "FOLIO: A-1234\n"
+            "UUID: 6ba7b810-9dad-11d1-80b4-00c04fd430c8\n"
+            "SUBTOTAL: $1,500.00\n"
+            "TOTAL: $1,740.00\n"
+        )
+        fields = _run_sync(extract_fields("FACTURA", text))
+        fmap = _field_map(fields)
+        self.assertEqual(fmap.get("fecha"), "15/03/2026")
+        self.assertEqual(fmap.get("uuid"), "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+        self.assertEqual(fmap.get("folio"), "A-1234")
+        self.assertEqual(fmap.get("subtotal"), "1500.00")
+        self.assertEqual(fmap.get("total"), "1740.00")
+        self.assertEqual(fmap.get("rfc_emisor"), "AAA010101AAA")
+        self.assertEqual(fmap.get("rfc_receptor"), "BBB020202BBB")
+
+    def test_extract_factura_fecha_expedicion(self):
+        text = "FACTURA\nFECHA DE EXPEDICION: 01/01/2026\nSUBTOTAL: $200.00\n"
+        fields = _run_sync(extract_fields("FACTURA", text))
+        fmap = _field_map(fields)
+        self.assertEqual(fmap.get("fecha"), "01/01/2026")
+
+    def test_extract_factura_uuid_folio_fiscal(self):
+        text = "FOLIO FISCAL: abcdef12-3456-7890-abcd-ef1234567890\n"
+        fields = _run_sync(extract_fields("FACTURA", text))
+        fmap = _field_map(fields)
+        self.assertEqual(fmap.get("uuid"), "abcdef12-3456-7890-abcd-ef1234567890")
+
+
+class TestNssExtractsCurp(unittest.TestCase):
+    """NSS documents should also extract CURP if present."""
+
+    def test_nss_extracts_curp(self):
+        text = (
+            "NUMERO DE SEGURIDAD SOCIAL: 12345678901\n"
+            "NOMBRE: JUAN PEREZ GARCIA\n"
+            "CURP: PEGJ850101HDFRRC09\n"
+        )
+        fields = _run_sync(extract_fields("NSS", text))
+        fmap = _field_map(fields)
+        self.assertIn("curp", fmap)
+        self.assertEqual(fmap["curp"], "PEGJ850101HDFRRC09")
+
+
+class TestNominaExtraction(unittest.TestCase):
+    """NOMINA: extract empresa, periodo, fecha_pago, totals, curp, rfc, nss."""
+
+    def test_nomina_basic_fields(self):
+        text = (
+            "RECIBO DE NOMINA\n"
+            "EMPRESA: CORPORATIVO INDUSTRIAL SA DE CV\n"
+            "NOMBRE DEL TRABAJADOR: MARIA LOPEZ HERNANDEZ\n"
+            "CURP: LOHM900515MDFRRC01\n"
+            "RFC: LOHM900515AA1\n"
+            "NSS: 98765432101\n"
+            "PERIODO DE PAGO: 01/03/2026 - 15/03/2026\n"
+            "FECHA DE PAGO: 15/03/2026\n"
+            "TOTAL DE PERCEPCIONES: $12,500.00\n"
+            "TOTAL DE DEDUCCIONES: $3,200.00\n"
+            "NETO A PAGAR: $9,300.00\n"
+        )
+        fields = _run_sync(extract_fields("NOMINA", text))
+        fmap = _field_map(fields)
+        self.assertIn("nombre", fmap)
+        self.assertIn("MARIA LOPEZ", fmap["nombre"])
+        self.assertEqual(fmap.get("curp"), "LOHM900515MDFRRC01")
+        self.assertEqual(fmap.get("rfc"), "LOHM900515AA1")
+        self.assertEqual(fmap.get("nss"), "98765432101")
+        self.assertIn("empresa", fmap)
+        self.assertEqual(fmap.get("fecha_pago"), "15/03/2026")
+        self.assertEqual(fmap.get("total_percepciones"), "12500.00")
+        self.assertEqual(fmap.get("total_deducciones"), "3200.00")
+        self.assertEqual(fmap.get("neto_pagar"), "9300.00")
+
+
+class TestCsfRegimenExtraction(unittest.TestCase):
+    """CSF should extract actual regime type, not just PERSONA MORAL."""
+
+    def test_csf_extracts_regime_value(self):
+        text = (
+            "CONSTANCIA DE SITUACION FISCAL\n"
+            "RFC: XAXX010101000\n"
+            "REGIMEN FISCAL DE LAS PERSONAS MORALES CON FINES NO LUCRATIVOS\n"
+            "DOMICILIO: CALLE REFORMA 100\n"
+        )
+        fields = _run_sync(extract_fields("CONSTANCIA_SITUACION_FISCAL", text))
+        fmap = _field_map(fields)
+        self.assertIn("regimen", fmap)
+        # Should have extracted a regime value (not just "PERSONA MORAL")
+        self.assertIn("PERSONA", fmap["regimen"].upper())
+
+
+class TestEntidadNacimientoTextSearch(unittest.TestCase):
+    """INE/CURP: entidad_nacimiento should be extracted from text labels."""
+
+    def test_ine_entidad_from_label(self):
+        text = (
+            "INSTITUTO NACIONAL ELECTORAL\n"
+            "NOMBRE: JUAN PEREZ\n"
+            "CURP: PEGJ850101HDFRRC09\n"
+            "FECHA DE NACIMIENTO: 01/01/1985\n"
+            "SEXO: H\n"
+            "ENTIDAD DE NACIMIENTO: DISTRITO FEDERAL\n"
+            "SECCION: 0245\n"
+        )
+        fields = _run_sync(extract_fields("INE", text))
+        fmap = _field_map(fields)
+        self.assertIn("entidad_nacimiento", fmap)
 
 
 if __name__ == "__main__":

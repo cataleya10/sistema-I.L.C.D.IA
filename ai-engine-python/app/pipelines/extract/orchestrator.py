@@ -399,10 +399,18 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                     )[0]
                     address = _clean_address_value(raw_addr)
                     fields.append(_make_field("domicilio", "Domicilio", address, ocr_boxes, confidence=0.95))
-        curp_entidad = _extract_curp_state(curps)
-        if curp_entidad:
-            state_name = STATE_CODE_TO_NAME.get(curp_entidad, curp_entidad)
-            fields.append(_make_field("entidad_nacimiento", "Entidad de nacimiento", state_name, ocr_boxes, confidence=0.6))
+        # ── entidad_nacimiento: prefer labeled text, fallback to CURP state ──
+        entidad_text = _find_value_after_keyword(lines, [
+            "ENTIDAD DE NACIMIENTO", "ESTADO DE NACIMIENTO", "ENTIDAD NACIMIENTO",
+        ])
+        if entidad_text and len(entidad_text.strip()) >= 3:
+            fields.append(_make_field("entidad_nacimiento", "Entidad de nacimiento",
+                                      _normalize_name(entidad_text.strip()), ocr_boxes, confidence=0.75))
+        else:
+            curp_entidad = _extract_curp_state(curps)
+            if curp_entidad:
+                state_name = STATE_CODE_TO_NAME.get(curp_entidad, curp_entidad)
+                fields.append(_make_field("entidad_nacimiento", "Entidad de nacimiento", state_name, ocr_boxes, confidence=0.6))
         if not birth_date:
             curp_birth = _extract_curp_birth_date(curps)
             if curp_birth:
@@ -419,18 +427,37 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                 fields.append(_make_field("rfc", "RFC", _normalize_alnum(rfc_box_values["rfc"]["value"]), ocr_boxes, confidence=0.9))
             if "nombre" in rfc_box_values:
                 fields.append(_make_field("nombre", "Nombre", _normalize_name(rfc_box_values["nombre"]["value"]), ocr_boxes, confidence=0.7))
-        for value in rfcs:
+        rfc_candidates = rfcs
+        if document_type == "DATOS_BANCARIOS":
+            rfc_candidates = [v for v in rfcs if _normalize_alnum(v) not in RFC_EXCLUIR]
+        for value in rfc_candidates:
             fields.append(_make_field("rfc", "RFC", _normalize_alnum(value), ocr_boxes))
-        labeled_rfc = _find_labeled_value(lines, "RFC")
-        if labeled_rfc:
-            fields.append(_make_field("rfc", "RFC", _normalize_alnum(labeled_rfc), ocr_boxes, confidence=0.8))
+        # Skip _find_labeled_value for DATOS_BANCARIOS: merged text lines cause it
+        # to pick up the bank's RFC (e.g. BMN930209927) instead of the client's.
+        if document_type != "DATOS_BANCARIOS":
+            labeled_rfc = _find_labeled_value(lines, "RFC")
+            if labeled_rfc:
+                fields.append(_make_field("rfc", "RFC", _normalize_alnum(labeled_rfc), ocr_boxes, confidence=0.8))
+
+    # ── PUBLICO EN GENERAL → RFC genérico ──────────────────────────────────────
+    if "PUBLICO EN GENERAL" in text and not any(f.get("key") == "rfc" for f in fields):
+        fields.append(_make_field("rfc", "RFC", "XAXX010101000", ocr_boxes, confidence=0.85))
 
     if document_type == "CONSTANCIA_SITUACION_FISCAL":
         regimen = _find_value_after_keyword(lines, ["REGIMEN FISCAL", "REGIMEN"])
         if regimen:
             fields.append(_make_field("regimen", "Regimen", _normalize_text(regimen), ocr_boxes, confidence=0.7))
         else:
-            if (
+            # Try to extract the actual regime type via pattern
+            _reg_m = re.search(
+                r'R[ÉE]GIMEN\s+(?:FISCAL\s+)?(?:DE\s+)?([A-ZÁÉÍÓÚÜÑ ]{8,60}?)(?:\n|RFC|DOMICILIO|CODIGO|$)',
+                text,
+            )
+            if _reg_m:
+                _reg_val = _reg_m.group(1).strip()
+                if 8 <= len(_reg_val) <= 60:
+                    fields.append(_make_field("regimen", "Regimen", _normalize_text(_reg_val), ocr_boxes, confidence=0.7))
+            elif (
                 "NOMBRE, DENOMINACION O RAZON" in text
                 or "NOMBRE DENOMINACION O RAZON" in text
                 or "DENOMINACION O RAZON" in text
@@ -476,10 +503,127 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
         nss_name = _extract_nss_name_from_text(lines, text)
         if nss_name:
             fields.append(_make_field("nombre", "Nombre", _normalize_name(nss_name), ocr_boxes, confidence=0.82))
+        # ── NSS: extract CURP if present ──
+        for value in curps:
+            fields.append(_make_field("curp", "CURP", _normalize_alnum(value), ocr_boxes, confidence=0.8))
+        curp_labeled = _find_labeled_value(lines, "CURP") or _find_value_after_keyword(lines, ["CURP"])
+        if curp_labeled:
+            normalized_curp = _normalize_alnum(curp_labeled)
+            if CURP_PATTERN.fullmatch(normalized_curp):
+                fields.append(_make_field("curp", "CURP", normalized_curp, ocr_boxes, confidence=0.85))
 
+    # ── NOMINA: extract payroll-specific fields ───────────────────────────────
+    if document_type == "NOMINA":
+        # Employee name
+        nombre_nomina = _find_value_after_keyword(lines, [
+            "NOMBRE DEL TRABAJADOR", "NOMBRE DEL EMPLEADO", "TRABAJADOR",
+            "NOMBRE COMPLETO", "EMPLEADO",
+        ])
+        if nombre_nomina:
+            fields.append(_make_field("nombre", "Nombre", _normalize_name(nombre_nomina), ocr_boxes, confidence=0.75))
+        # CURP
+        for value in curps:
+            fields.append(_make_field("curp", "CURP", _normalize_alnum(value), ocr_boxes, confidence=0.8))
+        # RFC
+        for value in rfcs:
+            fields.append(_make_field("rfc", "RFC", _normalize_alnum(value), ocr_boxes, confidence=0.8))
+        # NSS
+        for value in nss:
+            fields.append(_make_field("nss", "NSS", _normalize_alnum(value), ocr_boxes, confidence=0.8))
+        nss_labeled = _find_value_after_keyword(lines, ["NUMERO DE SEGURIDAD SOCIAL", "NSS", "SEGURIDAD SOCIAL", "IMSS"])
+        if nss_labeled:
+            fields.append(_make_field("nss", "NSS", _normalize_numeric_field(nss_labeled), ocr_boxes, confidence=0.7))
+        # Empresa / Patrón
+        empresa = _find_value_after_keyword(lines, [
+            "RAZON SOCIAL", "EMPRESA", "PATRON", "EMPLEADOR",
+            "NOMBRE O RAZON SOCIAL", "DENOMINACION",
+        ])
+        if empresa:
+            fields.append(_make_field("empresa", "Empresa", _normalize_name(empresa), ocr_boxes, confidence=0.7))
+        # Periodo
+        periodo = _find_value_after_keyword(lines, ["PERIODO", "PERIODO DE PAGO", "EJERCICIO"])
+        if periodo:
+            fields.append(_make_field("periodo", "Periodo", _normalize_text(periodo), ocr_boxes, confidence=0.7))
+        # Fecha de pago
+        for _fp_nom in [
+            r'FECHA\s*(?:DE\s*)?PAGO[:\s]+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+            r'FECHA\s*EMISI[OÓ]N[:\s]+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+        ]:
+            _fm_nom = re.search(_fp_nom, text)
+            if _fm_nom:
+                fields.append(_make_field("fecha_pago", "Fecha de pago",
+                                          _normalize_date_value(_fm_nom.group(1)), ocr_boxes, confidence=0.75))
+                break
+        # Totales monetarios
+        _tp_m = re.search(r'TOTAL\s*(?:DE\s*)?PERCEPCIONES[:\s]*\$?\s*([\d,]+\.\d{2})', text)
+        if _tp_m:
+            fields.append(_make_field("total_percepciones", "Total percepciones",
+                                      _tp_m.group(1).replace(",", ""), ocr_boxes, confidence=0.75))
+        _td_m = re.search(r'TOTAL\s*(?:DE\s*)?DEDUCCIONES[:\s]*\$?\s*([\d,]+\.\d{2})', text)
+        if _td_m:
+            fields.append(_make_field("total_deducciones", "Total deducciones",
+                                      _td_m.group(1).replace(",", ""), ocr_boxes, confidence=0.75))
+        _np_m = re.search(r'NETO\s*(?:A\s*)?PAGAR[:\s]*\$?\s*([\d,]+\.\d{2})', text)
+        if _np_m:
+            fields.append(_make_field("neto_pagar", "Neto a pagar",
+                                      _np_m.group(1).replace(",", ""), ocr_boxes, confidence=0.75))
 
     # --- REGLA ESTRICTA: solo FACTURA/PAGO incluye tabla estructurada ---
     if document_type == "FACTURA":
+        # ── FACTURA: extract header-level fields ──────────────────────────────
+        # RFC emisor / receptor
+        _rfc_emisor_m = re.search(
+            r'RFC\s*(?:DEL?\s*)?(?:EMISOR|EXPEDIDOR)[:\s]+([A-Z&Ñ0-9]{12,13})', text)
+        if _rfc_emisor_m:
+            fields.append(_make_field("rfc_emisor", "RFC Emisor",
+                                      _normalize_alnum(_rfc_emisor_m.group(1)), ocr_boxes, confidence=0.85))
+        _rfc_receptor_m = re.search(
+            r'RFC\s*(?:DEL?\s*)?(?:RECEPTOR|DESTINATARIO|CLIENTE)[:\s]+([A-Z&Ñ0-9]{12,13})', text)
+        if _rfc_receptor_m:
+            fields.append(_make_field("rfc_receptor", "RFC Receptor",
+                                      _normalize_alnum(_rfc_receptor_m.group(1)), ocr_boxes, confidence=0.85))
+        # Fallback: if we have exactly 2 RFCs and no emisor/receptor yet, assign by position
+        if (not _rfc_emisor_m and not _rfc_receptor_m and len(rfcs) >= 2):
+            fields.append(_make_field("rfc_emisor", "RFC Emisor",
+                                      _normalize_alnum(rfcs[0]), ocr_boxes, confidence=0.65))
+            fields.append(_make_field("rfc_receptor", "RFC Receptor",
+                                      _normalize_alnum(rfcs[1]), ocr_boxes, confidence=0.65))
+
+        # Fecha de emisión
+        for _fp in [
+            r'FECHA\s*(?:DE\s*)?EMISI[OÓ]N[:\s]+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+            r'FECHA\s*(?:DE\s*)?EXPEDICI[OÓ]N[:\s]+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+            r'FECHA[:\s]+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+        ]:
+            _fm = re.search(_fp, text)
+            if _fm:
+                fields.append(_make_field("fecha", "Fecha",
+                                          _normalize_date_value(_fm.group(1)), ocr_boxes, confidence=0.8))
+                break
+
+        # UUID (timbre fiscal)
+        _uuid_m = re.search(r'(?:UUID|FOLIO\s*FISCAL)[:\s]*([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})', text, re.IGNORECASE)
+        if _uuid_m:
+            fields.append(_make_field("uuid", "UUID", _uuid_m.group(1).lower(), ocr_boxes, confidence=0.9))
+
+        # Folio
+        _folio_m = re.search(r'FOLIO[:\s]+([A-Z0-9-]{1,20})', text)
+        if _folio_m:
+            _folio_val = _folio_m.group(1).strip()
+            # Avoid capturing UUID prefix as folio
+            if len(_folio_val) <= 20 and '-' not in _folio_val[4:]:
+                fields.append(_make_field("folio", "Folio", _folio_val, ocr_boxes, confidence=0.8))
+
+        # Subtotal & Total
+        _subtotal_m = re.search(r'SUBTOTAL[:\s]*\$?\s*([\d,]+\.\d{2})', text)
+        if _subtotal_m:
+            fields.append(_make_field("subtotal", "Subtotal",
+                                      _subtotal_m.group(1).replace(",", ""), ocr_boxes, confidence=0.75))
+        _total_m = re.search(r'(?<!SUB)TOTAL[:\s]*\$?\s*([\d,]+\.\d{2})', text)
+        if _total_m:
+            fields.append(_make_field("total", "Total",
+                                      _total_m.group(1).replace(",", ""), ocr_boxes, confidence=0.75))
+
         payment_table = _extract_payment_table_payload(base_text_raw, ocr_boxes, pdf_tables)
         payment_detail = _extract_payment_detail_payload(base_text_raw, payment_table)
         # Enriquecer tabla con metadata y mapped_fields de payment_detail
@@ -567,33 +711,18 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
         # ── Fallback: si aún no hay tabla_celdas, usar pdf_tables directo ──
         if not any(f.get("key") == "tabla_celdas" for f in fields) and pdf_tables:
             _generic = _pdf_tables_to_generic_payloads(pdf_tables)
-            _existing_tabla = False
-            _fb_idx = 2
-            for _tbl in sorted(_generic, key=lambda t: t.get("row_count", 0), reverse=True):
-                if _tbl.get("row_count", 0) < 2:
-                    continue
-                if not _existing_tabla:
-                    fields.append(
-                        _make_field(
-                            "tabla_celdas",
-                            "Tabla detectada",
-                            json.dumps(_tbl, ensure_ascii=False),
-                            ocr_boxes,
-                            confidence=0.8,
-                        )
+            _fb_sorted = sorted(_generic, key=lambda t: t.get("row_count", 0), reverse=True)
+            _fb_best = next((t for t in _fb_sorted if t.get("row_count", 0) >= 2), None)
+            if _fb_best:
+                fields.append(
+                    _make_field(
+                        "tabla_celdas",
+                        "Tabla detectada",
+                        json.dumps(_fb_best, ensure_ascii=False),
+                        ocr_boxes,
+                        confidence=0.8,
                     )
-                    _existing_tabla = True
-                else:
-                    fields.append(
-                        _make_field(
-                            f"tabla_celdas_{_fb_idx}",
-                            f"Tabla detectada #{_fb_idx}",
-                            json.dumps(_tbl, ensure_ascii=False),
-                            ocr_boxes,
-                            confidence=0.75,
-                        )
-                    )
-                    _fb_idx += 1
+                )
 
         if document_type == "FACTURA":
             cleaned = _postprocess_fields(document_type, fields)
@@ -621,15 +750,45 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                 fields.append(_make_field("periodo", "Periodo", _normalize_text(fin_box_values["periodo"]["value"]), ocr_boxes, confidence=0.75))
         # Refuerzo: buscar CLABE explícitamente en líneas con la palabra 'CLABE'
         found_clabe = False
-        for value in clabes:
-            fields.append(_make_field("clabe", "CLABE", _normalize_alnum(value), ocr_boxes))
+        # Priority 1: search for labeled CLABE (e.g., "CUENTA CLABE: 014...")
+        # Prefer "Cuenta CLABE" (cargo) patterns — these override OCR box values
+        _clabe_labeled_re = re.search(
+            r'(?:CUENTA[/\s]*CLABE\s*(?:BENEFICIARIO|ORDENANTE)|CUENTA\s*DE\s*RETIRO'
+            r'|CUENTA\s*CLABE|NO\.\s*CUENTA\s*BENEFICIARIO)[:\s]+(\d{18})',
+            text
+        )
+        if _clabe_labeled_re:
+            fields[:] = [f for f in fields if f.get("key") != "clabe"]
+            fields.append(_make_field("clabe", "CLABE", _normalize_alnum(_clabe_labeled_re.group(1)), ocr_boxes, confidence=0.95))
             found_clabe = True
-        # Si no se encontró por regex, buscar línea con 'CLABE' y 18 dígitos
+        # Priority 2: CLABE from 'RETIRO' context
+        if not found_clabe:
+            _ret_m = re.search(r'RETIRO[:\s]+(\d{18})', text)
+            if _ret_m:
+                fields.append(_make_field("clabe", "CLABE", _normalize_alnum(_ret_m.group(1)), ocr_boxes, confidence=0.85))
+                found_clabe = True
+        # Priority 3: first 18-digit that isn't a Banorte payment beneficiary (000000001*)
+        if not found_clabe:
+            for value in clabes:
+                if not value.startswith("000000001"):
+                    fields[:] = [f for f in fields if f.get("key") != "clabe"]
+                    fields.append(_make_field("clabe", "CLABE", _normalize_alnum(value), ocr_boxes, confidence=0.85))
+                    found_clabe = True
+                    break
+        # Priority 4: any 18-digit CLABE (override OCR box values)
+        if not found_clabe:
+            for value in clabes:
+                fields[:] = [f for f in fields if f.get("key") != "clabe"]
+                fields.append(_make_field("clabe", "CLABE", _normalize_alnum(value), ocr_boxes, confidence=0.80))
+                found_clabe = True
+                break
+        # Priority 5: line with 'CLABE' keyword and 18 digits
         if not found_clabe:
             for line in lines:
                 if "CLABE" in line:
                     match = re.search(r"\b\d{18}\b", line)
                     if match:
+                        fields[:] = [f for f in fields if f.get("key") != "clabe"]
                         fields.append(_make_field("clabe", "CLABE", _normalize_alnum(match.group(0)), ocr_boxes, confidence=0.85))
                         break
         banco = _find_value_after_keyword(lines, ["BANCO", "INSTITUCION"])
@@ -638,6 +797,167 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
         labeled_clabe = _find_labeled_value(lines, "CLABE")
         if labeled_clabe:
             fields.append(_make_field("clabe", "CLABE", _normalize_numeric_field(labeled_clabe), ocr_boxes, confidence=0.8))
+
+        # ── Text-based extraction for remaining DATOS_BANCARIOS fields ────────
+        _existing_keys = {f.get("key") for f in fields}
+        _text_up = base_text_raw.upper()
+
+        # -- banco: detect from strong keywords, CLABE prefix, then weak keywords --
+        _clabe_bank_map = {
+            "002": "BANAMEX", "012": "BBVA BANCOMER", "014": "SANTANDER",
+            "021": "HSBC", "030": "BANCO DEL BAJIO", "044": "SCOTIABANK",
+            "058": "BANREGIO", "072": "BANORTE", "127": "BANCO AZTECA",
+            "137": "BANCOPPEL",
+        }
+        _detected_banco = ""
+        # Priority 1: strong keywords (unique to bank platforms/formal names)
+        # NOTE: Order matters — Santander docs often reference other banks
+        # (BBVA, BANAMEX, etc.) as destination/counterparty, so Santander-
+        # specific patterns must be checked FIRST.
+        _strong_kw_map = [
+            # Santander: check first — their docs mention other banks
+            ("SANTANDER", [
+                "NUMERO DE CONTRATO ENLACE", "CONTRATO ENLACE",
+                "DESCARGA MASIVA EN PDF",
+                "COMPROBANTE DE OPERACI",
+                "SUPERLINEA",
+            ]),
+            # Banorte payroll format
+            ("BANORTE", ["BANCO MERCANTIL DEL NORTE", "NO. EMPLEADO"]),
+            # BBVA — exclude "BBVA MEXICO" from strong (appears in
+            # Santander inter-bank transfers as destination bank)
+            ("BBVA BANCOMER", ["BBVA NET CASH", "BBVANETCASH"]),
+            ("SCOTIABANK", ["SCOTIABANK INVERLAT", "SCOTIA EN LINEA"]),
+        ]
+        # Special: "CONSULTAS.*OTROS BANCOS" (Santander portal)
+        if "CONSULTAS" in _text_up and "OTROS BANCOS" in _text_up:
+            _detected_banco = "SANTANDER"
+        if not _detected_banco:
+            for _bname, _bkws in _strong_kw_map:
+                if any(kw in _text_up for kw in _bkws):
+                    _detected_banco = _bname
+                    break
+        # Priority 2: derive from CLABE prefix (deterministic)
+        if not _detected_banco:
+            _clabe_fields = [f for f in fields if f.get("key") == "clabe" and f.get("value")]
+            if _clabe_fields:
+                _clabe_prefix = str(_clabe_fields[0]["value"])[:3]
+                _detected_banco = _clabe_bank_map.get(_clabe_prefix, "")
+        # Priority 3: weak keywords (may appear in disclaimers/footer text)
+        if not _detected_banco:
+            _weak_kw_map = [
+                ("BBVA BANCOMER", ["BBVA"]),
+                ("BANORTE", ["BANORTE"]),
+                ("SANTANDER", ["SANTANDER"]),
+                ("SCOTIABANK", ["SCOTIABANK"]),
+                ("HSBC", ["HSBC"]),
+                ("BANAMEX", ["BANAMEX", "CITIBANAMEX"]),
+                ("INBURSA", ["INBURSA"]),
+                ("BANCO AZTECA", ["BANCO AZTECA"]),
+                ("BANCOPPEL", ["BANCOPPEL"]),
+            ]
+            for _bname, _bkws in _weak_kw_map:
+                if any(kw in _text_up for kw in _bkws):
+                    _detected_banco = _bname
+                    break
+        if _detected_banco:
+            # Remove any previous incorrect banco fields and set the correct one
+            fields[:] = [f for f in fields if f.get("key") != "banco"]
+            fields.append(_make_field("banco", "Banco", _detected_banco, ocr_boxes, confidence=0.9))
+
+        # -- cuenta: extract 10-13 digit account from labeled patterns --
+        # Always try text-based extraction — it's more reliable than OCR boxes
+        _clabe_val = ""
+        for _f in fields:
+            if _f.get("key") == "clabe" and _f.get("value"):
+                _clabe_val = str(_f["value"])
+                break
+        _cta_patterns = [
+            # "Contrato: COMPANY NAME\n80123838400" (multi-line contrato number)
+            r'CONTRATO[:\s]+[A-Z][^\n]{3,70}\n(\d{10,13})\b',
+            # "Cuenta de cargo: 65507763084" or "Cuenta Cargo: ..."
+            r'CUENTA\s*(?:DE\s*)?CARGO[:\s]+(\d{10,13})',
+            # Standard labeled patterns
+            r'CUENTA[/\s]*CLABE\s*ORDENANTE[:\s]+(\d{10,13})',
+            r'CUENTA\s*DE\s*DEP[OÓ]SITO[:\s]+(\d{10,13})',
+            r'N[UÚ]MERO\s*DE\s*CONTRATO\s*ENLACE[:\s]+(\d{10,13})',
+            # "No. de cuenta Cargo: 0438349034" (Banorte payroll)
+            r'NO\.?\s*(?:DE\s*)?CUENTA\s*(?:CARGO)?[:\s]+(\d{10,13})',
+            # "Contrato: 080123768215" (same-line)
+            r'CONTRATO[:\s]+(\d{10,13})',
+            # "Folio: 54069017029" (Scotiabank)
+            r'FOLIO[:\s]+(\d{10,13})',
+        ]
+        _cta_found = False
+        for _pat in _cta_patterns:
+            _cm = re.search(_pat, _text_up)
+            if _cm:
+                _cta_candidate = _cm.group(1)
+                if _cta_candidate != _clabe_val:
+                    fields[:] = [f for f in fields if f.get("key") != "cuenta"]
+                    fields.append(_make_field("cuenta", "Cuenta", _cta_candidate, ocr_boxes, confidence=0.8))
+                    _cta_found = True
+                    break
+        if not _cta_found and "cuenta" not in _existing_keys:
+            # Fallback: first 10-13 digit number that isn't the CLABE
+            for _cm in re.finditer(r'\b(\d{10,13})\b', _text_up):
+                _c = _cm.group(1)
+                if _c != _clabe_val and len(_c) != 18:
+                    fields.append(_make_field("cuenta", "Cuenta", _c, ocr_boxes, confidence=0.65))
+                    break
+
+        # -- titular: extract from labeled patterns --
+        # Always try text-based extraction — overrides unreliable OCR box values
+        _titular_patterns = [
+            r'NOMBRE\s*DEL\s*CLIENTE[:\s\n]+([A-ZÁÉÍÓÚÜÑ&][A-ZÁÉÍÓÚÜÑ&\s,\.]{4,70}?)(?:\n|RFC|CLABE|BBVA|$)',
+            r'NOMBRE\s*DEL\s*ORDENANTE[:\s\n]+([A-ZÁÉÍÓÚÜÑ&][A-ZÁÉÍÓÚÜÑ&\s,\.]{4,70}?)(?:\n|RFC|CLABE|$)',
+            r'NOMBRE\s*DE\s*LA\s*EMPRESA[:\s\n]+([A-ZÁÉÍÓÚÜÑ&][A-ZÁÉÍÓÚÜÑ&\s,\.]{4,70}?)(?:\n|RFC|CLABE|$)',
+            r'CONTRATO[:\s]+([A-ZÁÉÍÓÚÜÑ&][A-ZÁÉÍÓÚÜÑ&\s,\.]{4,70}?)\s*\d{8,}',
+            r'CUENTA\s*CARGO[:\s]+\d+\s*[-–]\s*([A-ZÁÉÍÓÚÜÑ&][A-ZÁÉÍÓÚÜÑ&\s,\.]{4,70}?)(?:\n|CUENTA|$)',
+            r'TITULAR[:\s]+([A-ZÁÉÍÓÚÜÑ&][A-ZÁÉÍÓÚÜÑ&\s,\.]{4,70}?)(?:\n|RFC|CLABE|CUENTA|$)',
+        ]
+        for _pat in _titular_patterns:
+            _tm = re.search(_pat, base_text_raw, re.IGNORECASE)
+            if _tm:
+                _nombre = re.sub(r'\s+', ' ', _tm.group(1)).strip().rstrip(",.")
+                if len(_nombre) >= 5:
+                    fields[:] = [f for f in fields if f.get("key") != "titular"]
+                    fields.append(_make_field("titular", "Titular", _normalize_name(_nombre), ocr_boxes, confidence=0.75))
+                    break
+
+        # -- fecha_corte: extract from labeled date patterns --
+        if "fecha_corte" not in _existing_keys:
+            _fecha_found = False
+            # Priority 1: date at the very start of document (BBVA comprobantes header)
+            _header_dm = re.match(r'\s*(\d{2}[-/]\d{2}[-/]\d{4})', _text_up)
+            if _header_dm:
+                fields.append(_make_field("fecha_corte", "Fecha de corte", _normalize_date_value(_header_dm.group(1)), ocr_boxes, confidence=0.9))
+                _fecha_found = True
+            # Priority 2: labeled date patterns
+            if not _fecha_found:
+                _date_patterns = [
+                    r'FECHA\s*DE\s*APLICACI[OÓ]N[:\s]+(\d{2}[-/][A-Z0-9]{2,3}[-/]\d{4})',
+                    r'FECHA\s*APLICACI[OÓ]N[:\s]+(\d{2}[-/][A-Z0-9]{2,3}[-/]\d{4})',
+                    r'FECHA\s*(?:Y\s*HORA\s*DE\s*)?TRANSMISI[OÓ]N[:\s]+(\d{2}[-/]\d{2}[-/]\d{4})',
+                    r'FECHA\s*DE\s*ENV[IÍ]O\s*DE\s*PAGO[:\s]+(\d{2}[-/]\d{2}[-/]\d{4})',
+                    r'FECHA\s*DE\s*OPERACI[OÓ]N[:\s]+(\d{2}[-/]\d{2}[-/]\d{4})',
+                    r'FECHA\s*(?:Y\s*HORA\s*DE\s*)?ALTA[:\s]+(\d{2}[-/]\d{2}[-/]\d{4})',
+                    r'FECHA\s*(?:Y\s*HORA\s*DE\s*)?CONSULTA[:\s]+(\d{2}[-/]\d{2}[-/]\d{4})',
+                    r'FECHA\s*DE\s*CREACI[OÓ]N[:\s]+(\d{2}[-/]\d{2}[-/]\d{4})',
+                    r'FECHA\s*DE\s*CORTE[:\s]+(\d{2}[-/]\d{2}[-/]\d{4})',
+                    r'FECHA\s*DE\s*IMPRESI[OÓ]N\s*[:\s]+(\d{2}[-/]\d{2}[-/]\d{4})',
+                ]
+                for _pat in _date_patterns:
+                    _dm = re.search(_pat, _text_up)
+                    if _dm:
+                        fields.append(_make_field("fecha_corte", "Fecha de corte", _normalize_date_value(_dm.group(1)), ocr_boxes, confidence=0.8))
+                        _fecha_found = True
+                        break
+            # Priority 3: Fallback — first dd/mm/yyyy date in text
+            if not _fecha_found:
+                _dm = re.search(r'\b(\d{2}[-/]\d{2}[-/]\d{4})\b', _text_up)
+                if _dm:
+                    fields.append(_make_field("fecha_corte", "Fecha de corte", _normalize_date_value(_dm.group(1)), ocr_boxes, confidence=0.7))
 
         # FIX: extraer tabla de pagos para reportes de dispersion bancaria
         payment_table = _extract_payment_table_payload(base_text_raw, ocr_boxes, pdf_tables)
@@ -669,33 +989,18 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
         # directamente — igual que hace la ruta FACTURA.
         if not any(f.get("key") == "tabla_celdas" for f in fields) and pdf_tables:
             _generic = _pdf_tables_to_generic_payloads(pdf_tables)
-            _existing_tabla = False
-            _tabla_idx = 2
-            for _tbl in sorted(_generic, key=lambda t: t.get("row_count", 0), reverse=True):
-                if _tbl.get("row_count", 0) < 2:
-                    continue
-                if not _existing_tabla:
-                    fields.append(
-                        _make_field(
-                            "tabla_celdas",
-                            "Tabla estado de cuenta",
-                            json.dumps(_tbl, ensure_ascii=False),
-                            ocr_boxes,
-                            confidence=0.82,
-                        )
+            _ec_sorted = sorted(_generic, key=lambda t: t.get("row_count", 0), reverse=True)
+            _ec_best = next((t for t in _ec_sorted if t.get("row_count", 0) >= 2), None)
+            if _ec_best:
+                fields.append(
+                    _make_field(
+                        "tabla_celdas",
+                        "Tabla estado de cuenta",
+                        json.dumps(_ec_best, ensure_ascii=False),
+                        ocr_boxes,
+                        confidence=0.82,
                     )
-                    _existing_tabla = True
-                else:
-                    fields.append(
-                        _make_field(
-                            f"tabla_celdas_{_tabla_idx}",
-                            f"Tabla estado de cuenta #{_tabla_idx}",
-                            json.dumps(_tbl, ensure_ascii=False),
-                            ocr_boxes,
-                            confidence=0.78,
-                        )
-                    )
-                    _tabla_idx += 1
+                )
         cleaned = _postprocess_fields(document_type, fields)
         contracted = _apply_field_contracts(document_type, cleaned)
         return _dedupe_fields(contracted)
@@ -719,37 +1024,24 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                     confidence=0.9,
                 )
             )
-        # Extract ALL additional tables (not just the best one) so no
-        # table content is lost.  Each extra table becomes tabla_celdas_N.
-        if pdf_tables:
+        # Solo agregar tabla_celdas si aún no existe (la principal ya fue extraída)
+        if not any(str(f.get("key", "")) == "tabla_celdas" for f in fields) and pdf_tables:
             _generic = _pdf_tables_to_generic_payloads(pdf_tables)
-            _existing_tabla = any(str(f.get("key", "")) == "tabla_celdas" for f in fields)
-            _tabla_idx = 2
-            for _tbl in sorted(_generic, key=lambda t: t.get("row_count", 0), reverse=True):
-                if _tbl.get("row_count", 0) < 2:
-                    continue
-                if not _existing_tabla:
-                    fields.append(
-                        _make_field(
-                            "tabla_celdas",
-                            "Tabla detectada",
-                            json.dumps(_tbl, ensure_ascii=False),
-                            ocr_boxes,
-                            confidence=0.8,
-                        )
+            _fac_best = next(
+                (t for t in sorted(_generic, key=lambda t: t.get("row_count", 0), reverse=True)
+                 if t.get("row_count", 0) >= 2),
+                None,
+            )
+            if _fac_best:
+                fields.append(
+                    _make_field(
+                        "tabla_celdas",
+                        "Tabla detectada",
+                        json.dumps(_fac_best, ensure_ascii=False),
+                        ocr_boxes,
+                        confidence=0.8,
                     )
-                    _existing_tabla = True
-                else:
-                    fields.append(
-                        _make_field(
-                            f"tabla_celdas_{_tabla_idx}",
-                            f"Tabla detectada #{_tabla_idx}",
-                            json.dumps(_tbl, ensure_ascii=False),
-                            ocr_boxes,
-                            confidence=0.75,
-                        )
-                    )
-                    _tabla_idx += 1
+                )
         if payment_detail:
             fields.append(
                 _make_field(
@@ -1690,11 +1982,11 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
         # 4. Extract ALL tables (not just the best one)
         all_tables = _extract_generic_all_tables(base_text_raw, ocr_boxes, pdf_tables)
         if all_tables:
-            # Primary table → tabla_celdas
+            # Ordenar por filas desc y usar solo la tabla más grande
+            all_tables.sort(key=lambda t: t.get("row_count", 0), reverse=True)
             primary = all_tables[0]
             rows = primary.get("rows", [])
             if isinstance(rows, list) and len(rows) >= 2:
-                # Solo agregar si la primera fila es encabezado (todas celdas son str)
                 if all(isinstance(cell, str) for cell in rows[0]):
                     fields.append(
                         _make_field(
@@ -1705,21 +1997,7 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                             confidence=0.8,
                         )
                     )
-            # Additional tables → tabla_celdas_2, tabla_celdas_3, etc.
-            for idx, table in enumerate(all_tables[1:], start=2):
-                rows = table.get("rows", [])
-                if isinstance(rows, list) and len(rows) >= 2:
-                    if all(isinstance(cell, str) for cell in rows[0]):
-                        fields.append(
-                            _make_field(
-                                f"tabla_celdas_{idx}",
-                                f"Tabla detectada #{idx}",
-                                json.dumps(table, ensure_ascii=False),
-                                ocr_boxes,
-                                confidence=0.75,
-                            )
-                        )
-            logger.info("[GENERICO] Tables: %d", len(all_tables))
+            logger.info("[GENERICO] Best table selected from %d candidates", len(all_tables))
 
     # ── Universal tabla_celdas fallback ────────────────────────────────────────
     if (
@@ -1736,37 +2014,24 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
             _uni_tables = _extract_all_table_payloads(base_text_raw, ocr_boxes)
             logger.info("[DIAG-UNI] all_table_payloads=%d", len(_uni_tables))
         if _uni_tables:
-            # Sort by row count descending — primary table is the largest
+            # Solo usar la tabla con más filas
             _uni_sorted = sorted(_uni_tables, key=lambda t: t.get("row_count", 0), reverse=True)
-            _uni_idx = 1
-            for _uni_tbl in _uni_sorted:
-                rows = _uni_tbl.get("rows", [])
-                if isinstance(rows, list) and len(rows) >= 2:
-                    if all(isinstance(cell, str) for cell in rows[0]):
-                        if _uni_idx == 1:
-                            fields.append(
-                                _make_field(
-                                    "tabla_celdas",
-                                    "Tabla detectada",
-                                    json.dumps(_uni_tbl, ensure_ascii=False),
-                                    ocr_boxes,
-                                    confidence=0.8,
-                                )
-                            )
-                        else:
-                            fields.append(
-                                _make_field(
-                                    f"tabla_celdas_{_uni_idx}",
-                                    f"Tabla detectada #{_uni_idx}",
-                                    json.dumps(_uni_tbl, ensure_ascii=False),
-                                    ocr_boxes,
-                                    confidence=0.75,
-                                )
-                            )
-                        _uni_idx += 1
-                        logger.info("[DIAG-UNI] added table #%d rows=%d cols=%d source=%s",
-                                    _uni_idx - 1, _uni_tbl.get("row_count", 0),
-                                    _uni_tbl.get("column_count", 0), _uni_tbl.get("source", "?"))
+            _uni_best = _uni_sorted[0]
+            rows = _uni_best.get("rows", [])
+            if isinstance(rows, list) and len(rows) >= 2:
+                if all(isinstance(cell, str) for cell in rows[0]):
+                    fields.append(
+                        _make_field(
+                            "tabla_celdas",
+                            "Tabla detectada",
+                            json.dumps(_uni_best, ensure_ascii=False),
+                            ocr_boxes,
+                            confidence=0.8,
+                        )
+                    )
+            logger.info("[DIAG-UNI] best table selected from %d, rows=%d cols=%d source=%s",
+                        len(_uni_sorted), _uni_best.get("row_count", 0),
+                        _uni_best.get("column_count", 0), _uni_best.get("source", "?"))
 
     # ── COMPROBANTE_DOMICILIO: tablas estructurales del PDF únicamente ──────────
     # Solo usa pdf_tables (detección visual pdfplumber/img2table).
@@ -1777,23 +2042,20 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
         and not any(str(f.get("key", "")).startswith("tabla_celdas") for f in fields)
     ):
         _cd_tables = _pdf_tables_to_generic_payloads(pdf_tables)
-        _cd_idx = 1
-        for _cd_tbl in sorted(_cd_tables, key=lambda t: t.get("row_count", 0), reverse=True):
-            _cd_rows = _cd_tbl.get("rows", [])
-            if isinstance(_cd_rows, list) and len(_cd_rows) >= 2:
-                _cd_key = "tabla_celdas" if _cd_idx == 1 else f"tabla_celdas_{_cd_idx}"
-                fields.append(
-                    _make_field(
-                        _cd_key,
-                        f"Tabla detectada #{_cd_idx}",
-                        json.dumps(_cd_tbl, ensure_ascii=False),
-                        ocr_boxes,
-                        confidence=0.75,
-                    )
+        _cd_sorted = sorted(_cd_tables, key=lambda t: t.get("row_count", 0), reverse=True)
+        _cd_best = next((t for t in _cd_sorted if t.get("row_count", 0) >= 2), None)
+        if _cd_best:
+            fields.append(
+                _make_field(
+                    "tabla_celdas",
+                    "Tabla detectada",
+                    json.dumps(_cd_best, ensure_ascii=False),
+                    ocr_boxes,
+                    confidence=0.75,
                 )
-                _cd_idx += 1
-                logger.info("[COMPROBANTE] tabla #%d rows=%d cols=%d",
-                            _cd_idx - 1, _cd_tbl.get("row_count", 0), _cd_tbl.get("column_count", 0))
+            )
+            logger.info("[COMPROBANTE] best table selected from %d, rows=%d cols=%d",
+                        len(_cd_sorted), _cd_best.get("row_count", 0), _cd_best.get("column_count", 0))
 
     if base_text_raw:
         # Preserve line breaks for readable display; only collapse intra-line spaces
@@ -1860,7 +2122,7 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
         if bank_header:
             # Forzar en todos los campos tipo tabla_celdas, pago_detalle, mapped_fields, y raíz
             for field in contracted:
-                if field.get("key") in {"tabla_celdas", "tabla_celdas_2", "tabla_celdas_3", "tabla_celdas_4"}:
+                if field.get("key") == "tabla_celdas":
                     try:
                         table = json.loads(field.get("value", ""))
                         if isinstance(table, dict):

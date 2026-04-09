@@ -13,6 +13,7 @@ from app.utils.regex_patterns import (
     CURP_PATTERN,
     RFC_PATTERN,
     RFC_WITH_HOMOCLAVE,
+    RFC_EXCLUIR,
     NSS_PATTERN,
     CLABE_PATTERN,
     ACCOUNT_PATTERN,
@@ -525,6 +526,13 @@ def _is_junk_payment_header(header_cell: str) -> bool:
         "CDMX", "01 800", "01800", "LADA SIN COSTO",
     )
     if any(nf in upper for nf in _NOISE_FRAGMENTS):
+        return True
+
+    # Multi-column merge artifact: a cell containing >=2 known payment column
+    # tokens concatenated (e.g. "PRIMER APELLIDO SEGUNDO APELLIDO ESTATUS")
+    _COL_TOKENS = ("APELLIDO", "ESTATUS", "IMPORTE", "REFERENCIA", "CONCEPTO", "NOMBRE")
+    _col_hits = sum(1 for t in _COL_TOKENS if t in upper)
+    if _col_hits >= 2 and len(upper) > 30:
         return True
 
     return False
@@ -2001,6 +2009,11 @@ def _normalize_field_value_for_contract(document_type: str, key: str, value: str
         while lines and not lines[-1].strip():
             lines.pop()
         return "\n".join(lines).strip()
+    # FACTURA / NOMINA folios can be alphanumeric (e.g. "A-1234"); preserve them
+    # instead of stripping to digits-only like the INE folio normalizer does.
+    if key == "folio" and document_type in {"FACTURA", "NOMINA", "CFDI"}:
+        cleaned = re.sub(r"[^A-Za-z0-9-]", "", raw).strip("-")
+        return cleaned if cleaned else ""
     if key in FIELD_VALUE_NORMALIZERS:
         return _normalize_value_for_key(key, raw)
     if key in {"curp", "rfc", "clave_elector", "id_cif"}:
@@ -2166,8 +2179,8 @@ def _looks_like_person_name(value: str) -> bool:
 def _is_allowed_field_for_type(document_type: str, key: str) -> bool:
     if key == "texto_detectado":
         return True
-    # Always allow additional table fields (tabla_celdas_2, tabla_celdas_3, ...)
-    if key.startswith("tabla_celdas_"):
+    # Always allow the consolidated table field
+    if key == "tabla_celdas":
         return True
     # Always allow name variant fields
     if key in {"nombre_beneficiario", "nombre_asegurado", "nombre_titular"}:
@@ -2184,7 +2197,7 @@ def _is_valid_by_contract(document_type: str, key: str, value: str) -> bool:
         return False
     upper = text.upper()
 
-    if key == "tabla_celdas" or key.startswith("tabla_celdas_"):
+    if key == "tabla_celdas":
         return _is_valid_table_cells_payload(text)
     if key == "pago_detalle":
         return _is_valid_payment_detail_payload(text)
