@@ -140,9 +140,11 @@ _OCR_PATTERNS: dict[str, list[re.Pattern]] = {
     "fecha": [
         re.compile(r"FECHA\s*(?:DE\s*)?EMISI[OÓ]N[:\s]+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", re.IGNORECASE),
         re.compile(r"FECHA[:\s]+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})", re.IGNORECASE),
+        re.compile(r"FECHA[:\s]+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", re.IGNORECASE),
     ],
     "rfc_emisor": [
         re.compile(r"RFC\s*(?:DEL\s*)?EMISOR[:\s]+([A-Z&]{3,4}\d{6}[A-Z0-9]{3,4})\b", re.IGNORECASE),
+        re.compile(r"EMISOR\s*.*?RFC[:\s]+([A-Z&]{3,4}\d{6}[A-Z0-9]{3,4})\b", re.IGNORECASE),
     ],
     "nombre_emisor": [
         re.compile(
@@ -153,6 +155,8 @@ _OCR_PATTERNS: dict[str, list[re.Pattern]] = {
     ],
     "rfc_receptor": [
         re.compile(r"RFC\s*(?:DEL\s*)?RECEPTOR[:\s]+([A-Z&]{3,4}\d{6}[A-Z0-9]{3,4})\b", re.IGNORECASE),
+        re.compile(r"RECEPTOR\s*.*?RFC[:\s]+([A-Z&]{3,4}\d{6}[A-Z0-9]{3,4})\b", re.IGNORECASE),
+        re.compile(r"(?:CLIENTE|A\s+FAVOR\s+DE)\s*.*?RFC[:\s]+([A-Z&]{3,4}\d{6}[A-Z0-9]{3,4})\b", re.IGNORECASE),
     ],
     "nombre_receptor": [
         re.compile(
@@ -160,19 +164,61 @@ _OCR_PATTERNS: dict[str, list[re.Pattern]] = {
             r"(?:\n|\s{2,}|RFC|$)",
             re.IGNORECASE,
         ),
+        re.compile(
+            r"(?:CLIENTE|A\s+FAVOR\s+DE)[:\s]+([A-ZÁÉÍÓÚÜÑ&][A-ZÁÉÍÓÚÜÑ\s,\.&\-]{4,80}?)"
+            r"(?:\n|\s{2,}|RFC|$)",
+            re.IGNORECASE,
+        ),
     ],
     "total": [
-        re.compile(r"TOTAL[:\s\$]+([\d,]+\.?\d{0,2})\b", re.IGNORECASE),
-        re.compile(r"IMPORTE\s*TOTAL[:\s\$]+([\d,]+\.?\d{0,2})\b", re.IGNORECASE),
+        re.compile(r"TOTAL[:\s]*\$?\s*([\d,]+\.?\d{0,2})\b", re.IGNORECASE),
+        re.compile(r"IMPORTE\s*TOTAL[:\s]*\$?\s*([\d,]+\.?\d{0,2})\b", re.IGNORECASE),
+        re.compile(r"TOTAL\s*A\s*PAGAR[:\s]*\$?\s*([\d,]+\.?\d{0,2})\b", re.IGNORECASE),
+        re.compile(r"MONTO\s*TOTAL[:\s]*\$?\s*([\d,]+\.?\d{0,2})\b", re.IGNORECASE),
     ],
     "subtotal": [
-        re.compile(r"SUBTOTAL[:\s\$]+([\d,]+\.?\d{0,2})\b", re.IGNORECASE),
+        re.compile(r"SUBTOTAL[:\s]*\$?\s*([\d,]+\.?\d{0,2})\b", re.IGNORECASE),
+        re.compile(r"SUB\s*TOTAL[:\s]*\$?\s*([\d,]+\.?\d{0,2})\b", re.IGNORECASE),
+    ],
+    "descuento": [
+        re.compile(r"DESCUENTO[:\s]*\$?\s*([\d,]+\.?\d{0,2})\b", re.IGNORECASE),
+    ],
+    "moneda": [
+        re.compile(r"MONEDA[:\s]+([A-Z]{3})\b", re.IGNORECASE),
+    ],
+    "forma_pago": [
+        re.compile(r"FORMA\s*(?:DE\s*)?PAGO[:\s]+(.{2,40}?)(?:\n|\s{2,}|M[EÉ]TODO|$)", re.IGNORECASE),
+    ],
+    "metodo_pago": [
+        re.compile(r"M[EÉ]TODO\s*(?:DE\s*)?PAGO[:\s]+(.{2,30}?)(?:\n|\s{2,}|FORMA|$)", re.IGNORECASE),
+    ],
+    "uso_cfdi": [
+        re.compile(r"USO\s*(?:DE\s*)?CFDI[:\s]+(.{2,40}?)(?:\n|\s{2,}|$)", re.IGNORECASE),
+    ],
+    "total_iva": [
+        re.compile(r"(?:IVA|IMPUESTO.*TRASLAD)[:\s]*\$?\s*([\d,]+\.?\d{0,2})\b", re.IGNORECASE),
+    ],
+    "total_retenciones": [
+        re.compile(r"(?:RETENCI[OÓ]N|RETENCION)(?:ES)?[:\s]*\$?\s*([\d,]+\.?\d{0,2})\b", re.IGNORECASE),
     ],
     "fecha_timbrado": [
         re.compile(r"FECHA\s*(?:DE\s*)?TIMBRADO[:\s]+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})", re.IGNORECASE),
     ],
     "no_certificado": [
         re.compile(r"(?:N[ÚU]M(?:ERO)?\.?\s*DE?\s*)?CERTIFICADO[:\s]+(\d{20})\b", re.IGNORECASE),
+    ],
+    "lugar_expedicion": [
+        re.compile(r"LUGAR\s*(?:DE\s*)?EXPEDICI[OÓ]N[:\s]+(\d{5})\b", re.IGNORECASE),
+    ],
+    "clave_rastreo": [
+        re.compile(r"CLAVE\s*(?:DE\s*)?RASTREO[:\s]+([A-Z0-9]{10,30})\b", re.IGNORECASE),
+    ],
+    "beneficiario": [
+        re.compile(
+            r"(?:BENEFICIARIO|DATOS\s+DEL\s+BENEFICIARIO)[:\s]+([A-ZÁÉÍÓÚÜÑ&][A-ZÁÉÍÓÚÜÑ\s,\.&\-]{4,80}?)"
+            r"(?:\n|\s{2,}|RFC|CUENTA|CLABE|$)",
+            re.IGNORECASE,
+        ),
     ],
 }
 
@@ -545,18 +591,28 @@ def _extract_from_ocr(text: str, ocr_boxes: list[dict[str, Any]]) -> list[dict[s
     existing_keys: set[str] = set()
 
     _LABEL_MAP = {
-        "uuid":           "UUID (Folio Fiscal)",
-        "folio":          "Folio",
-        "serie":          "Serie",
-        "fecha":          "Fecha emisión",
-        "rfc_emisor":     "RFC emisor",
-        "nombre_emisor":  "Nombre emisor",
-        "rfc_receptor":   "RFC receptor",
-        "nombre_receptor":"Nombre receptor",
-        "total":          "Total",
-        "subtotal":       "Subtotal",
-        "fecha_timbrado": "Fecha timbrado",
-        "no_certificado": "No. certificado",
+        "uuid":              "UUID (Folio Fiscal)",
+        "folio":             "Folio",
+        "serie":             "Serie",
+        "fecha":             "Fecha emisión",
+        "rfc_emisor":        "RFC emisor",
+        "nombre_emisor":     "Nombre emisor",
+        "rfc_receptor":      "RFC receptor",
+        "nombre_receptor":   "Nombre receptor",
+        "total":             "Total",
+        "subtotal":          "Subtotal",
+        "descuento":         "Descuento",
+        "moneda":            "Moneda",
+        "forma_pago":        "Forma de pago",
+        "metodo_pago":       "Método de pago",
+        "uso_cfdi":          "Uso CFDI",
+        "total_iva":         "Total IVA traslados",
+        "total_retenciones": "Total retenciones",
+        "fecha_timbrado":    "Fecha timbrado",
+        "no_certificado":    "No. certificado",
+        "lugar_expedicion":  "Lugar de expedición",
+        "clave_rastreo":     "Clave de rastreo",
+        "beneficiario":      "Beneficiario",
     }
 
     for key, patterns in _OCR_PATTERNS.items():

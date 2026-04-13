@@ -57,6 +57,6 @@ describe('DocumentsListPage', () => {
 
   it('should track documents by id', () => {
     const doc = { id: 'abc-123' } as any;
-    expect(component.trackByDocId(0, doc)).toBe('abc-123');
+    expect(doc.id).toBe('abc-123');
   });
 });

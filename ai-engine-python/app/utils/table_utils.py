@@ -834,16 +834,16 @@ def table_quality_score(
 
 # Etiquetas de visualización para cada columna canónica
 _PAYMENT_DISPLAY_LABELS: dict[str, str] = {
-    "clave_beneficiario":  "CLAVE DEL BENEFICIARIO",
-    "nombre_beneficiario": "NOMBRE DEL BENEFICIARIO",
-    "importe":             "IMPORTE",
-    "fecha_aplicacion":    "FECHA DE APLICACION",
-    "referencia":          "REFERENCIA",
-    "cuenta_beneficiario": "NO. CUENTA BENEFICIARIO",
-    "banco_receptor":      "NO. BANCO RECEPTOR",
-    "dias_vigencia":       "DIAS DE VIGENCIA",
-    "concepto_pago":       "CONCEPTO PAGO",
-    "estatus":             "ESTATUS",
+    "clave_beneficiario":  "Clave",
+    "nombre_beneficiario": "Nombre",
+    "importe":             "Importe",
+    "fecha_aplicacion":    "Fecha",
+    "referencia":          "Referencia",
+    "cuenta_beneficiario": "Cuenta",
+    "banco_receptor":      "Banco",
+    "dias_vigencia":       "Dias",
+    "concepto_pago":       "Concepto",
+    "estatus":             "Estatus",
 }
 
 # Esquema de 9 columnas completo (Scotiabank y fallback universal)

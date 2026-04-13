@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Application.DTOs;
 using Application.Interfaces;
+using Domain.Enums;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Shared.Json;
@@ -222,11 +223,13 @@ public class PythonAiClient : IPythonAiClient
         response.EnsureSuccessStatusCode();
 
         var raw = await response.Content.ReadAsStringAsync(cancellationToken);
-        var result = JsonSerializer.Deserialize<DocumentProcessResponse>(raw, _jsonOptions);
-        if (result is null)
+        var pyRaw = JsonSerializer.Deserialize<PythonRawResponse>(raw, _jsonOptions);
+        if (pyRaw is null)
         {
             throw new InvalidOperationException("La respuesta del motor IA es invalida.");
         }
+
+        var result = MapPythonResponse(documentId, pyRaw);
 
         string? ocrText = null;
         using var json = JsonDocument.Parse(raw);
@@ -281,6 +284,207 @@ public class PythonAiClient : IPythonAiClient
     }
 
     private sealed record PythonProcessPayload(DocumentProcessResponse Response, string? OcrText);
+
+    // ── Python → C# mapping ─────────────────────────────────────────────────
+
+    private static readonly Dictionary<string, DocumentType> DocTypeMap = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["INE"] = DocumentType.Ine,
+        ["CURP"] = DocumentType.Curp,
+        ["ACTA_NACIMIENTO"] = DocumentType.ActaNacimiento,
+        ["COMPROBANTE_DOMICILIO"] = DocumentType.ComprobanteDomicilio,
+        ["NSS"] = DocumentType.Nss,
+        ["DATOS_BANCARIOS"] = DocumentType.DatosBancarios,
+        ["CONSTANCIA_SITUACION_FISCAL"] = DocumentType.ConstanciaSituacionFiscal,
+        ["FACTURA"] = DocumentType.Factura,
+        ["NOMINA"] = DocumentType.Factura,           // Nómina se trata como Factura
+        ["GENERICO"] = DocumentType.Generico,
+        ["UNKNOWN"] = DocumentType.Unknown,
+    };
+
+    private static DocumentProcessResponse MapPythonResponse(Guid documentId, PythonRawResponse py)
+    {
+        var docType = DocTypeMap.GetValueOrDefault(py.TipoDocumento ?? "", DocumentType.Unknown);
+
+        var requiresReview = py.ValidationSummary?.RequiresReview ?? false;
+        var status = py.Success == true && !requiresReview
+            ? DocumentStatus.Ready
+            : DocumentStatus.NeedsReview;
+
+        var fields = (py.Campos ?? []).Select(c => new DocumentFieldResultDto(
+            c.Key ?? "",
+            c.Label ?? "",
+            c.Value is { } v ? (v.ValueKind == JsonValueKind.String ? v.GetString() : v.ToString()) : null,
+            (decimal)(c.Confidence ?? 0),
+            c.IsValid ?? true,
+            Array.Empty<string>(),
+            null
+        )).ToArray();
+
+        var tables = (py.Tablas ?? []).Select(t =>
+        {
+            var canonicalRows = t.CanonicalRows ?? [];
+            var allKeys = canonicalRows
+                .SelectMany(r => r.Keys)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var columns = allKeys.Length > 0 ? allKeys : (t.HeadersDetected ?? []).ToArray();
+            var rows = canonicalRows.Select(r =>
+                (IReadOnlyDictionary<string, string?>)columns.ToDictionary(
+                    col => col,
+                    col => r.TryGetValue(col, out var val) ? val.ToString() : null,
+                    StringComparer.OrdinalIgnoreCase)
+            ).ToArray();
+            return new ExtractedTableDto(
+                columns,
+                rows,
+                (float)(py.ValidationSummary?.TableQualityScore ?? 0),
+                rows.Length,
+                null);
+        }).ToArray();
+
+        var meta = new DocumentProcessMeta(
+            py.Metadata?.Pages ?? 0,
+            py.Metadata?.OcrEngine ?? "none",
+            py.Metadata?.PipelineVersion ?? "",
+            py.Metadata?.ModelVersion ?? "",
+            py.Metadata?.ProcessingTimeMs ?? 0
+        );
+
+        return new DocumentProcessResponse(
+            documentId,
+            status,
+            docType,
+            (decimal)(py.ConfidenceGlobal ?? 0),
+            fields,
+            tables,
+            (py.Warnings ?? []).ToArray(),
+            (py.Errors ?? []).ToArray(),
+            meta
+        );
+    }
+
+    // ── Raw Python JSON DTOs (snake_case match) ─────────────────────────────
+
+    private sealed record PythonRawResponse
+    {
+        [JsonPropertyName("document_id")]
+        public string? DocumentId { get; init; }
+
+        [JsonPropertyName("tipo_documento")]
+        public string? TipoDocumento { get; init; }
+
+        [JsonPropertyName("success")]
+        public bool? Success { get; init; }
+
+        [JsonPropertyName("message")]
+        public string? Message { get; init; }
+
+        [JsonPropertyName("confidence_global")]
+        public double? ConfidenceGlobal { get; init; }
+
+        [JsonPropertyName("campos")]
+        public List<PythonCampo>? Campos { get; init; }
+
+        [JsonPropertyName("tablas")]
+        public List<PythonTabla>? Tablas { get; init; }
+
+        [JsonPropertyName("metadata")]
+        public PythonMetadata? Metadata { get; init; }
+
+        [JsonPropertyName("validation_summary")]
+        public PythonValidationSummary? ValidationSummary { get; init; }
+
+        [JsonPropertyName("warnings")]
+        public List<string>? Warnings { get; init; }
+
+        [JsonPropertyName("errors")]
+        public List<string>? Errors { get; init; }
+
+        [JsonPropertyName("error_code")]
+        public string? ErrorCode { get; init; }
+
+        [JsonPropertyName("stage")]
+        public string? Stage { get; init; }
+    }
+
+    private sealed record PythonCampo
+    {
+        [JsonPropertyName("key")]
+        public string? Key { get; init; }
+
+        [JsonPropertyName("label")]
+        public string? Label { get; init; }
+
+        [JsonPropertyName("value")]
+        public JsonElement? Value { get; init; }
+
+        [JsonPropertyName("confidence")]
+        public double? Confidence { get; init; }
+
+        [JsonPropertyName("is_critical")]
+        public bool? IsCritical { get; init; }
+
+        [JsonPropertyName("is_valid")]
+        public bool? IsValid { get; init; }
+    }
+
+    private sealed record PythonTabla
+    {
+        [JsonPropertyName("name")]
+        public string? Name { get; init; }
+
+        [JsonPropertyName("headers_detected")]
+        public List<string>? HeadersDetected { get; init; }
+
+        [JsonPropertyName("rows")]
+        public List<List<string>>? Rows { get; init; }
+
+        [JsonPropertyName("canonical_rows")]
+        public List<Dictionary<string, JsonElement>>? CanonicalRows { get; init; }
+    }
+
+    private sealed record PythonMetadata
+    {
+        [JsonPropertyName("filename")]
+        public string? Filename { get; init; }
+
+        [JsonPropertyName("pages")]
+        public int? Pages { get; init; }
+
+        [JsonPropertyName("source")]
+        public string? Source { get; init; }
+
+        [JsonPropertyName("processing_time_ms")]
+        public long? ProcessingTimeMs { get; init; }
+
+        [JsonPropertyName("ocr_engine")]
+        public string? OcrEngine { get; init; }
+
+        [JsonPropertyName("pipeline_version")]
+        public string? PipelineVersion { get; init; }
+
+        [JsonPropertyName("model_version")]
+        public string? ModelVersion { get; init; }
+    }
+
+    private sealed record PythonValidationSummary
+    {
+        [JsonPropertyName("coverage")]
+        public double? Coverage { get; init; }
+
+        [JsonPropertyName("critical_coverage")]
+        public double? CriticalCoverage { get; init; }
+
+        [JsonPropertyName("requires_review")]
+        public bool? RequiresReview { get; init; }
+
+        [JsonPropertyName("score_decision")]
+        public string? ScoreDecision { get; init; }
+
+        [JsonPropertyName("table_quality_score")]
+        public double? TableQualityScore { get; init; }
+    }
 }
 
 public sealed record PythonOcrResult(

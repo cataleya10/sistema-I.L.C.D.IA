@@ -55,19 +55,19 @@ export class ResultadoExtraccionComponent {
     if (!beneficiarios?.length) return;
 
     const encabezados = [
-      'Nombre', 'Cuenta', 'Importe', 'Referencia',
-      'Fecha aplicación', 'Banco receptor',
-      'Clave beneficiario', 'Días vigencia', 'Concepto',
+      'Clave', 'Nombre', 'Importe', 'Fecha',
+      'Referencia', 'Cuenta', 'Banco',
+      'Dias', 'Concepto',
     ];
 
     const filas = beneficiarios.map(b => [
-      b.nombre              || '—',
-      b.cuentaBeneficiario  || '—',
-      b.importe             || '—',
-      b.referencia          || '—',
-      b.fechaAplicacion     || '—',
-      b.bancoReceptor       || '—',
       b.claveBeneficiario   || '—',
+      b.nombre              || '—',
+      b.importe             || '—',
+      b.fechaAplicacion     || '—',
+      b.referencia          || '—',
+      b.cuentaBeneficiario  || '—',
+      b.bancoReceptor       || '—',
       b.diasVigencia        || '—',
       b.conceptoPago        || '—',
     ]);

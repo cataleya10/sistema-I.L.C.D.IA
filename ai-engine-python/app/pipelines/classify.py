@@ -393,6 +393,33 @@ def _is_payment_name_combo(text: str, compact: str, name: str) -> bool:
     )
 
 
+def _is_single_spei_receipt(text: str, compact: str, name: str) -> bool:
+    """Comprobante individual de transferencia SPEI (no dispersión masiva).
+
+    Detecta recibos SPEI de Banorte, BBVA, etc. que contienen campos
+    de una sola transferencia (nombre del beneficiario, CLABE, importe)
+    en vez de tablas de dispersión masiva.
+    """
+    spei_markers = (
+        "TRANSFERENCIA SPEI", "TRANSFERENCIAS SPEI",
+        "SPEI ENVIADO", "SPEI MISMO DIA",
+        "COMPROBANTE DE TRANSFERENCIA", "COMPROBANTE DE LA OPERACION",
+        "ENVIO DE DINERO INTERBANCARIO",
+        "BANCOS NACIONAL SPEI", "OTROS BANCOS NACIONAL",
+    )
+    individual_markers = (
+        "NOMBRE DEL BENEFICIARIO", "CLABE BENEFICIARIO",
+        "IMPORTE A TRANSFERIR", "CLAVE DE RASTREO",
+        "BANCO DESTINO", "CUENTA BENEFICIARIO",
+    )
+    has_spei = any(m in text for m in spei_markers)
+    # Fallback: "SPEI" as standalone word anywhere in text
+    if not has_spei:
+        has_spei = bool(re.search(r"\bSPEI\b", text))
+    has_individual = sum(1 for m in individual_markers if m in text) >= 2
+    return has_spei and has_individual
+
+
 # ── Tabla de reglas ordenadas por prioridad ───────────────────────────────────
 #
 # IMPORTANTE: el orden importa. La primera regla que hace match gana.
@@ -465,6 +492,7 @@ _RULES: list[_Rule] = [
 
     # ── Contenido: documentos bancarios y fiscales ────────────────────────────
     _Rule("DATOS_BANCARIOS", 0.92, text_any=_DISPERSION_TEXT, compact_any=_DISPERSION_COMPACT),
+    _Rule("DATOS_BANCARIOS", 0.92, custom=_is_single_spei_receipt),
     _Rule("FACTURA",         0.90, text_any=_PAYMENT_TEXT,    compact_any=_PAYMENT_COMPACT),
     _Rule("COMPROBANTE_DOMICILIO", 0.86, text_any=_SERVICE_TEXT, compact_any=_SERVICE_COMPACT),
 
@@ -523,6 +551,11 @@ _HARD_MARKERS: dict[str, list[str]] = {
         # Scotiabank
         "TRANSFERENCIA DE ARCHIVOS", "TRANSFERENCIADEARCHIVOS",
         "TRANSFERENCIA DE ARCHIVO DE PAGOS",
+        # Comprobantes individuales SPEI
+        "TRANSFERENCIA SPEI", "TRANSFERENCIASPEI",
+        "COMPROBANTE DE TRANSFERENCIA", "COMPROBANTEDETRANSFERENCIA",
+        "COMPROBANTE DE LA OPERACION", "COMPROBANTEDELAOPERACION",
+        "NOMBRE DEL BENEFICIARIO", "CLAVE DE RASTREO",
     ],
     "NOMINA": [
         "RECIBO DE NOMINA", "COMPROBANTE DE NOMINA", "TOTAL PERCEPCIONES",

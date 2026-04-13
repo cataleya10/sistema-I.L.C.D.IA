@@ -730,6 +730,7 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
             return _dedupe_fields(contracted)
 
     if document_type == "DATOS_BANCARIOS":
+        fin_box_values = {}
         if ocr_boxes:
             fin_box_values = _extract_financial_from_boxes(ocr_boxes)
             if "clabe" in fin_box_values:
@@ -741,13 +742,41 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
             if "banco" in fin_box_values:
                 fields.append(_make_field("banco", "Banco", _normalize_address(fin_box_values["banco"]["value"]), ocr_boxes, confidence=0.7))
             if "titular" in fin_box_values:
-                fields.append(_make_field("titular", "Titular", _normalize_name(fin_box_values["titular"]["value"]), ocr_boxes, confidence=0.7))
+                _tit_val = _normalize_name(fin_box_values["titular"]["value"])
+                _tit_val = re.sub(r'^(?:NOMBRE\s*(?:DEL?\s*)?(?:BENEFICIARIO)?)[:\s]+', '', _tit_val, flags=re.IGNORECASE).strip()
+                fields.append(_make_field("titular", "Titular", _tit_val, ocr_boxes, confidence=0.7))
             if "rfc" in fin_box_values:
                 fields.append(_make_field("rfc", "RFC", _normalize_alnum(fin_box_values["rfc"]["value"]), ocr_boxes, confidence=0.7))
             if "fecha_corte" in fin_box_values:
                 fields.append(_make_field("fecha_corte", "Fecha de corte", _normalize_date_value(fin_box_values["fecha_corte"]["value"]), ocr_boxes, confidence=0.75))
             if "periodo" in fin_box_values:
                 fields.append(_make_field("periodo", "Periodo", _normalize_text(fin_box_values["periodo"]["value"]), ocr_boxes, confidence=0.75))
+            # SPEI single-transaction fields
+            if "nombre_beneficiario" in fin_box_values:
+                _nb_val = _normalize_name(fin_box_values["nombre_beneficiario"]["value"])
+                _nb_val = re.sub(r'^(?:NOMBRE\s*(?:DEL?\s*)?(?:BENEFICIARIO)?)[:\s]+', '', _nb_val, flags=re.IGNORECASE).strip()
+                fields.append(_make_field("nombre_beneficiario", "Nombre Beneficiario", _nb_val, ocr_boxes, confidence=0.8))
+            if "importe" in fin_box_values:
+                _imp_raw = _normalize_text(fin_box_values["importe"]["value"])
+                # Only use OCR importe if it contains actual digits
+                if re.search(r'\d', _imp_raw):
+                    fields.append(_make_field("importe", "Importe", _imp_raw, ocr_boxes, confidence=0.8))
+            # Fallback: extract importe from filename (e.g. "PAGO ... $ 811.00.pdf")
+            if not any(f.get("key") == "importe" and re.search(r'\d', f.get("value", "")) for f in fields):
+                if filename:
+                    _fn_imp = re.search(r'\$\s*([\d,]+\.\d{1,2})', filename)
+                    if _fn_imp:
+                        fields.append(_make_field("importe", "Importe", "$" + _fn_imp.group(1).replace(",", ""), ocr_boxes, confidence=0.6))
+            if "clave_rastreo" in fin_box_values:
+                fields.append(_make_field("clave_rastreo", "Clave de Rastreo", _normalize_text(fin_box_values["clave_rastreo"]["value"]), ocr_boxes, confidence=0.8))
+            if "referencia" in fin_box_values:
+                fields.append(_make_field("referencia", "Referencia", _normalize_text(fin_box_values["referencia"]["value"]), ocr_boxes, confidence=0.7))
+            if "concepto" in fin_box_values:
+                fields.append(_make_field("concepto", "Concepto", _normalize_text(fin_box_values["concepto"]["value"]), ocr_boxes, confidence=0.7))
+            if "fecha_aplicacion" in fin_box_values:
+                fields.append(_make_field("fecha_aplicacion", "Fecha Aplicación", _normalize_text(fin_box_values["fecha_aplicacion"]["value"]), ocr_boxes, confidence=0.75))
+            if "banco_receptor" in fin_box_values:
+                fields.append(_make_field("banco_receptor", "Banco Receptor", _normalize_text(fin_box_values["banco_receptor"]["value"]), ocr_boxes, confidence=0.7))
         # Refuerzo: buscar CLABE explícitamente en líneas con la palabra 'CLABE'
         found_clabe = False
         # Priority 1: search for labeled CLABE (e.g., "CUENTA CLABE: 014...")
@@ -959,48 +988,338 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                 if _dm:
                     fields.append(_make_field("fecha_corte", "Fecha de corte", _normalize_date_value(_dm.group(1)), ocr_boxes, confidence=0.7))
 
-        # FIX: extraer tabla de pagos para reportes de dispersion bancaria
-        payment_table = _extract_payment_table_payload(base_text_raw, ocr_boxes, pdf_tables)
-        payment_detail = _extract_payment_detail_payload(base_text_raw, payment_table)
-        payment_table = _enrich_payment_table_payload(payment_table, payment_detail)
-        if payment_table and payment_table.get("rows"):
-            fields.append(
-                _make_field(
-                    "tabla_celdas",
-                    "Tabla de beneficiarios",
-                    json.dumps(payment_table, ensure_ascii=False),
-                    ocr_boxes,
-                    confidence=0.92,
-                )
-            )
-        if payment_detail:
-            fields.append(
-                _make_field(
-                    "pago_detalle",
-                    "Pago detalle",
-                    json.dumps(payment_detail, ensure_ascii=False),
-                    ocr_boxes,
-                    confidence=0.9,
-                )
-            )
-        # Fallback: si _extract_payment_table_payload no encontró tabla (p.ej.
-        # estados de cuenta Santander con columnas FECHA/CARGO/ABONO/SALDO que
-        # no coinciden con el esquema de dispersión nómina), usar pdf_tables
-        # directamente — igual que hace la ruta FACTURA.
-        if not any(f.get("key") == "tabla_celdas" for f in fields) and pdf_tables:
-            _generic = _pdf_tables_to_generic_payloads(pdf_tables)
-            _ec_sorted = sorted(_generic, key=lambda t: t.get("row_count", 0), reverse=True)
-            _ec_best = next((t for t in _ec_sorted if t.get("row_count", 0) >= 2), None)
-            if _ec_best:
+        # ── Text-based SPEI single-transaction fields ────────────────────────
+        # These capture importe, clave_rastreo, referencia, concepto from
+        # text-only bank receipts (Banorte SPEI, BBVA transfers, etc.)
+        if "importe" not in _existing_keys:
+            _imp_patterns = [
+                r'IMPORTE\s*A\s*TRANSFERIR[:\s]+\$?([\d,]+\.?\d*)',
+                r'IMPORTE[:\s]+\$?([\d,]+\.?\d*)',
+                r'MONTO[:\s]+\$?([\d,]+\.?\d*)',
+            ]
+            for _pat in _imp_patterns:
+                _im = re.search(_pat, _text_up)
+                if _im:
+                    fields.append(_make_field("importe", "Importe", _im.group(1).replace(",", ""), ocr_boxes, confidence=0.8))
+                    break
+
+        if "clave_rastreo" not in _existing_keys:
+            _cr_patterns = [
+                r'CLAVE\s*DE\s*RASTREO[:\s]+([A-Z0-9]{15,40})',
+                r'CLAVE\s*RASTREO[:\s]+([A-Z0-9]{15,40})',
+            ]
+            for _pat in _cr_patterns:
+                _cm = re.search(_pat, _text_up)
+                if _cm:
+                    fields.append(_make_field("clave_rastreo", "Clave de Rastreo", _cm.group(1), ocr_boxes, confidence=0.85))
+                    break
+
+        if "referencia" not in _existing_keys:
+            _ref_patterns = [
+                r'REFERENCIA\s*NUM[EÉ]RICA[:\s]+(\d{1,10})',
+                r'REFERENCIA[:\s]+(\d{1,10})',
+            ]
+            for _pat in _ref_patterns:
+                _rm = re.search(_pat, _text_up)
+                if _rm:
+                    fields.append(_make_field("referencia", "Referencia", _rm.group(1), ocr_boxes, confidence=0.75))
+                    break
+
+        if "concepto" not in _existing_keys:
+            _con_patterns = [
+                r'PROP[OÓ]SITO\s*DE\s*LA\s*TRANSFERENCIA[:\s]+(.{3,80}?)(?:\n|CLAVE|RFC|$)',
+                r'CONCEPTO\s*DE\s*PAGO[:\s]+(.{3,80}?)(?:\n|CLAVE|RFC|$)',
+                r'CONCEPTO[:\s]+(.{3,80}?)(?:\n|CLAVE|RFC|REFERENCIA|$)',
+            ]
+            for _pat in _con_patterns:
+                _cm = re.search(_pat, _text_up)
+                if _cm:
+                    fields.append(_make_field("concepto", "Concepto", _cm.group(1).strip(), ocr_boxes, confidence=0.7))
+                    break
+
+        if "fecha_aplicacion" not in _existing_keys:
+            _fa_patterns = [
+                r'FECHA\s*(?:DE\s*)?APLICACI[OÓ]N[:\s]+(\d{2}[/\-][A-Z0-9.]{2,5}[/\-]\d{2,4})',
+                r'FECHA\s*(?:DE\s*)?OPERACI[OÓ]N[:\s]+(\d{2}[/\-]\d{2}[/\-]\d{2,4})',
+            ]
+            for _pat in _fa_patterns:
+                _fm = re.search(_pat, _text_up)
+                if _fm:
+                    fields.append(_make_field("fecha_aplicacion", "Fecha Aplicación", _fm.group(1).strip(), ocr_boxes, confidence=0.75))
+                    break
+
+        if "nombre_beneficiario" not in _existing_keys:
+            _nb_patterns = [
+                r'NOMBRE\s*DEL\s*BENEFICIARIO[:\s]+([A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ\s]{4,70}?)(?:\n|CLABE|CUENTA|RFC|$)',
+                r'NOMBRE\s*BENEFICIARIO[:\s]+([A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ\s]{4,70}?)(?:\n|CLABE|CUENTA|RFC|$)',
+            ]
+            for _pat in _nb_patterns:
+                _nm = re.search(_pat, _text_up)
+                if _nm:
+                    fields.append(_make_field("nombre_beneficiario", "Nombre Beneficiario", _normalize_name(_nm.group(1).strip()), ocr_boxes, confidence=0.8))
+                    break
+
+        if "banco_receptor" not in _existing_keys:
+            _br_patterns = [
+                r'BANCO\s*RECEPTOR[:\s]+([A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ\s]{2,40}?)(?:\n|CUENTA|CLABE|$)',
+                r'BANCO\s*DESTINO[:\s]+([A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ\s]{2,40}?)(?:\n|CUENTA|CLABE|$)',
+                r'INSTITUCI[OÓ]N\s*RECEPTORA[:\s]+([A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ\s]{2,40}?)(?:\n|CUENTA|CLABE|$)',
+            ]
+            for _pat in _br_patterns:
+                _bm = re.search(_pat, _text_up)
+                if _bm:
+                    fields.append(_make_field("banco_receptor", "Banco Receptor", _bm.group(1).strip(), ocr_boxes, confidence=0.7))
+                    break
+
+        # Detect single SPEI receipt: must have a clave_rastreo (tracking key)
+        # from OCR box extraction. This field only appears in individual transfer
+        # receipts as a top-level extracted field. Multi-row dispersions have
+        # clave_rastreo per-row inside the table, not as a standalone extracted field.
+        _fmap_pre = {f.get("key"): f.get("value", "") for f in fields}
+        _is_single_spei = bool(_fmap_pre.get("clave_rastreo"))
+
+        if not _is_single_spei:
+            # FIX: extraer tabla de pagos para reportes de dispersion bancaria
+            payment_table = _extract_payment_table_payload(base_text_raw, ocr_boxes, pdf_tables)
+            payment_detail = _extract_payment_detail_payload(base_text_raw, payment_table)
+            payment_table = _enrich_payment_table_payload(payment_table, payment_detail)
+            if payment_table and payment_table.get("rows"):
                 fields.append(
                     _make_field(
                         "tabla_celdas",
-                        "Tabla estado de cuenta",
-                        json.dumps(_ec_best, ensure_ascii=False),
+                        "Tabla de beneficiarios",
+                        json.dumps(payment_table, ensure_ascii=False),
                         ocr_boxes,
-                        confidence=0.82,
+                        confidence=0.92,
                     )
                 )
+            if payment_detail:
+                fields.append(
+                    _make_field(
+                        "pago_detalle",
+                        "Pago detalle",
+                        json.dumps(payment_detail, ensure_ascii=False),
+                        ocr_boxes,
+                        confidence=0.9,
+                    )
+                )
+            # Fallback: si _extract_payment_table_payload no encontró tabla (p.ej.
+            # estados de cuenta Santander con columnas FECHA/CARGO/ABONO/SALDO que
+            # no coinciden con el esquema de dispersión nómina), usar pdf_tables
+            # directamente — igual que hace la ruta FACTURA.
+            if not any(f.get("key") == "tabla_celdas" for f in fields) and pdf_tables:
+                _generic = _pdf_tables_to_generic_payloads(pdf_tables)
+                _ec_sorted = sorted(_generic, key=lambda t: t.get("row_count", 0), reverse=True)
+                _ec_best = next((t for t in _ec_sorted if t.get("row_count", 0) >= 2), None)
+                if _ec_best:
+                    fields.append(
+                        _make_field(
+                            "tabla_celdas",
+                            "Tabla estado de cuenta",
+                            json.dumps(_ec_best, ensure_ascii=False),
+                            ocr_boxes,
+                            confidence=0.82,
+                        )
+                    )
+
+        # ── Synthetic single-row tabla_celdas for text-only bank receipts ────
+        # When no table was found (single SPEI transfer, individual payment
+        # receipt with only key-value pairs), synthesize a 1-row Beneficiarios
+        # table from the extracted fields so the frontend renders it identically
+        # to multi-row payment dispersions.
+        # Uses direct regex on raw text (more reliable than _fmap which may
+        # contain messy values from accent-sensitive label matching).
+        if not any(f.get("key") == "tabla_celdas" for f in fields):
+            _fmap = {f.get("key"): f.get("value", "") for f in fields}
+            # Need at least a beneficiary name or CLABE to make a useful row
+            _has_beneficiary = bool(
+                _fmap.get("titular")
+                or _fmap.get("nombre_beneficiario")
+                or _fmap.get("clabe")
+            )
+            if _has_beneficiary:
+                # ── Direct regex extraction from raw text (accent-safe) ──
+                _raw = base_text_raw or ""
+                _raw_up = _raw.upper()
+
+                # Nombre Beneficiario
+                _m = re.search(r'NOMBRE\s*(?:DEL?\s*)?BENEFICIARIO[:\s]+([A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ\s]{3,70}?)(?:\n|CLABE|CUENTA|RFC|BANCO|$)', _raw_up)
+                _syn_nombre = _m.group(1).strip() if _m else (_fmap.get("nombre_beneficiario") or _fmap.get("titular", ""))
+                # Strip "NOMBRE:" / "NOMBRE " prefix leaked from OCR label
+                _syn_nombre = re.sub(r'^(?:NOMBRE\s*(?:DEL?\s*)?(?:BENEFICIARIO)?)[:\s]+', '', _syn_nombre, flags=re.IGNORECASE).strip()
+
+                # CLABE (18 digits)
+                _m = re.search(r'CLABE\s*(?:BENEFICIARIO)?[:\s]+(\d{18})', _raw_up)
+                _syn_clabe = _m.group(1) if _m else _fmap.get("clabe", "")
+
+                # Importe
+                _m = re.search(r'IMPORTE\s*(?:A\s*TRANSFERIR)?[:\s]+\$?([\d,]+\.?\d*)', _raw_up)
+                _syn_importe = _m.group(1).replace(",", "") if _m else (_fmap.get("importe") or "")
+                # Validate: must contain actual digits, not just "$" signs
+                if _syn_importe and not re.search(r'\d', _syn_importe):
+                    _syn_importe = ""
+                # Strip any leading '$' so we don't double-prefix
+                _syn_importe = re.sub(r'^\$+\s*', '', _syn_importe)
+                # Fallback: extract amount from filename (e.g. "PAGO ... $ 811.00.pdf")
+                if not _syn_importe and filename:
+                    _fn_m = re.search(r'\$\s*([\d,]+\.\d{1,2})', filename)
+                    if _fn_m:
+                        _syn_importe = _fn_m.group(1).replace(",", "")
+                if _syn_importe:
+                    _syn_importe = "$" + _syn_importe
+
+                # Fecha Aplicación (capture only the date, no newline bleed)
+                _m = re.search(r'FECHA\s*(?:DE\s*)?APLICACI[OÓ]N[:\s]+(\d{2}[/\-][A-Z0-9.]{2,5}[/\-]\d{2,4})', _raw_up)
+                if not _m:
+                    _m = re.search(r'FECHA\s*(?:DE\s*)?OPERACI[OÓ]N[:\s]+(\d{2}[/\-]\d{2}[/\-]\d{2,4})', _raw_up)
+                _syn_fecha = _m.group(1).strip() if _m else (_fmap.get("fecha_aplicacion") or _fmap.get("fecha_corte", ""))
+
+                # Referencia numérica
+                _m = re.search(r'REFERENCIA\s*NUM[EÉ]RICA[:\s]+(\d{1,10})', _raw_up)
+                if not _m:
+                    _m = re.search(r'REFERENCIA[:\s]+(\d{1,10})(?:\s|$)', _raw_up)
+                _syn_referencia = _m.group(1) if _m else (_fmap.get("referencia") or "")
+
+                # Clave de Rastreo
+                _m = re.search(r'CLAVE\s*(?:DE\s*)?RASTREO[:\s]+([A-Z0-9]{15,40})', _raw_up)
+                _syn_clave = _m.group(1) if _m else (_fmap.get("clave_rastreo") or "")
+
+                # Banco Receptor
+                _m = re.search(r'BANCO\s*(?:RECEPTOR|DESTINO)[:\s]+([A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ\s]{2,40}?)(?:\n|CUENTA|CLABE|IMPORTE|$)', _raw_up)
+                _syn_banco = _m.group(1).strip() if _m else (_fmap.get("banco_receptor") or _fmap.get("banco", ""))
+
+                # Concepto / Propósito
+                _m = re.search(r'PROP[OÓ]SITO\s*(?:DE\s*LA\s*)?TRANSFERENCIA[:\s]+(.{2,80}?)(?:\n|CLAVE|RFC|$)', _raw_up)
+                if not _m:
+                    _m = re.search(r'CONCEPTO\s*(?:DE\s*PAGO)?[:\s]+(.{2,80}?)(?:\n|CLAVE|RFC|REFERENCIA|$)', _raw_up)
+                _syn_concepto = _m.group(1).strip() if _m else (_fmap.get("concepto") or "")
+
+                _syn_header = [
+                    "Clave Rastreo", "Nombre Beneficiario", "Importe",
+                    "Fecha Aplicacion", "Referencia", "Cuenta Beneficiario",
+                    "Banco Receptor", "Dias Vigencia", "Concepto Pago",
+                ]
+                _syn_row = [
+                    _syn_clave, _syn_nombre, _syn_importe,
+                    _syn_fecha, _syn_referencia, _syn_clabe,
+                    _syn_banco, "", _syn_concepto,
+                ]
+                _syn_payload = {
+                    "source": "synthetic_single_transaction",
+                    "rows": [_syn_header, _syn_row],
+                    "row_count": 1,
+                }
+                fields.append(
+                    _make_field(
+                        "tabla_celdas",
+                        "Tabla de beneficiarios",
+                        json.dumps(_syn_payload, ensure_ascii=False),
+                        ocr_boxes,
+                        confidence=0.88,
+                    )
+                )
+
+                # ── Enrich pago_detalle with synthetic canonical rows ────
+                # Both frontend variants read canonical_rows from pago_detalle
+                # for the Beneficiarios table and Resumen metadata.
+                _syn_canonical_cols = [
+                    "clave_rastreo", "nombre", "importe",
+                    "fecha_aplicacion", "referencia", "cuenta_beneficiario",
+                    "banco_receptor", "dias_vigencia", "concepto_pago",
+                ]
+                _syn_canonical_row = {
+                    "clave_rastreo": _syn_clave,
+                    "nombre": _syn_nombre,
+                    "importe": _syn_importe,
+                    "fecha_aplicacion": _syn_fecha,
+                    "referencia": _syn_referencia,
+                    "cuenta_beneficiario": _syn_clabe,
+                    "banco_receptor": _syn_banco,
+                    "dias_vigencia": "",
+                    "concepto_pago": _syn_concepto,
+                }
+                _syn_display_cols = {
+                    "clave_rastreo": "Clave Rastreo",
+                    "nombre": "Nombre Beneficiario",
+                    "importe": "Importe",
+                    "fecha_aplicacion": "Fecha Aplicacion",
+                    "referencia": "Referencia",
+                    "cuenta_beneficiario": "Cuenta Beneficiario",
+                    "banco_receptor": "Banco Receptor",
+                    "dias_vigencia": "Dias Vigencia",
+                    "concepto_pago": "Concepto Pago",
+                }
+                _pago_detalle_found = False
+                for _f in fields:
+                    if _f.get("key") == "pago_detalle":
+                        _pago_detalle_found = True
+                        try:
+                            _pd = json.loads(_f.get("value") or "{}")
+                            if isinstance(_pd, dict):
+                                tbl = _pd.get("table") or {}
+                                tbl["canonical_columns"] = _syn_canonical_cols
+                                tbl["canonical_rows"] = [_syn_canonical_row]
+                                tbl["canonical_row_count"] = 1
+                                tbl["display_columns"] = _syn_display_cols
+                                _pd["table"] = tbl
+                                # Ensure importe_detectado in metadata for Resumen
+                                meta = _pd.get("metadata") or {}
+                                if _syn_importe and not meta.get("importe_detectado"):
+                                    meta["importe_detectado"] = _syn_importe
+                                if not meta.get("cantidad_movimientos"):
+                                    meta["cantidad_movimientos"] = "1"
+                                _pd["metadata"] = meta
+                                _f["value"] = json.dumps(_pd, ensure_ascii=False)
+                        except Exception:
+                            pass
+                        break
+                # Create pago_detalle from scratch if Phase 4 was skipped
+                if not _pago_detalle_found:
+                    _bank = _fmap.get("banco") or _fmap.get("banco_receptor") or _syn_banco or "DESCONOCIDO"
+                    _pd_new = {
+                        "source": "synthetic_single_transaction",
+                        "bank": _bank,
+                        "metadata": {
+                            "nombre_archivo": _fmap.get("titulo", filename or ""),
+                            "nombre_beneficiario": _syn_nombre,
+                            "banco_destino": _syn_banco,
+                            "referencia_carga": _syn_referencia,
+                            "importe_detectado": _syn_importe,
+                            "cantidad_movimientos": "1",
+                            "folio": _syn_clave,
+                        },
+                        "table": {
+                            "columns": _syn_canonical_cols,
+                            "canonical_columns": _syn_canonical_cols,
+                            "canonical_rows": [_syn_canonical_row],
+                            "canonical_row_count": 1,
+                            "display_columns": _syn_display_cols,
+                            "row_count": 1,
+                            "rows": [_syn_canonical_row],
+                            "bank": _bank,
+                        },
+                        "quality_report": {
+                            "row_count": 1,
+                            "column_count": len(_syn_canonical_cols),
+                            "columns": _syn_canonical_cols,
+                            "overall_quality": 0.85,
+                        },
+                    }
+                    fields.append(
+                        _make_field(
+                            "pago_detalle",
+                            "Pago detalle",
+                            json.dumps(_pd_new, ensure_ascii=False),
+                            ocr_boxes,
+                            confidence=0.9,
+                        )
+                    )
+                logger.info(
+                    "Synthesized single-row tabla_celdas from extracted fields "
+                    "(nombre=%s, clabe=%s, importe=%s)",
+                    bool(_syn_nombre), bool(_syn_clabe), bool(_syn_importe),
+                )
+
         cleaned = _postprocess_fields(document_type, fields)
         contracted = _apply_field_contracts(document_type, cleaned)
         return _dedupe_fields(contracted)

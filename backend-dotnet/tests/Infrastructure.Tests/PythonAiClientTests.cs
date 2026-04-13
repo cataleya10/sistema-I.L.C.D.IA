@@ -41,20 +41,34 @@ public class PythonAiClientTests
         var resp = new
         {
             document_id = docId,
-            status = "READY",
-            document_type = "INE",
-            confidence = 0.95,
-            fields = Array.Empty<object>(),
-            warnings = Array.Empty<string>(),
-            errors = Array.Empty<string>(),
-            meta = new
+            tipo_documento = "INE",
+            success = true,
+            message = "Documento procesado correctamente",
+            confidence_global = 0.95,
+            campos = Array.Empty<object>(),
+            tablas = Array.Empty<object>(),
+            metadata = new
             {
-                pages_processed = 1,
+                filename = "test.pdf",
+                pages = 1,
+                source = "web",
+                processing_time_ms = 200,
                 ocr_engine = "PaddleOCR",
                 pipeline_version = "v1",
-                model_version = "v1",
-                processing_ms = 200
-            }
+                model_version = "v1"
+            },
+            validation_summary = new
+            {
+                coverage = 1.0,
+                critical_coverage = 1.0,
+                requires_review = false,
+                score_decision = "accepted",
+                table_quality_score = 0.0
+            },
+            warnings = Array.Empty<string>(),
+            errors = Array.Empty<string>(),
+            error_code = (string?)null,
+            stage = (string?)null
         };
         return JsonSerializer.Serialize(resp, JsonOpts);
     }
@@ -64,20 +78,34 @@ public class PythonAiClientTests
         var resp = new
         {
             document_id = docId,
-            status = "READY",
-            document_type = "INE",
-            confidence = 0.95,
-            fields = Array.Empty<object>(),
-            warnings = Array.Empty<string>(),
-            errors = Array.Empty<string>(),
-            meta = new
+            tipo_documento = "INE",
+            success = true,
+            message = "Documento procesado correctamente",
+            confidence_global = 0.95,
+            campos = Array.Empty<object>(),
+            tablas = Array.Empty<object>(),
+            metadata = new
             {
-                pages_processed = 1,
+                filename = "test.pdf",
+                pages = 1,
+                source = "web",
+                processing_time_ms = 200,
                 ocr_engine = "PaddleOCR",
                 pipeline_version = "v1",
-                model_version = "v1",
-                processing_ms = 200
+                model_version = "v1"
             },
+            validation_summary = new
+            {
+                coverage = 1.0,
+                critical_coverage = 1.0,
+                requires_review = false,
+                score_decision = "accepted",
+                table_quality_score = 0.0
+            },
+            warnings = Array.Empty<string>(),
+            errors = Array.Empty<string>(),
+            error_code = (string?)null,
+            stage = (string?)null,
             ocr_text = ocrText
         };
         return JsonSerializer.Serialize(resp, JsonOpts);

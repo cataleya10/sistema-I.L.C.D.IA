@@ -266,25 +266,18 @@ const TYPE_OPTIONS: Array<{ value: string; label: string }> = [
         </section>
 
         <section class="table-card inner-card" *ngIf="getTablasDetalleRapido().length">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">Tabla</p>
-              <h3>Tablas detectadas</h3>
-            </div>
-          </div>
-
           <div class="table-block" *ngFor="let tabla of getTablasDetalleRapido(); let tableIndex = index">
             <h4>{{ tabla.titulo }}</h4>
-            <div class="table-wrap">
-              <table class="data-table">
+            <div class="beneficiarios-table-wrap">
+              <table class="data-table beneficiarios-table">
                 <thead>
                   <tr>
                     <th *ngFor="let col of tabla.columnas">{{ col }}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr *ngFor="let fila of tabla.filas; let rowIndex = index" [class.alt]="rowIndex % 2 === 1">
-                    <td *ngFor="let cell of fila">{{ cell }}</td>
+                  <tr *ngFor="let fila of tabla.filas; let rowIndex = index" [class.alt]="rowIndex % 2 === 0">
+                    <td *ngFor="let cell of fila">{{ cell || '—' }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -625,6 +618,69 @@ const TYPE_OPTIONS: Array<{ value: string; label: string }> = [
           justify-content: space-between;
         }
       }
+
+      /* ── Beneficiarios table: compact bordered style ── */
+      .beneficiarios-table-wrap {
+        overflow-x: auto;
+        max-height: 600px;
+        overflow-y: auto;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+      }
+
+      .beneficiarios-table {
+        font-size: 12px;
+        border-collapse: collapse;
+      }
+
+      .beneficiarios-table thead {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+      }
+
+      .beneficiarios-table th {
+        padding: 8px 12px;
+        background: #1e293b;
+        color: #ffffff;
+        font-size: 12px;
+        font-weight: 600;
+        white-space: nowrap;
+        letter-spacing: 0.03em;
+        text-transform: none;
+        border-bottom: 2px solid #0f172a;
+      }
+
+      .beneficiarios-table td {
+        padding: 6px 12px;
+        border-bottom: 1px solid #e5e7eb;
+        font-size: 12px;
+        vertical-align: middle;
+        white-space: nowrap;
+        max-width: 260px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: #1f2937;
+      }
+
+      .beneficiarios-table tbody tr:hover td {
+        background: #eff6ff;
+      }
+
+      .beneficiarios-table tbody tr.alt td {
+        background: #f9fafb;
+      }
+
+      .beneficiarios-table tbody tr.alt:hover td {
+        background: #eff6ff;
+      }
+
+      .table-block h4 {
+        font-size: 15px;
+        font-weight: 700;
+        color: #1e293b;
+        margin: 0 0 12px;
+      }
     `
   ]
 })
@@ -846,23 +902,63 @@ export class DocumentsListPage implements OnInit, OnDestroy {
       const tablas: Array<{ titulo: string; columnas: string[]; filas: string[][] }> = [];
 
       if (parsedPaymentDetail.canonicalRows.length) {
-        tablas.push({
-          titulo: 'Beneficiarios',
-          columnas: parsedPaymentDetail.canonicalColumns,
-          filas: parsedPaymentDetail.canonicalRows
-        });
-      }
+        // Force the 9-column order: Clave, Nombre, Importe, Fecha, Referencia, Cuenta, Banco, Dias, Concepto
+        const targetKeys = [
+          'clave_beneficiario', 'nombre_beneficiario', 'importe', 'fecha_aplicacion',
+          'referencia', 'cuenta_beneficiario', 'banco_receptor', 'dias_vigencia', 'concepto_pago'
+        ];
+        const targetLabels = ['Clave', 'Nombre', 'Importe', 'Fecha', 'Referencia', 'Cuenta', 'Banco', 'Dias', 'Concepto'];
 
-      for (const summaryTable of parsedPaymentDetail.summaryTables) {
-        if (!summaryTable.rows.length) {
-          continue;
+        const apiKeys = parsedPaymentDetail.canonicalColumnKeys;
+        const rowObjects = parsedPaymentDetail.canonicalRowObjects;
+
+        if (rowObjects.length && apiKeys.length) {
+          // Map API keys to target keys using normalized matching
+          const normalize = (k: string) => k.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+          const keyMap: Record<string, string> = {};
+          for (const ak of apiKeys) {
+            const norm = normalize(ak);
+            // Direct match to target
+            if (targetKeys.includes(norm)) {
+              keyMap[norm] = ak;
+            }
+            // Alias matching
+            const aliases: Record<string, string> = {
+              nombre: 'nombre_beneficiario', titular: 'nombre_beneficiario', beneficiario: 'nombre_beneficiario',
+              cuenta: 'cuenta_beneficiario', clabe: 'cuenta_beneficiario', cuenta_retiro: 'cuenta_beneficiario',
+              banco: 'banco_receptor', banco_destino: 'banco_receptor',
+              fecha: 'fecha_aplicacion', fecha_operacion: 'fecha_aplicacion',
+              concepto: 'concepto_pago', descripcion: 'concepto_pago', motivo_pago: 'concepto_pago',
+              clave: 'clave_beneficiario', numero_empleado: 'clave_beneficiario',
+              dias: 'dias_vigencia', vigencia: 'dias_vigencia',
+              clave_rastreo: 'referencia', folio: 'referencia', folio_operacion: 'referencia',
+              estatus: 'estatus',
+            };
+            if (aliases[norm]) {
+              keyMap[aliases[norm]] = ak;
+            }
+          }
+
+          const filas = rowObjects.map((row) =>
+            targetKeys.map((tk) => {
+              const apiKey = keyMap[tk];
+              return apiKey ? String(row[apiKey] ?? '').trim() : '';
+            })
+          ).filter((row) => row.some((cell) => cell.length > 0));
+
+          // Remove columns that are entirely empty
+          const nonEmpty = targetKeys.map((_, i) => filas.some((row) => row[i].length > 0));
+          const finalLabels = targetLabels.filter((_, i) => nonEmpty[i]);
+          const finalFilas = filas.map((row) => row.filter((_, i) => nonEmpty[i]));
+
+          tablas.push({ titulo: 'Beneficiarios', columnas: finalLabels, filas: finalFilas });
+        } else {
+          tablas.push({
+            titulo: 'Beneficiarios',
+            columnas: parsedPaymentDetail.canonicalColumns,
+            filas: parsedPaymentDetail.canonicalRows
+          });
         }
-
-        tablas.push({
-          titulo: summaryTable.title || `Tabla ${tablas.length + 1}`,
-          columnas: summaryTable.columns,
-          filas: summaryTable.rows
-        });
       }
 
       if (tablas.length) {
@@ -890,7 +986,7 @@ export class DocumentsListPage implements OnInit, OnDestroy {
           .filter((fila: string[]) => fila.some((cell) => String(cell ?? '').trim().length > 0));
 
         return {
-          titulo: table.doc_type_hint ? `Tabla ${index + 1} - ${table.doc_type_hint}` : `Tabla ${index + 1}`,
+          titulo: 'Beneficiarios',
           columnas,
           filas
         };
@@ -898,7 +994,7 @@ export class DocumentsListPage implements OnInit, OnDestroy {
       .filter((table: { columnas: string[]; filas: string[][] }) => table.columnas.length && table.filas.length);
 
     if (structuredTables.length) {
-      return structuredTables;
+      return [structuredTables[0]];
     }
 
     if (!raw) {
@@ -997,7 +1093,7 @@ export class DocumentsListPage implements OnInit, OnDestroy {
         const columnas = rows[0].map((c) => String(c ?? ''));
         const filas = rows.slice(1);
 
-        return [{ titulo: 'Tabla 1', columnas, filas }];
+        return [{ titulo: 'Beneficiarios', columnas, filas }];
       }
 
       return [];

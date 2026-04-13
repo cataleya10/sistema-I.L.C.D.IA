@@ -15,8 +15,10 @@ public class DocumentsControllerDiagnosticsTests
     [Fact]
     public async Task AuditFolder_ReturnsOk_WhenClientReturnsSummary()
     {
+        var auditPath = OperatingSystem.IsWindows() ? @"C:\audits\nomina" : "/tmp/audits/nomina";
+        var auditFilePath = OperatingSystem.IsWindows() ? @"C:\audits\nomina\nomina-01.pdf" : "/tmp/audits/nomina/nomina-01.pdf";
         var expected = new AuditFolderResponseDto(
-            @"C:\audits\nomina",
+            auditPath,
             true,
             25,
             false,
@@ -36,7 +38,7 @@ public class DocumentsControllerDiagnosticsTests
             {
                 new AuditDocumentSummaryDto(
                     "nomina-01.pdf",
-                    @"C:\audits\nomina\nomina-01.pdf",
+                    auditFilePath,
                     "READY",
                     "FACTURA",
                     0.98m,
@@ -55,13 +57,13 @@ public class DocumentsControllerDiagnosticsTests
         var controller = CreateController(new FakePythonAiClient((request, cancellationToken) =>
         {
             cancellationToken.ThrowIfCancellationRequested();
-            Assert.Equal(@"C:\audits\nomina", request.FolderPath);
+            Assert.Equal(auditPath, request.FolderPath);
             Assert.Equal(25, request.Limit);
             return Task.FromResult(expected);
         }));
 
         var result = await controller.AuditFolder(
-            new AuditFolderRequestDto(@"C:\audits\nomina", true, 25, false),
+            new AuditFolderRequestDto(auditPath, true, 25, false),
             CancellationToken.None);
 
         var ok = Assert.IsType<OkObjectResult>(result.Result);
@@ -91,6 +93,7 @@ public class DocumentsControllerDiagnosticsTests
     [Fact]
     public async Task AuditFolder_ReturnsNotImplemented_WhenClientDoesNotSupportAudit()
     {
+        var auditPath2 = OperatingSystem.IsWindows() ? @"C:\audits\nomina" : "/tmp/audits/nomina";
         var controller = CreateController(new FakePythonAiClient((_, cancellationToken) =>
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -98,7 +101,7 @@ public class DocumentsControllerDiagnosticsTests
         }));
 
         var result = await controller.AuditFolder(
-            new AuditFolderRequestDto(@"C:\audits\nomina", true, 10, false),
+            new AuditFolderRequestDto(auditPath2, true, 10, false),
             CancellationToken.None);
 
         var notImplemented = Assert.IsType<ObjectResult>(result.Result);

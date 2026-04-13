@@ -1,23 +1,18 @@
-import io
-import unittest
-import asyncio
-import os
-from pathlib import Path
-from unittest.mock import patch, AsyncMock, MagicMock
+"""
+tests/test_api_routes.py — HTTP-level tests for all API endpoints.
 
-from app.api.routes import (
-    process_document_endpoint,
-    audit_folder_endpoint,
-    online_learning_stats_endpoint,
-    online_learning_feedback_endpoint,
-    online_learning_retrain_endpoint,
-)
-from app.schemas.audit import AuditFolderRequest
-from app.schemas.online_learning import (
-    OnlineLearningFeedbackRequest,
-    FeedbackField,
-    OnlineLearningRetrainRequest,
-)
+Uses httpx.AsyncClient + ASGITransport to exercise the real FastAPI stack:
+authentication, middleware, request validation, serialisation, and status codes.
+Service-layer functions are mocked to isolate the HTTP/routing layer.
+"""
+
+import pytest
+from unittest.mock import patch, AsyncMock
+
+from httpx import AsyncClient, ASGITransport
+
+from app.main import app
+from app.core.config import settings
 from app.schemas.process import (
     ProcessResponse,
     CampoExtraido,
@@ -26,6 +21,14 @@ from app.schemas.process import (
     ValidationSummary,
 )
 
+# ── Constants ─────────────────────────────────────────────────────────────────
+
+BASE_URL = "http://test"
+API_KEY = "test-api-key-for-pytest-only"
+AUTH = {"X-Api-Key": API_KEY}
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_process_response(
     *,
@@ -34,7 +37,7 @@ def _make_process_response(
     campos: list | None = None,
     tablas: list | None = None,
 ) -> ProcessResponse:
-    """Helper: construye un ProcessResponse realista para mocks."""
+    """Construye un ProcessResponse realista para mocks del servicio."""
     return ProcessResponse(
         document_id="doc-test",
         tipo_documento=doc_type,
@@ -60,267 +63,339 @@ def _make_process_response(
     )
 
 
-class ApiRoutesTests(unittest.TestCase):
-    def test_audit_folder_endpoint_returns_service_payload(self):
-        base = Path(os.environ.get("AUDIT_BASE_PATH", "storage")).resolve()
-        resolved = str((base / "docs").resolve())
-        expected = {
-            "folder_path": "docs",
-            "recurse": True,
-            "limit": 25,
-            "issues_only": False,
-            "matched_files": 3,
-            "processed_files": 3,
-            "documents_returned": 3,
-            "clean_count": 2,
-            "issue_count": 1,
-            "error_count": 0,
-            "hard_fail_count": 0,
-            "non_factura_count": 0,
-            "document_type_counts": {"FACTURA": 3},
-            "documents": [],
-        }
-        payload = AuditFolderRequest(folder_path="docs", recurse=True, limit=25, issues_only=False)
-        with patch("app.api.routes.run_audit_folder", return_value=expected) as audit_mock:
-            response = asyncio.run(audit_folder_endpoint(payload=payload))
+def _post_file(client: AsyncClient, path: str, *, data: dict, headers: dict | None = None):
+    """Shortcut: POST multipart con un PDF fake."""
+    return client.post(
+        path,
+        headers=headers or AUTH,
+        data=data,
+        files={"file": ("doc.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
 
-        self.assertEqual(response, expected)
-        audit_mock.assert_called_once_with(
-            resolved,
-            recurse=True,
-            limit=25,
-            issues_only=False,
+
+# ── Fixture: httpx client sobre la app real ───────────────────────────────────
+
+@pytest.fixture
+async def client():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url=BASE_URL) as c:
+        yield c
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Health (sin autenticación)
+# ═════════════════════════════════════════════════════════════════════════════
+
+async def test_health_returns_200_without_auth(client):
+    resp = await client.get("/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert "version" in body
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Autenticación — todos los endpoints protegidos devuelven 401
+# ═════════════════════════════════════════════════════════════════════════════
+
+async def test_process_document_requires_auth(client):
+    resp = await client.post(
+        "/process-document",
+        data={"document_id": "d1", "source": "web"},
+        files={"file": ("f.pdf", b"%PDF", "application/pdf")},
+    )
+    assert resp.status_code == 401
+
+
+async def test_audit_folder_requires_auth(client):
+    resp = await client.post("/diagnostics/audit-folder", json={"folder_path": "docs"})
+    assert resp.status_code == 401
+
+
+async def test_online_learning_stats_requires_auth(client):
+    resp = await client.get("/online-learning/stats")
+    assert resp.status_code == 401
+
+
+async def test_metrics_requires_auth(client):
+    resp = await client.get("/metrics")
+    assert resp.status_code == 401
+
+
+async def test_invalid_api_key_returns_401(client):
+    resp = await client.get("/online-learning/stats", headers={"X-Api-Key": "wrong-key"})
+    assert resp.status_code == 401
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# POST /process-document — contrato v2
+# ═════════════════════════════════════════════════════════════════════════════
+
+async def test_process_document_success_contract(client):
+    """Respuesta exitosa contiene todas las claves del contrato v2."""
+    mock_resp = _make_process_response()
+    with patch("app.api.routes.process_document", new=AsyncMock(return_value=mock_resp)):
+        resp = await _post_file(client, "/process-document", data={"document_id": "doc-test", "source": "web"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    # Claves obligatorias del contrato
+    assert body["document_id"] == "doc-test"
+    assert body["tipo_documento"] == "INE"
+    assert body["success"] is True
+    assert 0.0 <= body["confidence_global"] <= 1.0
+    # Campos
+    assert len(body["campos"]) == 2
+    campo = body["campos"][0]
+    assert "is_critical" in campo
+    assert "is_valid" in campo
+    assert isinstance(campo["confidence"], float)
+    # Metadata
+    meta = body["metadata"]
+    assert isinstance(meta["filename"], str)
+    assert isinstance(meta["pages"], int)
+    assert isinstance(meta["processing_time_ms"], int)
+    # Validation summary
+    vs = body["validation_summary"]
+    assert vs["score_decision"] in ("accepted", "review", "reprocess")
+    assert isinstance(vs["coverage"], float)
+    assert isinstance(vs["critical_coverage"], float)
+    assert isinstance(vs["table_quality_score"], (int, float))
+
+
+async def test_process_document_requires_review(client):
+    mock_resp = _make_process_response(requires_review=True)
+    with patch("app.api.routes.process_document", new=AsyncMock(return_value=mock_resp)):
+        resp = await _post_file(client, "/process-document", data={"document_id": "doc-r", "source": "web"})
+
+    body = resp.json()
+    assert body["success"] is False
+    assert body["validation_summary"]["requires_review"] is True
+
+
+async def test_process_document_error_response(client):
+    error_resp = ProcessResponse(
+        document_id="doc-err",
+        tipo_documento="UNKNOWN",
+        success=False,
+        message="Tipo de documento no identificado.",
+        error_code="DOCUMENT_TYPE_UNKNOWN",
+        stage="classification",
+        metadata=MetadataDocumento(filename="doc.pdf"),
+        validation_summary=ValidationSummary(requires_review=True, score_decision="reprocess"),
+    )
+    with patch("app.api.routes.process_document", new=AsyncMock(return_value=error_resp)):
+        resp = await _post_file(client, "/process-document", data={"document_id": "doc-err", "source": "web"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is False
+    assert body["error_code"] == "DOCUMENT_TYPE_UNKNOWN"
+    assert body["stage"] == "classification"
+    assert body["validation_summary"]["score_decision"] == "reprocess"
+
+
+async def test_process_document_table_not_found(client):
+    error_resp = ProcessResponse(
+        document_id="doc-t",
+        tipo_documento="FACTURA",
+        success=True,
+        message="No se detectó tabla principal en el documento.",
+        error_code="TABLE_NOT_FOUND",
+        stage="table_extraction",
+        metadata=MetadataDocumento(filename="doc.pdf"),
+        validation_summary=ValidationSummary(requires_review=True, score_decision="review", table_quality_score=0.0),
+    )
+    with patch("app.api.routes.process_document", new=AsyncMock(return_value=error_resp)):
+        resp = await _post_file(client, "/process-document", data={"document_id": "doc-t", "source": "web"})
+
+    body = resp.json()
+    assert body["error_code"] == "TABLE_NOT_FOUND"
+    assert body["validation_summary"]["requires_review"] is True
+    assert body["validation_summary"]["table_quality_score"] == 0.0
+
+
+async def test_process_document_with_tablas(client):
+    tablas = [
+        TablaExtraida(
+            name="tabla_principal",
+            headers_detected=["fecha", "importe"],
+            rows=[],
+            canonical_rows=[{"fecha": "2026-03-22", "importe": "1500.00"}],
+        )
+    ]
+    mock_resp = _make_process_response(tablas=tablas)
+    with patch("app.api.routes.process_document", new=AsyncMock(return_value=mock_resp)):
+        resp = await _post_file(client, "/process-document", data={"document_id": "doc-t", "source": "web"})
+
+    body = resp.json()
+    assert len(body["tablas"]) == 1
+    assert body["tablas"][0]["name"] == "tabla_principal"
+    assert "fecha" in body["tablas"][0]["headers_detected"]
+    assert len(body["tablas"][0]["canonical_rows"]) == 1
+
+
+# ── Validaciones de entrada ──────────────────────────────────────────────────
+
+async def test_process_document_invalid_document_id_returns_422(client):
+    resp = await _post_file(
+        client, "/process-document",
+        data={"document_id": "id con espacios!!", "source": "web"},
+    )
+    assert resp.status_code == 422
+
+
+async def test_process_document_invalid_options_json_returns_422(client):
+    resp = await _post_file(
+        client, "/process-document",
+        data={"document_id": "doc-ok", "source": "web", "options": "not json"},
+    )
+    assert resp.status_code == 422
+
+
+async def test_process_document_valid_options_json(client):
+    mock_resp = _make_process_response()
+    with patch("app.api.routes.process_document", new=AsyncMock(return_value=mock_resp)):
+        resp = await _post_file(
+            client, "/process-document",
+            data={"document_id": "doc-ok", "source": "web", "options": '{"force_type":"INE"}'},
+        )
+    assert resp.status_code == 200
+
+
+async def test_process_document_options_too_long_returns_422(client):
+    resp = await _post_file(
+        client, "/process-document",
+        data={"document_id": "doc-ok", "source": "web", "options": '{"x":"' + "A" * 2100 + '"}'},
+    )
+    assert resp.status_code == 422
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# POST /diagnostics/audit-folder
+# ═════════════════════════════════════════════════════════════════════════════
+
+async def test_audit_folder_success(client, tmp_path, monkeypatch):
+    target = tmp_path / "docs"
+    target.mkdir()
+    monkeypatch.setattr(settings, "audit_base_path", str(tmp_path))
+
+    expected = {
+        "folder_path": "docs",
+        "recurse": True,
+        "limit": 25,
+        "issues_only": False,
+        "matched_files": 3,
+        "processed_files": 3,
+        "documents_returned": 3,
+        "clean_count": 2,
+        "issue_count": 1,
+        "error_count": 0,
+        "hard_fail_count": 0,
+        "non_factura_count": 0,
+        "document_type_counts": {"FACTURA": 3},
+        "documents": [],
+    }
+    with patch("app.api.routes.run_audit_folder", new=AsyncMock(return_value=expected)) as audit_mock:
+        resp = await client.post(
+            "/diagnostics/audit-folder",
+            headers=AUTH,
+            json={"folder_path": "docs", "recurse": True, "limit": 25, "issues_only": False},
         )
 
-    def test_online_learning_stats_endpoint_returns_payload(self):
-        expected = {
-            "totals": {"attempted": 7, "trained": 5, "skipped": 2},
-            "recent_events": [],
-        }
-        with patch("app.api.routes.get_online_learning_stats", return_value=expected) as stats_mock:
-            response = asyncio.run(online_learning_stats_endpoint(recent=3))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["matched_files"] == 3
+    assert body["clean_count"] == 2
+    audit_mock.assert_called_once_with(str(target), recurse=True, limit=25, issues_only=False)
 
-        self.assertEqual(response, expected)
-        stats_mock.assert_called_once_with(recent=3)
 
-    def test_online_learning_feedback_endpoint_returns_service_payload(self):
-        expected = {"accepted": True, "labels": 2}
-        payload = OnlineLearningFeedbackRequest(
-            document_id="doc-1",
-            document_type="CURP",
-            ocr_text="CONSTANCIA CURP",
-            corrected_fields=[
-                FeedbackField(key="curp", value="AAAA000101HDFRRL00"),
-                FeedbackField(key="nombre", value="JUAN PEREZ"),
-            ],
+async def test_audit_folder_path_traversal_returns_403(client):
+    resp = await client.post(
+        "/diagnostics/audit-folder",
+        headers=AUTH,
+        json={"folder_path": "../../../etc/passwd"},
+    )
+    assert resp.status_code == 403
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# GET /online-learning/stats
+# ═════════════════════════════════════════════════════════════════════════════
+
+async def test_online_learning_stats_success(client):
+    expected = {
+        "totals": {"attempted": 7, "trained": 5, "skipped": 2},
+        "recent_events": [],
+    }
+    with patch("app.api.routes.get_online_learning_stats", return_value=expected) as mock:
+        resp = await client.get("/online-learning/stats", headers=AUTH, params={"recent": 3})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["totals"]["attempted"] == 7
+    mock.assert_called_once_with(recent=3)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# POST /online-learning/feedback
+# ═════════════════════════════════════════════════════════════════════════════
+
+async def test_online_learning_feedback_success(client):
+    expected = {"accepted": True, "labels": 2}
+    with patch("app.api.routes.record_feedback_document", return_value=expected) as mock:
+        resp = await client.post(
+            "/online-learning/feedback",
+            headers=AUTH,
+            json={
+                "document_id": "doc-1",
+                "document_type": "CURP",
+                "ocr_text": "CONSTANCIA CURP",
+                "corrected_fields": [
+                    {"key": "curp", "value": "AAAA000101HDFRRL00"},
+                    {"key": "nombre", "value": "JUAN PEREZ"},
+                ],
+            },
         )
-        with patch("app.api.routes.record_feedback_document", return_value=expected) as feedback_mock:
-            response = asyncio.run(online_learning_feedback_endpoint(payload=payload))
 
-        self.assertEqual(response, expected)
-        feedback_mock.assert_called_once()
+    assert resp.status_code == 200
+    assert resp.json()["accepted"] is True
+    mock.assert_called_once()
 
-    def test_online_learning_retrain_endpoint_returns_service_payload(self):
-        expected = {"promoted": True, "decision_reasons": []}
-        payload = OnlineLearningRetrainRequest(
-            min_feedback_samples=10,
-            validation_ratio=0.2,
-            min_doc_accuracy=0.9,
-            min_validation_docs=3,
-            max_accuracy_drop=0.02,
-            promote=True,
+
+# ═════════════════════════════════════════════════════════════════════════════
+# POST /online-learning/retrain
+# ═════════════════════════════════════════════════════════════════════════════
+
+async def test_online_learning_retrain_success(client):
+    expected = {"promoted": True, "decision_reasons": []}
+    with patch("app.api.routes.run_feedback_retraining", return_value=expected) as mock:
+        resp = await client.post(
+            "/online-learning/retrain",
+            headers=AUTH,
+            json={
+                "min_feedback_samples": 10,
+                "validation_ratio": 0.2,
+                "min_doc_accuracy": 0.9,
+                "min_validation_docs": 3,
+                "max_accuracy_drop": 0.02,
+                "promote": True,
+            },
         )
-        with patch("app.api.routes.run_feedback_retraining", return_value=expected) as retrain_mock:
-            response = asyncio.run(online_learning_retrain_endpoint(payload=payload))
 
-        self.assertEqual(response, expected)
-        retrain_mock.assert_called_once()
-
-
-class ProcessDocumentEndpointTests(unittest.TestCase):
-    """Tests del endpoint POST /process-document con el contrato v2."""
-
-    def _make_upload_file(self, filename: str = "doc.pdf", content: bytes = b"%PDF-1.4 fake") -> MagicMock:
-        upload = MagicMock()
-        upload.filename = filename
-        upload.read = AsyncMock(return_value=content)
-        upload.file = io.BytesIO(content)
-        return upload
-
-    def _call_endpoint(
-        self,
-        mock_response: ProcessResponse,
-        *,
-        document_id: str = "doc-test",
-        source: str = "web",
-        options: str | None = None,
-        filename: str = "doc.pdf",
-    ) -> ProcessResponse:
-        file = self._make_upload_file(filename=filename)
-        with patch(
-            "app.api.routes.process_document",
-            new=AsyncMock(return_value=mock_response),
-        ):
-            return asyncio.run(
-                process_document_endpoint(
-                    file=file,
-                    document_id=document_id,
-                    source=source,
-                    options=options,
-                )
-            )
-
-    # ── Contrato básico ───────────────────────────────────────────────────────
-
-    def test_returns_process_response_instance(self):
-        resp = self._call_endpoint(_make_process_response())
-        self.assertIsInstance(resp, ProcessResponse)
-
-    def test_response_has_tipo_documento(self):
-        resp = self._call_endpoint(_make_process_response(doc_type="CURP"))
-        self.assertEqual(resp.tipo_documento, "CURP")
-
-    def test_response_success_true_when_ready(self):
-        resp = self._call_endpoint(_make_process_response(requires_review=False))
-        self.assertTrue(resp.success)
-
-    def test_response_campos_have_is_critical_flag(self):
-        resp = self._call_endpoint(_make_process_response())
-        self.assertTrue(any(c.is_critical for c in resp.campos))
-
-    def test_response_campos_have_is_valid_flag(self):
-        resp = self._call_endpoint(_make_process_response())
-        for campo in resp.campos:
-            self.assertIsInstance(campo.is_valid, bool)
-
-    def test_response_confidence_global_between_0_and_1(self):
-        resp = self._call_endpoint(_make_process_response())
-        self.assertGreaterEqual(resp.confidence_global, 0.0)
-        self.assertLessEqual(resp.confidence_global, 1.0)
-
-    def test_response_validation_summary_present(self):
-        resp = self._call_endpoint(_make_process_response())
-        vs = resp.validation_summary
-        self.assertIsInstance(vs, ValidationSummary)
-        self.assertIsInstance(vs.requires_review, bool)
-        self.assertIsInstance(vs.coverage, float)
-        self.assertIsInstance(vs.critical_coverage, float)
-        self.assertIn(vs.score_decision, {"accepted", "review", "reprocess"})
-        self.assertIsInstance(vs.table_quality_score, float)
-
-    def test_score_decision_accepted_when_no_review(self):
-        resp = self._call_endpoint(_make_process_response(requires_review=False))
-        # score_decision puede ser "accepted" si critical_coverage es alta
-        self.assertIn(resp.validation_summary.score_decision, {"accepted", "review", "reprocess"})
-
-    def test_score_decision_present_on_error_response(self):
-        error_resp = ProcessResponse(
-            document_id="doc-err",
-            tipo_documento="UNKNOWN",
-            success=False,
-            message="Tipo de documento no identificado.",
-            error_code="DOCUMENT_TYPE_UNKNOWN",
-            stage="classification",
-            metadata=MetadataDocumento(filename="doc.pdf"),
-            validation_summary=ValidationSummary(requires_review=True, score_decision="reprocess"),
-        )
-        resp = self._call_endpoint(error_resp)
-        self.assertEqual(resp.error_code, "DOCUMENT_TYPE_UNKNOWN")
-        self.assertEqual(resp.stage, "classification")
-        self.assertEqual(resp.validation_summary.score_decision, "reprocess")
-
-    def test_table_not_found_error_code(self):
-        error_resp = ProcessResponse(
-            document_id="doc-t",
-            tipo_documento="FACTURA",
-            success=True,
-            message="No se detectó tabla principal en el documento.",
-            error_code="TABLE_NOT_FOUND",
-            stage="table_extraction",
-            metadata=MetadataDocumento(filename="doc.pdf"),
-            validation_summary=ValidationSummary(
-                requires_review=True, score_decision="review",
-                table_quality_score=0.0,
-            ),
-        )
-        resp = self._call_endpoint(error_resp)
-        self.assertEqual(resp.error_code, "TABLE_NOT_FOUND")
-        self.assertTrue(resp.validation_summary.requires_review)
-
-    def test_response_metadata_has_required_keys(self):
-        resp = self._call_endpoint(_make_process_response())
-        meta = resp.metadata
-        self.assertIsInstance(meta, MetadataDocumento)
-        self.assertIsInstance(meta.filename, str)
-        self.assertIsInstance(meta.pages, int)
-        self.assertIsInstance(meta.processing_time_ms, int)
-
-    def test_response_requires_review_when_needs_review(self):
-        resp = self._call_endpoint(_make_process_response(requires_review=True))
-        self.assertTrue(resp.validation_summary.requires_review)
-
-    def test_response_tablas_structure_when_present(self):
-        tablas = [
-            TablaExtraida(
-                name="tabla_principal",
-                headers_detected=["fecha", "importe"],
-                rows=[],
-                canonical_rows=[{"fecha": "2026-03-22", "importe": "1500.00"}],
-            )
-        ]
-        resp = self._call_endpoint(_make_process_response(tablas=tablas))
-        self.assertEqual(len(resp.tablas), 1)
-        self.assertEqual(resp.tablas[0].name, "tabla_principal")
-        self.assertIn("fecha", resp.tablas[0].headers_detected)
-        self.assertEqual(len(resp.tablas[0].canonical_rows), 1)
-
-    # ── Validaciones del endpoint ─────────────────────────────────────────────
-
-    def test_invalid_document_id_raises_422(self):
-        from fastapi import HTTPException
-        file = self._make_upload_file()
-        with self.assertRaises(HTTPException) as ctx:
-            asyncio.run(
-                process_document_endpoint(
-                    file=file,
-                    document_id="id con espacios!!",
-                    source="web",
-                    options=None,
-                )
-            )
-        self.assertEqual(ctx.exception.status_code, 422)
-
-    def test_invalid_options_json_raises_422(self):
-        from fastapi import HTTPException
-        file = self._make_upload_file()
-        with self.assertRaises(HTTPException) as ctx:
-            asyncio.run(
-                process_document_endpoint(
-                    file=file,
-                    document_id="doc-ok",
-                    source="web",
-                    options="no es json",
-                )
-            )
-        self.assertEqual(ctx.exception.status_code, 422)
-
-    def test_error_response_has_error_code(self):
-        error_resp = ProcessResponse(
-            document_id="doc-err",
-            tipo_documento="UNKNOWN",
-            success=False,
-            message="Error en OCR.",
-            error_code="OCR_FAILED",
-            stage="ocr",
-            metadata=MetadataDocumento(filename="doc.pdf"),
-            validation_summary=ValidationSummary(requires_review=True),
-        )
-        resp = self._call_endpoint(error_resp)
-        self.assertFalse(resp.success)
-        self.assertEqual(resp.error_code, "OCR_FAILED")
-        self.assertEqual(resp.stage, "ocr")
-        self.assertTrue(resp.validation_summary.requires_review)
+    assert resp.status_code == 200
+    assert resp.json()["promoted"] is True
+    mock.assert_called_once()
 
 
-if __name__ == "__main__":
-    unittest.main()
+# ═════════════════════════════════════════════════════════════════════════════
+# GET /metrics
+# ═════════════════════════════════════════════════════════════════════════════
+
+async def test_metrics_success(client):
+    expected = {"precision": 0.95, "recall": 0.90}
+    with patch("app.api.routes.get_precision_metrics", return_value=expected):
+        resp = await client.get("/metrics", headers=AUTH)
+
+    assert resp.status_code == 200
+    assert resp.json()["precision"] == 0.95

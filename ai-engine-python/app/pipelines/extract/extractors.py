@@ -569,24 +569,47 @@ def _extract_financial_from_boxes(ocr_boxes):
         "BBVA": "BBVA",
         "BANCOMER": "BBVA",
         "BANAMEX": "BANAMEX",
+        "CITIBANAMEX": "BANAMEX",
         "SANTANDER": "SANTANDER",
         "SCOTIABANK": "SCOTIABANK",
         "HSBC": "HSBC",
         "BANORTE": "BANORTE",
         "AZTECA": "BANCO AZTECA",
+        "INBURSA": "INBURSA",
+        "BANREGIO": "BANREGIO",
+        "BANCOPPEL": "BANCOPPEL",
+        "AFIRME": "AFIRME",
+        "MULTIVA": "MULTIVA",
+        "INVEX": "INVEX",
+        "BAJIO": "BANCO DEL BAJIO",
+        "BAJÍO": "BANCO DEL BAJIO",
+        "COMPARTAMOS": "COMPARTAMOS",
+        "MERCADO PAGO": "MERCADO PAGO",
     }
     bank_code_map = {
         "002": "BANAMEX",
+        "006": "BANCOMEXT",
+        "009": "BANOBRAS",
         "012": "BBVA",
         "014": "SANTANDER",
         "021": "HSBC",
         "030": "BANCO DEL BAJIO",
         "032": "IXE",
+        "036": "INBURSA",
+        "037": "MULTIVA",
+        "042": "MIFEL",
         "044": "SCOTIABANK",
         "058": "BANREGIO",
+        "059": "INVEX",
+        "062": "AFIRME",
         "072": "BANORTE",
         "127": "BANCO AZTECA",
+        "130": "COMPARTAMOS",
         "137": "BANCOPPEL",
+        "143": "CIBanco",
+        "646": "STP",
+        "722": "MERCADO PAGO",
+        "728": "SPIN BY OXXO",
     }
 
     def find_pattern_in_boxes(pattern):
@@ -633,17 +656,36 @@ def _extract_financial_from_boxes(ocr_boxes):
         if "clabe" not in result:
             for line in lines:
                 digits = re.sub(r"\D", "", line["text"])
-                if len(digits) == 18 and digits.startswith("012"):
+                if len(digits) == 18 and digits[:3] in bank_code_map:
                     result["clabe"] = {"value": digits}
                     if "banco" not in result:
                         bank_code = digits[:3]
-                        if bank_code in bank_code_map:
-                            result["banco"] = {"value": bank_code_map[bank_code]}
+                        result["banco"] = {"value": bank_code_map[bank_code]}
                     break
 
-    account_value, account_box = find_pattern_in_boxes(ACCOUNT_PATTERN)
-    if account_value and "clabe" not in result:
-        result["cuenta"] = {"value": account_value, "source": account_box}
+    # Account number: prefer label-based extraction to avoid matching NSS/folio
+    account_value = None
+    account_box = None
+    for label_key in ("CUENTA", "CONTRATO", "NO. DE CUENTA", "NO CUENTA", "NUMERO DE CUENTA"):
+        val = _extract_label_value(lines, label_key, stop_labels=["CLABE", "CLIENTE", "RFC", "BANCO"])
+        if val:
+            digits = re.sub(r"\D", "", val)
+            if 10 <= len(digits) <= 16:
+                account_value = digits
+                break
+    if not account_value:
+        # Fallback: pattern match but skip if it equals the CLABE
+        found_val, found_box = find_pattern_in_boxes(ACCOUNT_PATTERN)
+        if found_val:
+            clabe_val = result.get("clabe", {}).get("value", "")
+            if found_val != clabe_val and not clabe_val.startswith(found_val):
+                account_value = found_val
+                account_box = found_box
+    if account_value and account_value != result.get("clabe", {}).get("value", ""):
+        entry = {"value": account_value}
+        if account_box:
+            entry["source"] = account_box
+        result["cuenta"] = entry
 
     banco = _extract_label_value(lines, "BANCO", stop_labels=["CLABE", "CUENTA", "TITULAR"])
     if banco:
@@ -677,9 +719,75 @@ def _extract_financial_from_boxes(ocr_boxes):
 
     titular = _extract_label_value(lines, "TITULAR", stop_labels=["CLABE", "CUENTA", "BANCO"])
     if not titular:
+        titular = _extract_label_value(lines, "NOMBRE DEL CLIENTE", stop_labels=["CLABE", "CUENTA", "BANCO"])
+    if not titular:
+        titular = _extract_label_value(lines, "BENEFICIARIO", stop_labels=["CLABE", "CUENTA", "BANCO"])
+    if not titular:
+        titular = _extract_label_value(lines, "A NOMBRE DE", stop_labels=["CLABE", "CUENTA", "BANCO"])
+    if not titular:
         titular = _extract_label_value(lines, "NOMBRE", stop_labels=["CLABE", "CUENTA", "BANCO"])
     if titular:
         result["titular"] = {"value": titular}
+
+    # ── SPEI single-transaction fields (importe, clave_rastreo, referencia, concepto, fecha) ──
+    full_text = " ".join(line["text"] for line in lines).upper()
+
+    # Importe a Transferir / Monto
+    importe = _extract_label_value(lines, "IMPORTE A TRANSFERIR", stop_labels=["IVA", "FECHA", "REFERENCIA", "CLAVE"])
+    if not importe:
+        importe = _extract_label_value(lines, "IMPORTE", stop_labels=["IVA", "TOTAL", "FECHA", "CLAVE"])
+    if not importe:
+        importe = _extract_label_value(lines, "MONTO", stop_labels=["IVA", "TOTAL", "FECHA", "CLAVE"])
+    if importe:
+        result["importe"] = {"value": importe}
+
+    # Clave de Rastreo
+    clave_rastreo = _extract_label_value(lines, "CLAVE DE RASTREO", stop_labels=["RFC", "REFERENCIA", "CUENTA", "NOMBRE"])
+    if not clave_rastreo:
+        clave_rastreo = _extract_label_value(lines, "CLAVE RASTREO", stop_labels=["RFC", "REFERENCIA", "CUENTA", "NOMBRE"])
+    if clave_rastreo:
+        result["clave_rastreo"] = {"value": clave_rastreo}
+
+    # Referencia numérica
+    referencia = _extract_label_value(lines, "REFERENCIA NUMERICA", stop_labels=["CONCEPTO", "CLAVE", "CUENTA", "NOMBRE"])
+    if not referencia:
+        referencia = _extract_label_value(lines, "REFERENCIA", stop_labels=["CONCEPTO", "CLAVE", "CUENTA", "NOMBRE"])
+    if referencia:
+        result["referencia"] = {"value": referencia}
+
+    # Concepto / Propósito de la Transferencia
+    concepto = _extract_label_value(lines, "PROPOSITO DE LA TRANSFERENCIA", stop_labels=["CLAVE", "RFC", "NOMBRE", "CUENTA"])
+    if not concepto:
+        concepto = _extract_label_value(lines, "CONCEPTO DE PAGO", stop_labels=["CLAVE", "RFC", "NOMBRE", "CUENTA"])
+    if not concepto:
+        concepto = _extract_label_value(lines, "CONCEPTO", stop_labels=["CLAVE", "RFC", "NOMBRE", "CUENTA"])
+    if concepto:
+        result["concepto"] = {"value": concepto}
+
+    # Fecha Aplicación (for single-transactions — different from fecha_corte)
+    fecha_aplicacion = _extract_label_value(lines, "FECHA DE APLICACION", stop_labels=["HORA", "REFERENCIA", "CLAVE"])
+    if not fecha_aplicacion:
+        fecha_aplicacion = _extract_label_value(lines, "FECHA APLICACION", stop_labels=["HORA", "REFERENCIA", "CLAVE"])
+    if not fecha_aplicacion:
+        fecha_aplicacion = _extract_label_value(lines, "FECHA DE OPERACION", stop_labels=["HORA", "REFERENCIA", "CLAVE"])
+    if fecha_aplicacion:
+        result["fecha_aplicacion"] = {"value": fecha_aplicacion}
+
+    # Banco receptor / destino
+    banco_receptor = _extract_label_value(lines, "BANCO RECEPTOR", stop_labels=["CUENTA", "CLABE", "NOMBRE"])
+    if not banco_receptor:
+        banco_receptor = _extract_label_value(lines, "BANCO DESTINO", stop_labels=["CUENTA", "CLABE", "NOMBRE"])
+    if not banco_receptor:
+        banco_receptor = _extract_label_value(lines, "INSTITUCION RECEPTORA", stop_labels=["CUENTA", "CLABE", "NOMBRE"])
+    if banco_receptor:
+        result["banco_receptor"] = {"value": banco_receptor}
+
+    # Nombre del beneficiario (SPEI-specific, more specific than the generic "titular")
+    nombre_beneficiario = _extract_label_value(lines, "NOMBRE DEL BENEFICIARIO", stop_labels=["CLABE", "CUENTA", "RFC", "BANCO"])
+    if not nombre_beneficiario:
+        nombre_beneficiario = _extract_label_value(lines, "NOMBRE BENEFICIARIO", stop_labels=["CLABE", "CUENTA", "RFC", "BANCO"])
+    if nombre_beneficiario:
+        result["nombre_beneficiario"] = {"value": nombre_beneficiario}
 
     return result
 

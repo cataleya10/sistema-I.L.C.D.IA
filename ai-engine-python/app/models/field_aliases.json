@@ -24,7 +24,11 @@
     "REGISTRO FEDERAL DE CONTRIBUYENTES",
     "FISCAL",
     "IDENTIFICACION FISCAL",
-    "CEDULA IDENTIFICACION FISCAL"
+    "CEDULA IDENTIFICACION FISCAL",
+    "ORDENANTE",
+    "CURP ORDENANTE",
+    "O CURP ORDENANTE",
+    "RFC O CURP ORDENANTE"
   ],
   "nss": [
     "NSS",
@@ -35,7 +39,12 @@
   ],
   "clabe": [
     "CLABE",
-    "CLAVE BANCARIA ESTANDARIZADA"
+    "CLAVE BANCARIA ESTANDARIZADA",
+    "BENEFICIARIO",
+    "CLABE BENEFICIARIO",
+    "CUENTA CLABE BENEFICIARIO",
+    "DEPOSITO",
+    "CUENTA DEPOSITO"
   ],
   "domicilio": [
     "DOMICILIO",
@@ -47,14 +56,27 @@
     "NUMERO DE CUENTA",
     "NO CUENTA",
     "CARGO",
-    "CUENTA CARGO"
+    "CUENTA CARGO",
+    "FOLIO",
+    "ORDENANTE",
+    "CLABE ORDENANTE",
+    "CUENTA CLABE ORDENANTE",
+    "DEPOSITO",
+    "CUENTA DEPOSITO"
   ],
   "titular": [
     "TITULAR",
     "NOMBRE DEL TITULAR",
     "LEONARDO",
     "ELENA",
-    "MARIA ELENA"
+    "MARIA ELENA",
+    "EMPRESA",
+    "NOMBRE EMPRESA",
+    "2026 NOMBRE EMPRESA",
+    "00 2026 NOMBRE EMPRESA",
+    "ORDENANTE",
+    "NOMBRE ORDENANTE",
+    "NOMBRE"
   ],
   "banco": [
     "BANCO",
@@ -62,7 +84,9 @@
     "BANCA",
     "PETICIONES BANCA",
     "PROCESAN PETICIONES BANCA",
-    "QUE PROCESAN PETICIONES BANCA"
+    "QUE PROCESAN PETICIONES BANCA",
+    "DESTINO",
+    "BANCO DESTINO"
   ],
   "fecha_limite": [
     "FECHA LIMITE",
@@ -167,6 +191,26 @@
   "fecha_corte": [
     "TRANSMISION",
     "HORA TRANSMISION",
-    "FECHA HORA TRANSMISION"
+    "FECHA HORA TRANSMISION",
+    "BMN 930209 927",
+    "RFC BMN 930209 927",
+    "RL CV",
+    "S RL CV",
+    "CONSTRUCTION S RL CV"
+  ],
+  "rfc_emisor": [
+    "ORDENANTE",
+    "CURP ORDENANTE",
+    "O CURP ORDENANTE",
+    "RFC O CURP ORDENANTE"
+  ],
+  "rfc_receptor": [
+    "BENEFICIARIO",
+    "RFC BENEFICIARIO"
+  ],
+  "nombre_beneficiario": [
+    "CARGO",
+    "BENEFICIARIO",
+    "NOMBRE BENEFICIARIO"
   ]
 }

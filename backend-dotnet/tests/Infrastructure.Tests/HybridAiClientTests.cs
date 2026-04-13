@@ -446,37 +446,39 @@ public class HybridAiClientTests
             return """
             {
               "document_id":"00000000-0000-0000-0000-000000000000",
-              "status":"READY",
-              "document_type":"COMPROBANTE_DOMICILIO",
-              "confidence":0.95,
-              "fields":[
+              "success":true,
+              "message":"",
+              "tipo_documento":"COMPROBANTE_DOMICILIO",
+              "confidence_global":0.95,
+              "campos":[
                 {
                   "key":"medidor",
                   "label":"Medidor",
                   "value":"A1B2C3D4",
                   "confidence":0.93,
-                  "valid":true,
-                  "validation_errors":[],
-                  "source":null
+                  "is_critical":false,
+                  "is_valid":true
                 },
                 {
                   "key":"cp",
                   "label":"CP",
                   "value":"12345",
                   "confidence":0.91,
-                  "valid":true,
-                  "validation_errors":[],
-                  "source":null
+                  "is_critical":false,
+                  "is_valid":true
                 }
               ],
+              "validation_summary":{"coverage":1.0,"critical_coverage":1.0,"requires_review":false,"score_decision":"accepted","table_quality_score":0.0},
+
               "warnings":[],
               "errors":[],
-              "meta":{
-                "pages_processed":1,
+              "metadata":{
+                "pages":1,
+                "source":"web",
                 "ocr_engine":"paddleocr",
                 "pipeline_version":"python-extract-v1",
                 "model_version":"clf-v1",
-                "processing_ms":180
+                "processing_time_ms":180
               },
               "ocr_text":"TELMEX PAGAR ANTES DE: 23-ENE-2026 TOTAL A PAGAR: 549.00"
             }
@@ -488,37 +490,39 @@ public class HybridAiClientTests
             return """
             {
               "document_id":"00000000-0000-0000-0000-000000000000",
-              "status":"READY",
-              "document_type":"COMPROBANTE_DOMICILIO",
-              "confidence":0.95,
-              "fields":[
+              "success":true,
+              "message":"",
+              "tipo_documento":"COMPROBANTE_DOMICILIO",
+              "confidence_global":0.95,
+              "campos":[
                 {
                   "key":"medidor",
                   "label":"Medidor",
                   "value":"A1B2C3D4",
                   "confidence":0.93,
-                  "valid":true,
-                  "validation_errors":[],
-                  "source":null
+                  "is_critical":false,
+                  "is_valid":true
                 },
                 {
                   "key":"cp",
                   "label":"CP",
                   "value":"12345",
                   "confidence":0.91,
-                  "valid":true,
-                  "validation_errors":[],
-                  "source":null
+                  "is_critical":false,
+                  "is_valid":true
                 }
               ],
+              "validation_summary":{"coverage":1.0,"critical_coverage":1.0,"requires_review":false,"score_decision":"accepted","table_quality_score":0.0},
+
               "warnings":[],
               "errors":[],
-              "meta":{
-                "pages_processed":1,
+              "metadata":{
+                "pages":1,
+                "source":"web",
                 "ocr_engine":"paddleocr",
                 "pipeline_version":"python-extract-v1",
                 "model_version":"clf-v1",
-                "processing_ms":180
+                "processing_time_ms":180
               }
             }
             """;
@@ -554,7 +558,7 @@ public class HybridAiClientTests
               "last_event": {
                 "timestamp_utc": "2026-02-17T16:29:58+00:00",
                 "document_id": "00000000-0000-0000-0000-000000000001",
-                "document_type": "INE",
+                "tipo_documento": "INE",
                 "status": "READY",
                 "confidence": 0.93,
                 "trained": true,
@@ -591,37 +595,39 @@ public class HybridAiClientTests
             return """
             {
               "document_id":"00000000-0000-0000-0000-000000000000",
-              "status":"READY",
-              "document_type":"FACTURA",
-              "confidence":0.95,
-              "fields":[
+              "success":true,
+              "message":"",
+              "tipo_documento":"FACTURA",
+              "confidence_global":0.95,
+              "campos":[
                 {
                   "key":"tabla_celdas",
                   "label":"Tabla celdas",
                   "value":"{\"source\":\"python\",\"rows\":[[\"CUENTA\",\"REFERENCIA\",\"IMPORTE\"],[\"56551346133\",\"1620260115132703271255\",\"$1,462.58\"]]}",
                   "confidence":0.93,
-                  "valid":true,
-                  "validation_errors":[],
-                  "source":null
+                  "is_critical":false,
+                  "is_valid":true
                 },
                 {
                   "key":"banco",
                   "label":"Banco",
                   "value":"TEXTO NO DESEADO",
                   "confidence":0.55,
-                  "valid":false,
-                  "validation_errors":["Banco invalido."],
-                  "source":null
+                  "is_critical":false,
+                  "is_valid":false
                 }
               ],
+              "validation_summary":{"coverage":1.0,"critical_coverage":1.0,"requires_review":false,"score_decision":"accepted","table_quality_score":0.0},
+
               "warnings":[],
               "errors":[],
-              "meta":{
-                "pages_processed":1,
+              "metadata":{
+                "pages":1,
+                "source":"web",
                 "ocr_engine":"paddleocr",
                 "pipeline_version":"python-extract-v1",
                 "model_version":"clf-v1",
-                "processing_ms":180
+                "processing_time_ms":180
               },
               "ocr_text":"PAGO DE NOMINA CUENTA REFERENCIA IMPORTE ESTATUS 56551346133 1620260115132703271255 $1,462.58 PROCESADO"
             }
@@ -633,37 +639,39 @@ public class HybridAiClientTests
             return """
             {
               "document_id":"00000000-0000-0000-0000-000000000000",
-              "status":"READY",
-              "document_type":"FACTURA",
-              "confidence":0.95,
-              "fields":[
+              "success":true,
+              "message":"",
+              "tipo_documento":"FACTURA",
+              "confidence_global":0.95,
+              "campos":[
                 {
                   "key":"tabla_celdas",
                   "label":"Tabla celdas",
                   "value":"{\"source\":\"python\",\"rows\":[[\"CUENTA\",\"REFERENCIA\",\"IMPORTE\"],[\"56551346133\",\"1620260115132703271255\",\"$1,462.58\"]]}",
                   "confidence":0.93,
-                  "valid":true,
-                  "validation_errors":[],
-                  "source":null
+                  "is_critical":false,
+                  "is_valid":true
                 },
                 {
                   "key":"banco",
                   "label":"Banco",
                   "value":"TEXTO NO DESEADO",
                   "confidence":0.55,
-                  "valid":false,
-                  "validation_errors":["Banco invalido."],
-                  "source":null
+                  "is_critical":false,
+                  "is_valid":false
                 }
               ],
+              "validation_summary":{"coverage":1.0,"critical_coverage":1.0,"requires_review":false,"score_decision":"accepted","table_quality_score":0.0},
+
               "warnings":[],
               "errors":[],
-              "meta":{
-                "pages_processed":1,
+              "metadata":{
+                "pages":1,
+                "source":"web",
                 "ocr_engine":"paddleocr",
                 "pipeline_version":"python-extract-v1",
                 "model_version":"clf-v1",
-                "processing_ms":180
+                "processing_time_ms":180
               }
             }
             """;
@@ -694,28 +702,31 @@ public class HybridAiClientTests
             return """
             {
               "document_id":"00000000-0000-0000-0000-000000000000",
-              "status":"READY",
-              "document_type":"FACTURA",
-              "confidence":0.70,
-              "fields":[
+              "success":true,
+              "message":"",
+              "tipo_documento":"FACTURA",
+              "confidence_global":0.70,
+              "campos":[
                 {
                   "key":"tabla_celdas",
                   "label":"Tabla celdas",
                   "value":"{\"source\":\"text_lines\",\"rows\":[[\"CUENTA\",\"REFERENCIA\",\"IMPORTE\",\"NOMBRE\",\"APELLIDO PATERNO\",\"APELLIDO MATERNO\",\"ESTATUS\",\"CONCEPTO\"],[\"56783223195\",\"1620260115134340581263\",\"$610.44\",\"MARLA GRISELDA\",\"MENDEZ\",\"FLORES\",\"PROCESADO\",\"PAGO DE NOMINA\"],[\"56936397470\",\"1620260115134348451388\",\"$1,537.35\",\"ROLANDO ROGERIO\",\"CONTRERAS\",\"CAMARGO\",\"PROCESADO\",\"PAGO DE NOMINA\"]],\"canonical_rows\":[{\"cuenta\":\"56783223195\",\"referencia\":\"1620260115134340581263\",\"importe\":\"$610.44\",\"nombre\":\"MARLA GRISELDA\",\"apellido_paterno\":\"MENDEZ\",\"apellido_materno\":\"FLORES\",\"estatus\":\"PROCESADO\",\"concepto_pago\":\"PAGO DE NOMINA\"},{\"cuenta\":\"56936397470\",\"referencia\":\"1620260115134348451388\",\"importe\":\"$1,537.35\",\"nombre\":\"ROLANDO ROGERIO\",\"apellido_paterno\":\"CONTRERAS\",\"apellido_materno\":\"CAMARGO\",\"estatus\":\"PROCESADO\",\"concepto_pago\":\"PAGO DE NOMINA\"}]}",
                   "confidence":0.70,
-                  "valid":true,
-                  "validation_errors":[],
-                  "source":null
+                  "is_critical":false,
+                  "is_valid":true
                 }
               ],
+              "validation_summary":{"coverage":1.0,"critical_coverage":1.0,"requires_review":false,"score_decision":"accepted","table_quality_score":0.0},
+
               "warnings":[],
               "errors":[],
-              "meta":{
-                "pages_processed":1,
+              "metadata":{
+                "pages":1,
+                "source":"web",
                 "ocr_engine":"paddleocr",
                 "pipeline_version":"python-extract-v1",
                 "model_version":"clf-v1",
-                "processing_ms":180
+                "processing_time_ms":180
               },
               "ocr_text":"REPORTE DE OPERACIONES PAGO DE NOMINA CUENTA REFERENCIA IMPORTE NOMBRE 56783223195 1620260115134340581263 $610.44 MARLA GRISELDA MENDEZ FLORES PROCESADO"
             }
@@ -727,28 +738,31 @@ public class HybridAiClientTests
             return """
             {
               "document_id":"00000000-0000-0000-0000-000000000000",
-              "status":"READY",
-              "document_type":"FACTURA",
-              "confidence":0.70,
-              "fields":[
+              "success":true,
+              "message":"",
+              "tipo_documento":"FACTURA",
+              "confidence_global":0.70,
+              "campos":[
                 {
                   "key":"tabla_celdas",
                   "label":"Tabla celdas",
                   "value":"{\"source\":\"text_lines\",\"rows\":[[\"CUENTA\",\"REFERENCIA\",\"IMPORTE\",\"NOMBRE\",\"APELLIDO PATERNO\",\"APELLIDO MATERNO\",\"ESTATUS\",\"CONCEPTO\"],[\"56783223195\",\"1620260115134340581263\",\"$610.44\",\"MARLA GRISELDA\",\"MENDEZ\",\"FLORES\",\"PROCESADO\",\"PAGO DE NOMINA\"],[\"56936397470\",\"1620260115134348451388\",\"$1,537.35\",\"ROLANDO ROGERIO\",\"CONTRERAS\",\"CAMARGO\",\"PROCESADO\",\"PAGO DE NOMINA\"]],\"canonical_rows\":[{\"cuenta\":\"56783223195\",\"referencia\":\"1620260115134340581263\",\"importe\":\"$610.44\",\"nombre\":\"MARLA GRISELDA\",\"apellido_paterno\":\"MENDEZ\",\"apellido_materno\":\"FLORES\",\"estatus\":\"PROCESADO\",\"concepto_pago\":\"PAGO DE NOMINA\"},{\"cuenta\":\"56936397470\",\"referencia\":\"1620260115134348451388\",\"importe\":\"$1,537.35\",\"nombre\":\"ROLANDO ROGERIO\",\"apellido_paterno\":\"CONTRERAS\",\"apellido_materno\":\"CAMARGO\",\"estatus\":\"PROCESADO\",\"concepto_pago\":\"PAGO DE NOMINA\"}]}",
                   "confidence":0.70,
-                  "valid":true,
-                  "validation_errors":[],
-                  "source":null
+                  "is_critical":false,
+                  "is_valid":true
                 }
               ],
+              "validation_summary":{"coverage":1.0,"critical_coverage":1.0,"requires_review":false,"score_decision":"accepted","table_quality_score":0.0},
+
               "warnings":[],
               "errors":[],
-              "meta":{
-                "pages_processed":1,
+              "metadata":{
+                "pages":1,
+                "source":"web",
                 "ocr_engine":"paddleocr",
                 "pipeline_version":"python-extract-v1",
                 "model_version":"clf-v1",
-                "processing_ms":180
+                "processing_time_ms":180
               }
             }
             """;
@@ -779,37 +793,39 @@ public class HybridAiClientTests
             return """
             {
               "document_id":"00000000-0000-0000-0000-000000000000",
-              "status":"READY",
-              "document_type":"DATOS_BANCARIOS",
-              "confidence":0.75,
-              "fields":[
+              "success":true,
+              "message":"",
+              "tipo_documento":"DATOS_BANCARIOS",
+              "confidence_global":0.75,
+              "campos":[
                 {
                   "key":"tabla_celdas",
                   "label":"Tabla celdas",
                   "value":"{\"source\":\"python\",\"rows\":[[\"TIPO REGISTRO\",\"CUENTA\",\"REFERENCIA\",\"IMPORTE\",\"CLAVE DEL BENEFICIARIO\",\"NOMBRE DEL BENEFICIARIO\",\"NO. CUENTA\",\"NO. BANCO\",\"CONCEPTO\"],[\"DA ALTA\",\"04 CLIENTE ABONO EN\",\"$700.00\",\"15/01/2026\",\"A246\",\"PEREZ CORNEJO\",\"RUBEN\",\"0007425010945541678\",\"72 1\",\"PAGOS246\"]],\"canonical_rows\":[{\"tipo\":\"DA ALTA\",\"cuenta\":\"04 CLIENTE ABONO EN\",\"importe\":\"$700.00\",\"fecha\":\"15/01/2026\",\"referencia\":\"A246\",\"apellido_paterno\":\"PEREZ CORNEJO\",\"nombre\":\"RUBEN\",\"no_cuenta\":\"0007425010945541678\",\"no_banco\":\"72 1\",\"concepto_pago\":\"PAGOS246\"}]}",
                   "confidence":0.89,
-                  "valid":true,
-                  "validation_errors":[],
-                  "source":null
+                  "is_critical":false,
+                  "is_valid":true
                 },
                 {
                   "key":"folio",
                   "label":"Folio",
                   "value":"62016189548",
                   "confidence":0.93,
-                  "valid":true,
-                  "validation_errors":[],
-                  "source":null
+                  "is_critical":false,
+                  "is_valid":true
                 }
               ],
+              "validation_summary":{"coverage":1.0,"critical_coverage":1.0,"requires_review":false,"score_decision":"accepted","table_quality_score":0.0},
+
               "warnings":[],
               "errors":[],
-              "meta":{
-                "pages_processed":1,
+              "metadata":{
+                "pages":1,
+                "source":"web",
                 "ocr_engine":"paddleocr",
                 "pipeline_version":"python-extract-v1",
                 "model_version":"clf-v1",
-                "processing_ms":180
+                "processing_time_ms":180
               },
               "ocr_text":"REPORTE DE OPERACIONES SCOTIABANK TIPO REGISTRO CUENTA REFERENCIA IMPORTE DA ALTA 0007425010945541678 A246 $700.00"
             }
@@ -821,37 +837,39 @@ public class HybridAiClientTests
             return """
             {
               "document_id":"00000000-0000-0000-0000-000000000000",
-              "status":"READY",
-              "document_type":"DATOS_BANCARIOS",
-              "confidence":0.75,
-              "fields":[
+              "success":true,
+              "message":"",
+              "tipo_documento":"DATOS_BANCARIOS",
+              "confidence_global":0.75,
+              "campos":[
                 {
                   "key":"tabla_celdas",
                   "label":"Tabla celdas",
                   "value":"{\"source\":\"python\",\"rows\":[[\"TIPO REGISTRO\",\"CUENTA\",\"REFERENCIA\",\"IMPORTE\",\"CLAVE DEL BENEFICIARIO\",\"NOMBRE DEL BENEFICIARIO\",\"NO. CUENTA\",\"NO. BANCO\",\"CONCEPTO\"],[\"DA ALTA\",\"04 CLIENTE ABONO EN\",\"$700.00\",\"15/01/2026\",\"A246\",\"PEREZ CORNEJO\",\"RUBEN\",\"0007425010945541678\",\"72 1\",\"PAGOS246\"]],\"canonical_rows\":[{\"tipo\":\"DA ALTA\",\"cuenta\":\"04 CLIENTE ABONO EN\",\"importe\":\"$700.00\",\"fecha\":\"15/01/2026\",\"referencia\":\"A246\",\"apellido_paterno\":\"PEREZ CORNEJO\",\"nombre\":\"RUBEN\",\"no_cuenta\":\"0007425010945541678\",\"no_banco\":\"72 1\",\"concepto_pago\":\"PAGOS246\"}]}",
                   "confidence":0.89,
-                  "valid":true,
-                  "validation_errors":[],
-                  "source":null
+                  "is_critical":false,
+                  "is_valid":true
                 },
                 {
                   "key":"folio",
                   "label":"Folio",
                   "value":"62016189548",
                   "confidence":0.93,
-                  "valid":true,
-                  "validation_errors":[],
-                  "source":null
+                  "is_critical":false,
+                  "is_valid":true
                 }
               ],
+              "validation_summary":{"coverage":1.0,"critical_coverage":1.0,"requires_review":false,"score_decision":"accepted","table_quality_score":0.0},
+
               "warnings":[],
               "errors":[],
-              "meta":{
-                "pages_processed":1,
+              "metadata":{
+                "pages":1,
+                "source":"web",
                 "ocr_engine":"paddleocr",
                 "pipeline_version":"python-extract-v1",
                 "model_version":"clf-v1",
-                "processing_ms":180
+                "processing_time_ms":180
               }
             }
             """;
@@ -882,18 +900,22 @@ public class HybridAiClientTests
             return """
             {
               "document_id":"00000000-0000-0000-0000-000000000000",
-              "status":"READY",
-              "document_type":"INE",
-              "confidence":0.95,
-              "fields":[],
+              "success":true,
+              "message":"",
+              "tipo_documento":"INE",
+              "confidence_global":0.95,
+              "campos":[],
+              "validation_summary":{"coverage":1.0,"critical_coverage":1.0,"requires_review":false,"score_decision":"accepted","table_quality_score":0.0},
+
               "warnings":[],
               "errors":[],
-              "meta":{
-                "pages_processed":1,
+              "metadata":{
+                "pages":1,
+                "source":"web",
                 "ocr_engine":"paddleocr",
                 "pipeline_version":"python-extract-v1",
                 "model_version":"clf-v1",
-                "processing_ms":180
+                "processing_time_ms":180
               },
               "ocr_text":"INSTITUTO NACIONAL ELECTORAL NOMBRE IA CAMPOS CURP GACE010425HTCRMRA8 FECHA DE NACIMIENTO 25/04/2001 CLAVE DE ELECTOR GRCMER01042527H100"
             }
@@ -905,37 +927,39 @@ public class HybridAiClientTests
             return """
             {
               "document_id":"00000000-0000-0000-0000-000000000000",
-              "status":"READY",
-              "document_type":"INE",
-              "confidence":0.90,
-              "fields":[
+              "success":true,
+              "message":"",
+              "tipo_documento":"INE",
+              "confidence_global":0.96,
+              "campos":[
                 {
                   "key":"nombre",
                   "label":"Nombre",
                   "value":"ERWIN GUSTAVO GARCIA CAMPOS",
-                  "confidence":0.80,
-                  "valid":true,
-                  "validation_errors":[],
-                  "source":null
+                  "confidence":0.93,
+                  "is_critical":false,
+                  "is_valid":true
                 },
                 {
                   "key":"curp",
                   "label":"CURP",
                   "value":"GACE010425HTCRMRA8",
-                  "confidence":0.92,
-                  "valid":true,
-                  "validation_errors":[],
-                  "source":null
+                  "confidence":0.95,
+                  "is_critical":false,
+                  "is_valid":true
                 }
               ],
+              "validation_summary":{"coverage":1.0,"critical_coverage":1.0,"requires_review":false,"score_decision":"accepted","table_quality_score":0.0},
+
               "warnings":[],
               "errors":[],
-              "meta":{
-                "pages_processed":1,
+              "metadata":{
+                "pages":1,
+                "source":"web",
                 "ocr_engine":"paddleocr",
                 "pipeline_version":"python-extract-v1",
                 "model_version":"clf-v1",
-                "processing_ms":180
+                "processing_time_ms":180
               }
             }
             """;
@@ -966,55 +990,55 @@ public class HybridAiClientTests
             return """
             {
               "document_id":"00000000-0000-0000-0000-000000000000",
-              "status":"READY",
-              "document_type":"ACTA_NACIMIENTO",
-              "confidence":0.95,
-              "fields":[
+              "success":true,
+              "message":"",
+              "tipo_documento":"ACTA_NACIMIENTO",
+              "confidence_global":0.95,
+              "campos":[
                 {
                   "key":"nombre",
                   "label":"Nombre",
                   "value":"ERWIN GUSTAVO GARCIA CAMPOS",
                   "confidence":0.95,
-                  "valid":true,
-                  "validation_errors":[],
-                  "source":null
+                  "is_critical":false,
+                  "is_valid":true
                 },
                 {
                   "key":"folio",
                   "label":"Folio",
                   "value":"0001",
                   "confidence":0.95,
-                  "valid":true,
-                  "validation_errors":[],
-                  "source":null
+                  "is_critical":false,
+                  "is_valid":true
                 },
                 {
                   "key":"numero_acta",
                   "label":"Numero de acta",
                   "value":"437",
                   "confidence":0.95,
-                  "valid":true,
-                  "validation_errors":[],
-                  "source":null
+                  "is_critical":false,
+                  "is_valid":true
                 },
                 {
                   "key":"fecha_nacimiento",
                   "label":"Fecha de nacimiento",
                   "value":"20/08/2001",
                   "confidence":0.95,
-                  "valid":true,
-                  "validation_errors":[],
-                  "source":null
+                  "is_critical":false,
+                  "is_valid":true
                 }
               ],
+              "validation_summary":{"coverage":1.0,"critical_coverage":1.0,"requires_review":false,"score_decision":"accepted","table_quality_score":0.0},
+
               "warnings":[],
               "errors":[],
-              "meta":{
-                "pages_processed":1,
+              "metadata":{
+                "pages":1,
+                "source":"web",
                 "ocr_engine":"paddleocr",
                 "pipeline_version":"python-extract-v1",
                 "model_version":"clf-v1",
-                "processing_ms":180
+                "processing_time_ms":180
               },
               "ocr_text":"ACTA DE NACIMIENTO NOMBRE(S): FOLIO JSP,CAPTURANCO EL LDENTIFICADORELECTRONICO NUMERO DE ACTA DE NACIMIENTO"
             }
@@ -1026,55 +1050,55 @@ public class HybridAiClientTests
             return """
             {
               "document_id":"00000000-0000-0000-0000-000000000000",
-              "status":"READY",
-              "document_type":"ACTA_NACIMIENTO",
-              "confidence":0.95,
-              "fields":[
+              "success":true,
+              "message":"",
+              "tipo_documento":"ACTA_NACIMIENTO",
+              "confidence_global":0.95,
+              "campos":[
                 {
                   "key":"nombre",
                   "label":"Nombre",
                   "value":"ERWIN GUSTAVO GARCIA CAMPOS",
                   "confidence":0.95,
-                  "valid":true,
-                  "validation_errors":[],
-                  "source":null
+                  "is_critical":false,
+                  "is_valid":true
                 },
                 {
                   "key":"folio",
                   "label":"Folio",
                   "value":"0001",
                   "confidence":0.95,
-                  "valid":true,
-                  "validation_errors":[],
-                  "source":null
+                  "is_critical":false,
+                  "is_valid":true
                 },
                 {
                   "key":"numero_acta",
                   "label":"Numero de acta",
                   "value":"437",
                   "confidence":0.95,
-                  "valid":true,
-                  "validation_errors":[],
-                  "source":null
+                  "is_critical":false,
+                  "is_valid":true
                 },
                 {
                   "key":"fecha_nacimiento",
                   "label":"Fecha de nacimiento",
                   "value":"20/08/2001",
                   "confidence":0.95,
-                  "valid":true,
-                  "validation_errors":[],
-                  "source":null
+                  "is_critical":false,
+                  "is_valid":true
                 }
               ],
+              "validation_summary":{"coverage":1.0,"critical_coverage":1.0,"requires_review":false,"score_decision":"accepted","table_quality_score":0.0},
+
               "warnings":[],
               "errors":[],
-              "meta":{
-                "pages_processed":1,
+              "metadata":{
+                "pages":1,
+                "source":"web",
                 "ocr_engine":"paddleocr",
                 "pipeline_version":"python-extract-v1",
                 "model_version":"clf-v1",
-                "processing_ms":180
+                "processing_time_ms":180
               }
             }
             """;

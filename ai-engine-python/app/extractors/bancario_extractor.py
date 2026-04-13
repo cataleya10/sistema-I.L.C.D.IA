@@ -189,6 +189,7 @@ async def extract(
     # Enriquecimiento: inferir banco desde CLABE y completar campos con
     # etiquetas específicas de banco (Santander, Banorte, BBVA, etc.)
     _enrich_banco_from_clabe(fields)
+    _validate_clabe_confidence(fields)
     _enrich_bancario_fields(fields, ocr_text=ocr_text, raw_text=raw_text, ocr_boxes=ocr_boxes or [])
 
     _log_coverage(fields, filename)
@@ -239,11 +240,32 @@ def _enrich_banco_from_clabe(fields: list[dict[str, Any]]) -> None:
                 fields.append(_make_field("banco", "Banco", inferred, []))
 
 
+def _validate_clabe_confidence(fields: list[dict[str, Any]]) -> None:
+    """Validates CLABE checksum and adjusts confidence. In-place."""
+    from app.utils.validators import validate_clabe
+
+    for field in fields:
+        if field.get("key") != "clabe" or not field.get("value"):
+            continue
+        clabe_val = str(field["value"]).strip()
+        is_valid, errors = validate_clabe(clabe_val)
+        if is_valid:
+            # Valid checksum → boost confidence
+            field["confidence"] = max(field.get("confidence", 0), 0.92)
+        else:
+            # Invalid checksum → flag but don't discard (may be OCR error)
+            field["confidence"] = min(field.get("confidence", 1.0), 0.55)
+            field["valid"] = False
+            field.setdefault("validation_errors", []).extend(errors)
+            logger.warning("bancario CLABE checksum failed: %s → %s", clabe_val, errors)
+
+
 # ─── Patrones de enriquecimiento por etiqueta de banco ───────────────────────
 
 # Titular — etiquetas usadas por distintos bancos
 _TITULAR_PATTERNS: list[re.Pattern] = [
     re.compile(r"(?:NOMBRE\s+DEL?\s+CLIENTE|CLIENTE|TITULAR|A\s+NOMBRE\s+DE|BENEFICIARIO)[:\s]+([A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ\s,\.]{4,80}?)(?:\n|\s{2,}|RFC|CLABE|CUENTA|$)", re.IGNORECASE),
+    re.compile(r"NOMBRE\s*(?:COMPLETO)?[:\s]+([A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ\s,\.]{4,80}?)(?:\n|\s{2,}|RFC|CLABE|CUENTA|CURP|$)", re.IGNORECASE),
 ]
 
 # Fecha de corte — múltiples etiquetas

@@ -154,7 +154,7 @@ public sealed class HybridAiClient : IPythonAiClient
 
         // Usar la respuesta Python ya obtenida en el primer call (si tiene campos extraídos)
         DocumentProcessResponse? pythonResponse =
-            ocr?.PythonResponse?.Fields.Count > 0 ? ocr.PythonResponse : null;
+            ocr?.PythonResponse?.Fields?.Count > 0 ? ocr.PythonResponse : null;
 
         // Solo hacer una segunda llamada a Python si el primer call no retornó campos
         if (pythonResponse is null)
@@ -226,20 +226,21 @@ public sealed class HybridAiClient : IPythonAiClient
         DocumentProcessResponse preferred,
         DocumentProcessResponse secondary)
     {
-        var mergedFields = MergeFields(preferred.Fields, secondary.Fields);
-        var mergedWarnings = preferred.Warnings
-            .Concat(secondary.Warnings)
+        var mergedFields = MergeFields(preferred.Fields ?? [], secondary.Fields ?? []);
+        var mergedWarnings = (preferred.Warnings ?? [])
+            .Concat(secondary.Warnings ?? [])
             .Where(w => !string.IsNullOrWhiteSpace(w))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        var mergedErrors = preferred.Errors
-            .Concat(secondary.Errors)
+        var mergedErrors = (preferred.Errors ?? [])
+            .Concat(secondary.Errors ?? [])
             .Where(e => !string.IsNullOrWhiteSpace(e))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        var mergedPipeline = preferred.Meta.PipelineVersion.Contains("hybrid-merge-v1", StringComparison.OrdinalIgnoreCase)
-            ? preferred.Meta.PipelineVersion
-            : $"{preferred.Meta.PipelineVersion}+hybrid-merge-v1";
+        var pipelineVersion = preferred.Meta.PipelineVersion ?? "";
+        var mergedPipeline = pipelineVersion.Contains("hybrid-merge-v1", StringComparison.OrdinalIgnoreCase)
+            ? pipelineVersion
+            : $"{pipelineVersion}+hybrid-merge-v1";
         var mergedMeta = preferred.Meta with { PipelineVersion = mergedPipeline };
 
         return new DocumentProcessResponse(
@@ -345,8 +346,8 @@ public sealed class HybridAiClient : IPythonAiClient
             return candidate.Confidence > current.Confidence;
         }
 
-        var currentErrors = current.ValidationErrors.Count;
-        var candidateErrors = candidate.ValidationErrors.Count;
+        var currentErrors = (current.ValidationErrors ?? []).Count;
+        var candidateErrors = (candidate.ValidationErrors ?? []).Count;
         if (currentErrors != candidateErrors)
         {
             return candidateErrors < currentErrors;
@@ -408,6 +409,10 @@ public sealed class HybridAiClient : IPythonAiClient
         if (tokens.Length <= 2)
         {
             score -= 15;
+        }
+        if (tokens.Length > 6)
+        {
+            score -= (tokens.Length - 6) * 15;
         }
 
         foreach (var token in tokens)
@@ -748,12 +753,12 @@ public sealed class HybridAiClient : IPythonAiClient
             return normalizedResponse;
         }
 
-        var filteredFields = normalizedResponse.Fields
+        var filteredFields = (normalizedResponse.Fields ?? [])
             .Where(field => string.Equals(field.Key, "tabla_celdas", StringComparison.OrdinalIgnoreCase))
             .ToArray();
         if (filteredFields.Length == 0)
         {
-            filteredFields = normalizedResponse.Fields
+            filteredFields = (normalizedResponse.Fields ?? [])
                 .Where(field => string.Equals(field.Key, "pago_detalle", StringComparison.OrdinalIgnoreCase))
                 .ToArray();
         }
@@ -780,7 +785,18 @@ public sealed class HybridAiClient : IPythonAiClient
             return response;
         }
 
-        var warnings = response.Warnings
+        // Do NOT reclassify synthetic single-transaction tables (individual SPEI receipts)
+        // These are legitimately DATOS_BANCARIOS with a synthesized 1-row Beneficiarios table.
+        var tablaCeldas = (response.Fields ?? []).FirstOrDefault(f =>
+            string.Equals(f.Key, "tabla_celdas", StringComparison.OrdinalIgnoreCase));
+        if (tablaCeldas is not null
+            && !string.IsNullOrWhiteSpace(tablaCeldas.Value)
+            && tablaCeldas.Value.Contains("synthetic_single_transaction", StringComparison.OrdinalIgnoreCase))
+        {
+            return response;
+        }
+
+        var warnings = (response.Warnings ?? [])
             .Append("Tipo corregido DATOS_BANCARIOS→FACTURA por tabla estructurada de pago/dispersión.")
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -801,7 +817,7 @@ public sealed class HybridAiClient : IPythonAiClient
     {
         foreach (var fieldKey in new[] { "tabla_celdas", "pago_detalle" })
         {
-            var field = response.Fields.FirstOrDefault(x =>
+            var field = (response.Fields ?? []).FirstOrDefault(x =>
                 string.Equals(x.Key, fieldKey, StringComparison.OrdinalIgnoreCase)
                 && x.Valid
                 && !string.IsNullOrWhiteSpace(x.Value));

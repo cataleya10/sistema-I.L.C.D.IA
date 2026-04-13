@@ -393,8 +393,17 @@ def _correct_doc_type_from_fields(
     extracted_keys = {f.get("key") for f in fields if f.get("value")}
 
     if doc_type == "DATOS_BANCARIOS" and _looks_like_payment_table(fields):
+        # Don't reclassify synthetic single-transaction tables (SPEI receipts)
+        _is_synthetic = any(
+            '"synthetic_single_transaction"' in (f.get("value") or "")
+            for f in fields
+            if f.get("key") in ("tabla_celdas", "pago_detalle")
+        )
+        # Don't reclassify multi-row dispersions (canonical_rows > 1)
+        _, row_count = _extract_structured_table_profile(fields)
+        _is_multi_row_dispersion = row_count > 1
         bank_signals = len(extracted_keys & _TYPE_SIGNAL_FIELDS["DATOS_BANCARIOS"])
-        if bank_signals < 5:
+        if bank_signals < 5 and not _is_synthetic and not _is_multi_row_dispersion:
             new_conf = max(confidence, 0.82)
             warning = (
                 "Tipo corregido DATOS_BANCARIOS→FACTURA por tabla estructurada "

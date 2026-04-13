@@ -131,7 +131,7 @@ public class DocumentService : IDocumentService
             return null;
         }
 
-        var tables = document.Tables
+        var tables = (document.Tables ?? [])
             .OrderBy(t => t.TableIndex)
             .Select(MapTable)
             .ToList();
@@ -147,7 +147,7 @@ public class DocumentService : IDocumentService
             string.Empty,
             document.MimeType,
             document.NeedsReview,
-            document.Fields.Select(MapField).ToList(),
+            (document.Fields ?? []).Select(MapField).ToList(),
             tables
         );
     }
@@ -368,7 +368,7 @@ public class DocumentService : IDocumentService
             _dbContext.DocumentFields.RemoveRange(existingFields);
         }
 
-        document.Fields = response.Fields.Select(field => new DocumentField
+        document.Fields = (response.Fields ?? []).Select(field => new DocumentField
         {
             Id = Guid.NewGuid(),
             DocumentId = document.Id,
@@ -377,7 +377,7 @@ public class DocumentService : IDocumentService
             FieldValue = field.Value,
             Confidence = field.Confidence,
             IsValid = field.Valid,
-            ValidationErrors = field.ValidationErrors.ToArray(),
+            ValidationErrors = (field.ValidationErrors ?? []).ToArray(),
             SourcePage = field.Source?.Page,
             SourceBbox = field.Source?.Bbox?.ToArray()
         }).ToList();
@@ -402,7 +402,7 @@ public class DocumentService : IDocumentService
                 Id = Guid.NewGuid(),
                 DocumentId = document.Id,
                 TableIndex = index,
-                Columns = table.Columns.ToArray(),
+                Columns = (table.Columns ?? []).ToArray(),
                 RowsJson = JsonSerializer.Serialize(table.Rows),
                 Quality = table.Quality,
                 RowCount = table.RowCount,
@@ -412,9 +412,9 @@ public class DocumentService : IDocumentService
         }
 
         var needsReview = response.Status == DocumentStatus.NeedsReview;
-        if (needsReview && ShouldForceReadyForActa(document.DocumentType, document.Fields.ToList()))
+        if (needsReview && ShouldForceReadyForActa(document.DocumentType, (document.Fields ?? []).ToList()))
         {
-            NormalizeActaCriticalFlags(document.Fields.ToList());
+            NormalizeActaCriticalFlags((document.Fields ?? []).ToList());
             needsReview = false;
         }
         if (!needsReview && (response.Fields is null || response.Fields.Count == 0))
@@ -452,7 +452,7 @@ public class DocumentService : IDocumentService
 
         foreach (var update in request.Fields)
         {
-            var field = document.Fields.FirstOrDefault(x => x.FieldKey == update.Key);
+            var field = (document.Fields ?? []).FirstOrDefault(x => x.FieldKey == update.Key);
             if (field is null)
             {
                 continue;
@@ -595,7 +595,7 @@ public class DocumentService : IDocumentService
 
     private static DocumentProcessResponse BuildResponseFromDocument(Document document)
     {
-        var fields = document.Fields
+        var fields = (document.Fields ?? [])
             .Select(field =>
             {
                 FieldSourceDto? source = null;
@@ -610,13 +610,13 @@ public class DocumentService : IDocumentService
                     field.CorrectedValue ?? field.FieldValue,
                     field.Confidence,
                     field.IsValid,
-                    field.ValidationErrors,
+                    field.ValidationErrors ?? [],
                     source
                 );
             })
             .ToList();
 
-        var tables = document.Tables
+        var tables = (document.Tables ?? [])
             .OrderBy(t => t.TableIndex)
             .Select(MapTable)
             .ToList();

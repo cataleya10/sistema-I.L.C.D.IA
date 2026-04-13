@@ -1307,12 +1307,14 @@ def _extract_label_value(
         tokens = [tok for tok in alias.strip().split() if tok]
         if not tokens:
             continue
-        pattern = r"(?i)" + r"\\s*".join(re.escape(tok) for tok in tokens) + r"\\s*[:\\-]?\\s*(.+)$"
+        pattern = r"(?i)" + r"\s*".join(re.escape(tok) for tok in tokens) + r"\s*[:\-]?\s*(.+)$"
         match = re.search(pattern, line_text)
         if match:
             candidate = match.group(1).strip()
-            if candidate and (value_regex is None or value_regex.search(candidate)):
-                return candidate
+            # Reject candidates that are only punctuation/symbols (e.g. trailing ":")
+            if candidate and re.search(r"[A-Za-z0-9]", candidate):
+                if value_regex is None or value_regex.search(candidate):
+                    return candidate
     if stop_labels is None:
         stop_labels = []
     below = _collect_below(lines, line, stop_labels, max_lines=1)

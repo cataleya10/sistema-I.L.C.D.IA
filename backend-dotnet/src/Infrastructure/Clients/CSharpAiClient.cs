@@ -187,12 +187,13 @@ public sealed class CSharpAiClient : IPythonAiClient
                     : DocumentStatus.NeedsReview,
 
             DocumentType.DatosBancarios =>
-                (Has(fields, "clabe") && Has(fields, "titular"))
+                (Has(fields, "clabe") && (Has(fields, "titular") || Has(fields, "banco")))
+                || (Has(fields, "cuenta") && Has(fields, "titular"))
                     ? DocumentStatus.Ready
                     : DocumentStatus.NeedsReview,
 
             DocumentType.Factura =>
-                Has(fields, "tabla_celdas")
+                Has(fields, "tabla_celdas") || (Has(fields, "total") && Has(fields, "beneficiario"))
                     ? DocumentStatus.Ready
                     : DocumentStatus.NeedsReview,
 
@@ -269,8 +270,8 @@ public sealed class CSharpAiClient : IPythonAiClient
         AddScore(scores, DocumentType.ActaNacimiento, filename, 12, "ACTA", "NACIMIENTO");
         AddScore(scores, DocumentType.ComprobanteDomicilio, filename, 12, "COMPROBANTE", "RECIBO", "DOMICILIO", "TELMEX", "CFE", "LUZ", "AGUA");
         AddScore(scores, DocumentType.Nss, filename, 16, "NSS", "IMSS", "SEGURO SOCIAL");
-        AddScore(scores, DocumentType.DatosBancarios, filename, 14, "BANCO", "CLABE", "CUENTA");
-        AddScore(scores, DocumentType.Factura, filename, 14, "FACTURA", "PAGO", "NOMINA", "DISPERSION", "BMPEI", "SPEI");
+        AddScore(scores, DocumentType.DatosBancarios, filename, 14, "BANCO", "CLABE", "CUENTA", "BANCARIO", "ESTADO_CUENTA", "SPEI");
+        AddScore(scores, DocumentType.Factura, filename, 14, "FACTURA", "PAGO", "NOMINA", "DISPERSION", "BMPEI", "CFDI");
         AddScore(scores, DocumentType.ConstanciaSituacionFiscal, filename, 14, "CSF", "CONSTANCIA", "FISCAL", "SAT", "RFC");
 
         // Text hints
@@ -279,8 +280,9 @@ public sealed class CSharpAiClient : IPythonAiClient
         AddScore(scores, DocumentType.ActaNacimiento, text, 6, "ACTA DE NACIMIENTO", "REGISTRO CIVIL", "OFICIALIA");
         AddScore(scores, DocumentType.ComprobanteDomicilio, text, 5, "PAGAR ANTES DE", "COMPROBANTE DE DOMICILIO", "ESTADO DE CUENTA", "TOTAL A PAGAR", "TELMEX", "CFE");
         AddScore(scores, DocumentType.Nss, text, 6, "NUMERO DE SEGURIDAD SOCIAL", "IMSS", "NSS");
-        AddScore(scores, DocumentType.DatosBancarios, text, 6, "CLABE", "ESTADO DE CUENTA", "BANCO", "NO. DE CUENTA");
-        AddScore(scores, DocumentType.Factura, text, 7, "DISPERSION DE PAGO DE NOMINA", "PAGO DE NOMINA", "CLAVE RASTREO", "COMPROBANTE DE LA OPERACION", "DATOS DEL BENEFICIARIO", "REPORTE DE OPERACIONES");
+        AddScore(scores, DocumentType.DatosBancarios, text, 6, "CLABE", "ESTADO DE CUENTA", "BANCO", "NO. DE CUENTA", "CLABE INTERBANCARIA", "TITULAR", "SALDO");
+        AddScore(scores, DocumentType.DatosBancarios, text, 9, "TRANSFERENCIA SPEI", "NOMBRE DEL BENEFICIARIO", "CLABE BENEFICIARIO", "IMPORTE A TRANSFERIR", "CLAVE DE RASTREO", "BANCO DESTINO");
+        AddScore(scores, DocumentType.Factura, text, 7, "DISPERSION DE PAGO DE NOMINA", "PAGO DE NOMINA", "CLAVE RASTREO", "COMPROBANTE DE LA OPERACION", "DATOS DEL BENEFICIARIO", "REPORTE DE OPERACIONES", "FOLIO FISCAL", "UUID", "CFDI", "COMPLEMENTO DE PAGO");
         AddScore(scores, DocumentType.ConstanciaSituacionFiscal, text, 6, "CONSTANCIA DE SITUACION FISCAL", "CEDULA DE IDENTIFICACION FISCAL", "RFC", "SAT");
 
         if (CurpRegex.IsMatch(text))
@@ -293,6 +295,12 @@ public sealed class CSharpAiClient : IPythonAiClient
         if (RfcRegex.IsMatch(text))
         {
             scores[DocumentType.ConstanciaSituacionFiscal] += 7;
+        }
+
+        // CLABE presence is a strong indicator for banking documents
+        if (Regex.IsMatch(text, @"\b\d{18}\b"))
+        {
+            scores[DocumentType.DatosBancarios] += 8;
         }
 
         var ranked = scores
@@ -704,7 +712,18 @@ public sealed class CSharpAiClient : IPythonAiClient
     private static IReadOnlyList<DocumentFieldResultDto> ExtractBankFields(string text, string filename)
     {
         var clabeRegex = new Regex(@"\b\d{18}\b", RegexOptions.Compiled);
-        var bank = AfterAnyLabel(text, "BANCO", "INSTITUCION") ?? FirstAny(filename, "BBVA", "BANORTE", "SANTANDER", "BANAMEX", "HSBC");
+        var bank = AfterAnyLabel(text, "BANCO", "INSTITUCION", "INSTITUCION BANCARIA")
+            ?? FirstAny(filename, "BBVA", "BANORTE", "SANTANDER", "BANAMEX", "HSBC", "SCOTIABANK", "INBURSA", "AZTECA", "BANREGIO", "AFIRME");
+        var titular = AfterAnyLabel(text, "TITULAR", "NOMBRE DEL CLIENTE", "BENEFICIARIO", "A NOMBRE DE", "NOMBRE");
+        var rfc = AfterAnyLabel(text, "R.F.C.", "RFC");
+        if (!string.IsNullOrWhiteSpace(rfc))
+        {
+            // Only keep RFC-shaped values
+            if (!Regex.IsMatch(rfc, @"^[A-Z&]{3,4}\d{6}[A-Z0-9]{3}$", RegexOptions.IgnoreCase))
+            {
+                rfc = null;
+            }
+        }
         var account = AfterAnyLabel(text, "NO. CUENTA", "NO CUENTA", "NO DE CUENTA", "NUMERO DE CUENTA");
         if (string.IsNullOrWhiteSpace(account))
         {
@@ -724,36 +743,76 @@ public sealed class CSharpAiClient : IPythonAiClient
             }
         }
 
+        // Fecha de corte
+        var fechaCorte = AfterAnyLabel(text, "FECHA DE CORTE", "CORTE", "FECHA CORTE");
+
+        // Periodo
+        var periodoMatch = Regex.Match(text,
+            @"(?:PERIODO|DEL?)\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+(?:AL?|A)\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+            RegexOptions.IgnoreCase);
+        var periodo = periodoMatch.Success
+            ? $"{periodoMatch.Groups[1].Value} al {periodoMatch.Groups[2].Value}"
+            : null;
+
         return
         [
             Build("banco", "Banco", bank),
-            Build("titular", "Titular", AfterAnyLabel(text, "TITULAR", "NOMBRE")),
+            Build("titular", "Titular", titular),
             Build("clabe", "CLABE", FirstRegex(text, clabeRegex), clabeRegex),
-            Build("cuenta", "Cuenta", account)
+            Build("cuenta", "Cuenta", account),
+            Build("rfc", "RFC", rfc, RfcRegex),
+            Build("fecha_corte", "Fecha de corte", fechaCorte),
+            Build("periodo", "Periodo", periodo)
         ];
     }
 
     private static IReadOnlyList<DocumentFieldResultDto> ExtractFacturaFields(string text, string filename)
     {
+        var fields = new List<DocumentFieldResultDto>();
+
         var tableJson = BuildFacturaTableJson(text);
         if (!string.IsNullOrWhiteSpace(tableJson))
         {
-            return
-            [
-                new DocumentFieldResultDto(
+            fields.Add(new DocumentFieldResultDto(
                 "tabla_celdas",
                 "Tabla celdas",
                 tableJson,
                 0.90m,
                 true,
                 Array.Empty<string>(),
-                null)
-            ];
+                null));
         }
-        return
-        [
-            Build("tabla_celdas", "Tabla celdas", null)
-        ];
+        else
+        {
+            fields.Add(Build("tabla_celdas", "Tabla celdas", null));
+        }
+
+        // Extract payment dispersal context fields when available
+        var claveRastreo = AfterAnyLabel(text, "CLAVE RASTREO", "CLAVE DE RASTREO", "REFERENCIA NUMERICA");
+        if (!string.IsNullOrWhiteSpace(claveRastreo))
+        {
+            fields.Add(Build("clave_rastreo", "Clave de rastreo", claveRastreo));
+        }
+
+        var beneficiario = AfterAnyLabel(text, "BENEFICIARIO", "DATOS DEL BENEFICIARIO", "NOMBRE BENEFICIARIO");
+        if (!string.IsNullOrWhiteSpace(beneficiario))
+        {
+            fields.Add(Build("beneficiario", "Beneficiario", beneficiario));
+        }
+
+        var rfcOrdenante = AfterAnyLabel(text, "RFC ORDENANTE", "RFC DEL ORDENANTE", "RFC EMPRESA");
+        if (!string.IsNullOrWhiteSpace(rfcOrdenante) && Regex.IsMatch(rfcOrdenante, @"^[A-Z&]{3,4}\d{6}[A-Z0-9]{3}$", RegexOptions.IgnoreCase))
+        {
+            fields.Add(Build("rfc_ordenante", "RFC ordenante", rfcOrdenante, RfcRegex));
+        }
+
+        var totalMatch = Regex.Match(text, @"TOTAL[:\s]*\$?\s*([\d,]+\.?\d{0,2})\b", RegexOptions.IgnoreCase);
+        if (totalMatch.Success)
+        {
+            fields.Add(Build("total", "Total", totalMatch.Groups[1].Value));
+        }
+
+        return fields;
     }
 
     private static string? BuildFacturaTableJson(string text)
