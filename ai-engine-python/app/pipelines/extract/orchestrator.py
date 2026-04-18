@@ -13,6 +13,7 @@ from .common import *  # noqa: F403
 from .tables import *  # noqa: F403
 from .extractors import *  # noqa: F403
 from .extractors import _extract_cfe_address_from_lines
+from .table_from_ocr import extract_fallback_tables
 from app.pipelines.legacy_adapter import legacy_extract_fields
 from app.pipelines.table_postprocess import (
     postprocess_payment_table,
@@ -1121,6 +1122,77 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
                             confidence=0.82,
                         )
                     )
+
+        # ── [FALLBACK GEOMÉTRICO] Tabla universal desde coordenadas OCR ──
+        # Usa extract_fallback_tables() que internamente aplica 3 estrategias:
+        #   1. geometric_detector (Textract-like: clustering Y/X + grid)
+        #   2. Spatial clustering clásico
+        #   3. Detección por texto OCR (último recurso)
+        # Aprovecha las coordenadas de ocr_boxes (RapidOCR/PaddleOCR).
+        # Se ejecuta ANTES del multi_row_payment_table porque las coordenadas
+        # dan mejor precisión que la detección por texto plano.
+        if not any(f.get("key") == "tabla_celdas" for f in fields) and ocr_boxes:
+            try:
+                _fb_tables = extract_fallback_tables(base_text_raw or "", ocr_boxes)
+                if _fb_tables:
+                    _fb_generic = _pdf_tables_to_generic_payloads(_fb_tables)
+                    _fb_sorted = sorted(
+                        _fb_generic,
+                        key=lambda t: t.get("row_count", 0),
+                        reverse=True,
+                    )
+                    _fb_best = next(
+                        (t for t in _fb_sorted if t.get("row_count", 0) >= 2),
+                        None,
+                    )
+                    if _fb_best:
+                        fields.append(_make_field(
+                            "tabla_celdas",
+                            "Tabla extraida (fallback geometrico)",
+                            json.dumps(_fb_best, ensure_ascii=False),
+                            ocr_boxes,
+                            confidence=0.80,
+                        ))
+                        logger.info(
+                            "Fallback geometrico: tabla reconstruida con %d filas x %d cols",
+                            _fb_best.get("row_count", 0),
+                            len(_fb_best.get("columns", []) or []),
+                        )
+            except Exception:
+                logger.warning(
+                    "extract_fallback_tables fallo, continuando con flujo normal",
+                    exc_info=True,
+                )
+
+        # ── Detector de tablas de dispersion masiva (nomina, pagos) ──────
+        # Intenta reconstruir la tabla desde datos sueltos del OCR cuando el
+        # pipeline principal no detecto ninguna. Empareja por posicion vertical
+        # los IDs, nombres e importes detectados. Si >= 2 filas -> tabla real.
+        # Si no -> cae al sintetico (comportamiento actual intacto).
+        if not any(f.get("key") == "tabla_celdas" for f in fields):
+            _multi = _try_detect_multi_row_payment_table(
+                base_text_raw, orig_lines, filename or ""
+            )
+            if _multi and _multi.get("row_count", 0) >= 2:
+                fields.append(_make_field(
+                    "tabla_celdas",
+                    "Tabla de beneficiarios",
+                    json.dumps(_multi["tabla_celdas"], ensure_ascii=False),
+                    ocr_boxes,
+                    confidence=0.85,
+                ))
+                fields.append(_make_field(
+                    "pago_detalle",
+                    "Pago detalle",
+                    json.dumps(_multi["pago_detalle"], ensure_ascii=False),
+                    ocr_boxes,
+                    confidence=0.88,
+                ))
+                logger.info(
+                    "Multi-row payment table reconstructed: %d rows, total=%s",
+                    _multi["row_count"],
+                    _multi.get("importe_total", "?"),
+                )
 
         # ── Synthetic single-row tabla_celdas for text-only bank receipts ────
         # When no table was found (single SPEI transfer, individual payment
@@ -2489,3 +2561,275 @@ async def _extract_fields_impl(document_type: str, ocr_text: str, ocr_boxes: lis
 __all__ = [
     "extract_fields",
 ]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  MULTI-ROW PAYMENT TABLE DETECTOR (v2 - improved)
+#  Reconstruye tablas de dispersion masiva cuando el pipeline principal falla.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _try_detect_multi_row_payment_table(
+    raw_text,
+    orig_lines,
+    filename = "",
+):
+    """Intenta reconstruir una tabla multi-fila desde datos sueltos del OCR.
+
+    Estrategia:
+      1. Detecta listas verticales de IDs numericos (empleados, folios).
+      2. Detecta listas verticales de importes ($X,XXX.XX).
+      3. Detecta nombres de empleados (lineas en mayusculas).
+      4. Detecta estatus (APLICADO/RECHAZADO), codigos y descripciones.
+      5. Las empareja por posicion y DEDUPLICA IDs repetidos.
+      6. Si hay >= 2 filas alineadas -> devuelve la tabla canonica.
+
+    Retorna None si no puede reconstruir nada confiable.
+    """
+    if not raw_text:
+        return None
+
+    import re as _re
+
+    # ── Detectar IDs de empleado (lineas de solo digitos, 8-12 chars)
+    # DEDUPLICAR: a veces el mismo ID aparece en varios bloques del PDF
+    ids_raw = []
+    for line in orig_lines:
+        clean = line.strip()
+        if _re.fullmatch(r"\d{8,12}", clean):
+            ids_raw.append(clean)
+    # Mantener solo IDs unicos preservando el orden de primera aparicion
+    seen = set()
+    ids = []
+    for _id in ids_raw:
+        if _id not in seen:
+            seen.add(_id)
+            ids.append(_id)
+
+    # ── Detectar importes ($X,XXX.XX o X,XXX.XX)
+    importes = []
+    for match in _re.finditer(
+        r"\$?\s*([\d]{1,3}(?:,\d{3})*\.\d{2})(?!\d)",
+        raw_text,
+    ):
+        valor = match.group(1)
+        if valor not in ("0.00", "00.00"):
+            importes.append(valor)
+
+    # ── Detectar nombres (lineas que parezcan nombres propios)
+    _HEADERS_EXCLUIR = {
+        "NOMBRE", "APELLIDO", "ESTATUS", "CODIGO", "DESCRIPCION",
+        "TIPO", "CUENTA", "IMPORTE", "CLAVE", "RASTREO",
+        "APLICADO", "ACEPTADO", "RECHAZADO", "DATOS", "BENEFICIARIO",
+        "DETALLE", "REPORTE", "TRANSMISION", "ARCHIVO", "PAGOS",
+        "FOLIO", "ELECTRONICO", "EMPRESA", "REGISTROS", "TRANSMITIDOS",
+        "FECHA", "HORA", "APLICACION", "PAGO", "NOMINA",
+        "INDOMICILIADO", "NO", "TRANSMITIDO", "CARGO",
+        "PREDICTIVO", "BUFETE", "MANTENIMIENTO", "ING",
+    }
+    nombres = []
+    for line in orig_lines:
+        clean = line.strip()
+        if len(clean) < 6 or len(clean) > 70:
+            continue
+        # Acepta nombres con letras acentuadas, mayusculas/minusculas
+        if _re.fullmatch(r"[A-Za-zAEIOUNUaeiounu][A-Za-zAEIOUNUaeiounu\s]{4,68}[A-Za-zAEIOUNUaeiounu]", clean, _re.IGNORECASE):
+            tokens_up = clean.upper().split()
+            if len(tokens_up) >= 2 and all(len(t) >= 2 for t in tokens_up):
+                # Excluir si TODAS las palabras son de encabezado
+                if not all(t in _HEADERS_EXCLUIR for t in tokens_up):
+                    # Excluir si contiene demasiadas palabras de exclusion
+                    headers_count = sum(1 for t in tokens_up if t in _HEADERS_EXCLUIR)
+                    if headers_count < len(tokens_up) / 2:
+                        nombres.append(clean)
+
+    # Deduplicar nombres manteniendo orden
+    seen_n = set()
+    nombres_unicos = []
+    for n in nombres:
+        key = n.upper().strip()
+        if key not in seen_n:
+            seen_n.add(key)
+            nombres_unicos.append(n)
+    nombres = nombres_unicos
+
+    # ── Detectar cuentas (13-18 digitos, no IDs cortos)
+    cuentas = []
+    for match in _re.finditer(r"(?<!\d)(\d{13,18})(?!\d)", raw_text):
+        num = match.group(1)
+        if num not in ids:
+            cuentas.append(num)
+
+    # ── Detectar estatus (APLICADO / RECHAZADO / PENDIENTE)
+    estatus_list = []
+    for match in _re.finditer(
+        r"\b(APLICADO|RECHAZADO|PENDIENTE|PROCESADO|CANCELADO)\b",
+        raw_text.upper(),
+    ):
+        estatus_list.append(match.group(1))
+
+    # ── Detectar codigos (00, 01, 02, 20, etc. de 2 digitos que siguen a estatus)
+    # Los codigos aparecen como numeros cortos despues de APLICADO/RECHAZADO
+    codigos = []
+    for match in _re.finditer(
+        r"\b(APLICADO|RECHAZADO)\s+(\d{2})\b",
+        raw_text.upper(),
+    ):
+        codigos.append(match.group(2))
+
+    # ── Detectar descripciones (ACEPTADO / INDOMICILIADO / etc.)
+    descripciones = []
+    for match in _re.finditer(
+        r"\b(ACEPTADO|INDOMICILIADO|CUENTA\s+CANCELADA|CUENTA\s+INVALIDA|CUENTA\s+INEXISTENTE|RECHAZO)\b",
+        raw_text.upper(),
+    ):
+        descripciones.append(match.group(1))
+
+    # ── Validacion minima: necesitamos al menos 2 IDs y 2 importes
+    if len(ids) < 2 or len(importes) < 2:
+        return None
+
+    # ── Calcular el importe TOTAL (el mayor suele ser el total del encabezado)
+    try:
+        importes_numeric = [float(i.replace(",", "")) for i in importes]
+        importe_total_num = max(importes_numeric)
+        importe_total = "$" + format(importe_total_num, ",.2f")
+        # Remover el total de los importes individuales (puede aparecer >1 vez)
+        importes_sin_total = []
+        removed_total = False
+        for imp, num in zip(importes, importes_numeric):
+            if num == importe_total_num and not removed_total:
+                removed_total = True
+                continue
+            importes_sin_total.append(imp)
+    except (ValueError, IndexError):
+        importe_total = ""
+        importes_sin_total = list(importes)
+
+    # ── LIMITE: el numero de filas es el minimo entre IDs e importes
+    # Si tenemos mas IDs que nombres, truncamos al numero de NOMBRES
+    # (mas confiable, menos falsos positivos)
+    n_rows = min(len(ids), len(importes_sin_total))
+    # Si hay muchas mas cuentas que nombres, es senal de que el limite son los nombres
+    if len(nombres) >= 2 and len(nombres) < n_rows:
+        # Solo truncar si hay al menos tantas cuentas como nombres (evita perder filas)
+        if len(cuentas) >= len(nombres):
+            n_rows = len(nombres)
+
+    if n_rows < 2:
+        return None
+
+    # ── Construir filas emparejando por posicion
+    filas = []
+    for i in range(n_rows):
+        id_emp = ids[i] if i < len(ids) else ""
+        nombre = nombres[i] if i < len(nombres) else ""
+        importe = "$" + importes_sin_total[i] if i < len(importes_sin_total) else ""
+        cuenta = cuentas[i] if i < len(cuentas) else ""
+        estatus = estatus_list[i] if i < len(estatus_list) else ""
+        codigo = codigos[i] if i < len(codigos) else ""
+        descripcion = descripciones[i] if i < len(descripciones) else ""
+        filas.append({
+            "no_empleado": id_emp,
+            "nombre": nombre,
+            "cuenta": cuenta,
+            "importe": importe,
+            "estatus": estatus,
+            "codigo": codigo,
+            "descripcion": descripcion,
+        })
+
+    canonical_cols = [
+        "no_empleado", "nombre", "cuenta", "importe",
+        "estatus", "codigo", "descripcion",
+    ]
+    display_cols = {
+        "no_empleado": "No. Empleado",
+        "nombre": "Nombre",
+        "cuenta": "Cuenta",
+        "importe": "Importe",
+        "estatus": "Estatus",
+        "codigo": "Codigo",
+        "descripcion": "Descripcion",
+    }
+
+    # Filtrar columnas que tengan al menos un valor en alguna fila
+    cols_con_datos = [
+        c for c in canonical_cols
+        if any(str(row.get(c, "") or "").strip() for row in filas)
+    ]
+
+    # ── Detectar banco, empresa y metadata
+    _text_up = raw_text.upper()
+    _m_banco = _re.search(
+        r"\b(BANORTE|BBVA|SANTANDER|SCOTIABANK|HSBC|BANAMEX|CITIBANAMEX|INBURSA|AZTECA)\b",
+        _text_up,
+    )
+    banco = _m_banco.group(1) if _m_banco else ""
+
+    _m_empresa = _re.search(
+        r"EMPRESA[:\s]+(?:\d+\s+)?([A-Z&][A-Z\s&,.-]{4,80}?)(?:\n|NO\.|$)",
+        _text_up,
+    )
+    empresa = _m_empresa.group(1).strip() if _m_empresa else ""
+
+    _m_tipo = _re.search(r"TIPO\s+DE\s+PAGO[:\s]+([A-Z\s]{3,40}?)(?:\n|$)", _text_up)
+    tipo_pago = _m_tipo.group(1).strip() if _m_tipo else ""
+
+    _m_fecha = _re.search(
+        r"FECHA\s+(?:DE\s+)?(?:APLICACI[OÓ]N|TRANSMISION)[:\s]+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+        _text_up,
+    )
+    fecha_app = _m_fecha.group(1) if _m_fecha else ""
+
+    tabla_celdas = {
+        "source": "multi_row_reconstructed",
+        "rows": [[display_cols[c] for c in cols_con_datos]] + [
+            [row[c] for c in cols_con_datos] for row in filas
+        ],
+        "row_count": len(filas),
+    }
+
+    pago_detalle = {
+        "source": "multi_row_reconstructed",
+        "bank": banco,
+        "metadata": {
+            "nombre_archivo": filename or "",
+            "nombre_empresa": empresa,
+            "tipo_pago": tipo_pago,
+            "banco_destino": banco,
+            "fecha_aplicacion": fecha_app,
+            "importe_total": importe_total,
+            "importe_detectado": importe_total,
+            "cantidad_movimientos": str(len(filas)),
+            "folio": "",
+        },
+        "table": {
+            "columns": cols_con_datos,
+            "canonical_columns": cols_con_datos,
+            "canonical_rows": [
+                {c: row[c] for c in cols_con_datos} for row in filas
+            ],
+            "canonical_row_count": len(filas),
+            "display_columns": {c: display_cols[c] for c in cols_con_datos},
+            "row_count": len(filas),
+            "rows": [
+                {c: row[c] for c in cols_con_datos} for row in filas
+            ],
+            "bank": banco,
+        },
+        "quality_report": {
+            "row_count": len(filas),
+            "column_count": len(cols_con_datos),
+            "columns": cols_con_datos,
+            "overall_quality": 0.80,
+        },
+    }
+
+    return {
+        "tabla_celdas": tabla_celdas,
+        "pago_detalle": pago_detalle,
+        "row_count": len(filas),
+        "importe_total": importe_total,
+    }
+
+
